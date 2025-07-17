@@ -1,12 +1,17 @@
+use cardano/address.{Address}
 use cardano/transaction.{OutputReference}
 
 pub type PegInDatum {
   treasury_btc_address: ByteArray,
+  btc_amount_to_mint: Int,
+  ada_user_address: Address,
+  btc_source_address: ByteArray,
 }
 
 pub type PegInMintRedeemer {
   config_ref_input_index: Int,
   input_ref: OutputReference,
+  treasury_movement_ref_input_index: Int,
 }
 
 pub type PegInWithdrawRedeemer {
@@ -15,6 +20,6 @@ pub type PegInWithdrawRedeemer {
 }
 
 pub type PegInAction {
-  Cancel
-  Prove
+  Cancel { peg_in_token_asset_name: ByteArray }
+  Prove { peg_in_token_asset_name: ByteArray }
 }

@@ -1,11 +1,8 @@
-use aiken/builtin
 use aiken/collection/dict
 use aiken/collection/list
 use bifrost/authorizer
 use bifrost/constants
-use bifrost/types/treasury_movement.{
-  TreasuryMovementDatum, TreasuryMovementSpendRedeemer,
-}
+use bifrost/types/config.{ConfigDatum} as configType
 use bifrost/utils.{quantity_of_policy_id}
 use cardano/address.{Address, Script}
 use cardano/assets.{PolicyId, flatten, quantity_of, tokens}
@@ -14,38 +11,30 @@ use cardano/transaction.{
 }
 
 //Contains all SC params
-validator treasury_movement_validator(
-  tx0: ByteArray,
-  index0: Int,
-  treasury_movement_asset_name: ByteArray,
-) {
+validator config(tx0: ByteArray, index0: Int, config_asset_name: ByteArray) {
   mint(_redeemer: Redeemer, policy_id: PolicyId, self: Transaction) {
     let contractCredential = Script(policy_id)
 
     let one_time_utxo = OutputReference(tx0, index0)
     //we won't use input_present, we just need it to be there, otherwise error
     expect Some(_input_present) = find_input(self.inputs, one_time_utxo)
-    let output_treasury_movement = utils.safe_list_at(self.outputs, 0)
+    let output_parameters = utils.safe_list_at(self.outputs, 0)
 
     and {
       //First output goes to this address
-      output_treasury_movement.address.payment_credential == contractCredential,
+      output_parameters.address.payment_credential == contractCredential,
       //Only 1 token of same policy
       quantity_of_policy_id(self.mint, policy_id) == 1,
       //I am minting only 1 token (NFT)
-      quantity_of(self.mint, policy_id, treasury_movement_asset_name) == 1,
+      quantity_of(self.mint, policy_id, config_asset_name) == 1,
       //NFT goes to the output
-      quantity_of(
-        output_treasury_movement.value,
-        policy_id,
-        treasury_movement_asset_name,
-      ) == 1,
+      quantity_of(output_parameters.value, policy_id, config_asset_name) == 1,
     }
   }
 
   spend(
-    datumOpt: Option<TreasuryMovementDatum>,
-    redeemer: TreasuryMovementSpendRedeemer,
+    datumOpt: Option<ConfigDatum>,
+    _redeemer: Redeemer,
     own_ref: OutputReference,
     self: Transaction,
   ) {
@@ -54,31 +43,24 @@ validator treasury_movement_validator(
     let output_contract = utils.safe_list_at(self.outputs, 0)
     expect InlineDatum(outputDatum) = output_contract.datum
     //value can be anything but the type must be of correct type
-    expect _casted_datum: TreasuryMovementDatum = outputDatum
+    expect _casted_datum: ConfigDatum = outputDatum
 
     expect Script(contractScriptHash) =
       input_contract.output.address.payment_credential
-    let expectedDatum =
-      TreasuryMovementDatum {
-        current_treasury_btc_address: redeemer.new_treasury_btc_address,
-        current_treasury_btc_utxo_id: redeemer.new_treasury_btc_utxo_id,
-      }
 
-    //TODO zk proof of the treasury movement tx where:
-    //1) The tx spends datum.current_treasury_btc_utxo_id
-    //2) The tx.outputs[0].utxo_id == redeemer.new_treasury_btc_utxo_id
-    //3) The tx.outputs[0].address == redeemer.new_treasury_btc_address
-    let zk_verification = True
     and {
       input_contract.output.value == output_contract.value,
       input_contract.output.address == output_contract.address,
+      authorizer.authorize_via_credential(
+        datum.adminCredential,
+        self.withdrawals,
+        self.extra_signatories,
+      ),
       quantity_of(
         input_contract.output.value,
         contractScriptHash,
-        treasury_movement_asset_name,
+        config_asset_name,
       ) == 1,
-      zk_verification,
-      builtin.equals_data(input_contract.output.datum, expectedDatum),
     }
   }
 
