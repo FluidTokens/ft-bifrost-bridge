@@ -33,32 +33,32 @@ validator config(tx0: ByteArray, index0: Int, config_asset_name: ByteArray) {
   }
 
   spend(
-    datumOpt: Option<ConfigDatum>,
+    datum_opt: Option<ConfigDatum>,
     _redeemer: Redeemer,
     own_ref: OutputReference,
     self: Transaction,
   ) {
-    expect Some(datum) = datumOpt
+    expect Some(datum) = datum_opt
     expect Some(input_contract) = find_input(self.inputs, own_ref)
     let output_contract = utils.safe_list_at(self.outputs, 0)
-    expect InlineDatum(outputDatum) = output_contract.datum
+    expect InlineDatum(output_datum) = output_contract.datum
     //value can be anything but the type must be of correct type
-    expect _casted_datum: ConfigDatum = outputDatum
+    expect _casted_datum: ConfigDatum = output_datum
 
-    expect Script(contractScriptHash) =
+    expect Script(contract_script_hash) =
       input_contract.output.address.payment_credential
 
     and {
       input_contract.output.value == output_contract.value,
       input_contract.output.address == output_contract.address,
       authorizer.authorize_via_credential(
-        datum.adminCredential,
+        datum.admin_credential,
         self.withdrawals,
         self.extra_signatories,
       ),
       quantity_of(
         input_contract.output.value,
-        contractScriptHash,
+        contract_script_hash,
         config_asset_name,
       ) == 1,
     }

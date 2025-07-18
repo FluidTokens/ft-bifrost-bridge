@@ -3,16 +3,15 @@ use aiken/collection/dict
 use aiken/collection/list
 use aiken/option
 use aiken/primitive/bytearray
+use bifrost/types/bitcoin_oracle.{OracleState}
 use bifrost/types/peg_in.{
   Cancel, PegInDatum, PegInMintRedeemer, PegInWithdrawRedeemer, Prove,
 }
-use bifrost/types/treasury_movement.{TreasuryMovementDatum}
-use bifrost/utils.{hash_output_ref}
+use bifrost/types/treasury_info.{TreasuryInfoDatum}
+use bifrost/utils
 use cardano/address.{Credential, Script}
 use cardano/assets.{PolicyId, quantity_of, tokens}
-use cardano/transaction.{
-  InlineDatum, Input, Output, Transaction, Withdraw, find_input,
-}
+use cardano/transaction.{InlineDatum, Input, Output, Transaction, find_input}
 
 validator peg_in_validator(
   config_policy_id: ByteArray,
@@ -31,9 +30,9 @@ validator peg_in_validator(
         config_policy_id,
         config_asset_name,
       )
-    let treasury_movement_nft_policy_id =
+    let treasury_info_nft_policy_id =
       builtin.un_b_data(utils.safe_list_at(config, 0))
-    let treasury_movement_nft_asset_name =
+    let treasury_info_nft_asset_name =
       builtin.un_b_data(utils.safe_list_at(config, 1))
     let minted_tokens =
       list.filter(
@@ -70,16 +69,16 @@ validator peg_in_validator(
               }
             expect InlineDatum(outputDatum) = output.datum
             expect datum: PegInDatum = outputDatum
-            let treasury_movement_ref_input =
+            let treasury_info_ref_input =
               utils.safe_list_at(
                 self.reference_inputs,
-                redeemer.treasury_movement_ref_input_index,
+                redeemer.treasury_info_ref_input_index,
               )
             let output_has_correct_datum =
               datum.treasury_btc_address == get_current_treasury_btc_address(
-                treasury_movement_nft_policy_id,
-                treasury_movement_nft_asset_name,
-                treasury_movement_ref_input.output,
+                treasury_info_nft_policy_id,
+                treasury_info_nft_asset_name,
+                treasury_info_ref_input.output,
               )
             and {
               quantity == 1,
@@ -160,12 +159,43 @@ validator peg_in_validator(
               burn_the_nft,
             }
           }
-          Prove { peg_in_token_asset_name } -> {
-            //TODO zk proof of the Bitcoin tx where:
-            //1) The tx contains nft.asset_name in the metadata
-            //2) Has sent to datum.treasury_btc_address exactly datum.btc_amount_to_mint BTC
-            //3) datum.btc_source_address has signed that tx
-            let zk_verification = True
+          Prove {
+            peg_in_token_asset_name,
+            oracle_state_ref_input_index,
+            treasury_info_ref_input_index,
+          } -> {
+            let treasury_info_nft_policy_id =
+              builtin.un_b_data(utils.safe_list_at(config, 0))
+            let btc_oracle_policy_id =
+              builtin.un_b_data(utils.safe_list_at(config, 2))
+
+            let oracle_state_ref_input =
+              utils.safe_list_at(
+                self.reference_inputs,
+                oracle_state_ref_input_index,
+              )
+
+            let oracle_state =
+              utils.get_oracle_state(
+                oracle_state_ref_input,
+                btc_oracle_policy_id,
+              )
+
+            let treasury_info_ref_input =
+              utils.safe_list_at(
+                self.reference_inputs,
+                treasury_info_ref_input_index,
+              )
+
+            let trasury_info =
+              utils.get_treasury_info_as_data_list(
+                treasury_info_ref_input,
+                treasury_info_nft_policy_id,
+              )
+            let current_treasury_btc_address =
+              builtin.un_b_data(utils.safe_list_at(trasury_info, 0))
+            let zk_verification =
+              zk_verify_peg_in_tx(oracle_state, current_treasury_btc_address)
             let burn_the_nft = and {
                 quantity_of(
                   input.output.value,
@@ -195,17 +225,28 @@ validator peg_in_validator(
 }
 
 fn get_current_treasury_btc_address(
-  treasury_movement_nft_policy_id: ByteArray,
-  treasury_movement_nft_asset_name: ByteArray,
-  treasury_movement_ref_input_output: Output,
+  treasury_info_nft_policy_id: ByteArray,
+  treasury_info_nft_asset_name: ByteArray,
+  treasury_info_ref_input_output: Output,
 ) {
-  expect InlineDatum(outputDatum) = treasury_movement_ref_input_output.datum
-  expect datum: TreasuryMovementDatum = outputDatum
+  expect InlineDatum(outputDatum) = treasury_info_ref_input_output.datum
+  expect datum: TreasuryInfoDatum = outputDatum
   expect
     quantity_of(
-      treasury_movement_ref_input_output.value,
-      treasury_movement_nft_policy_id,
-      treasury_movement_nft_asset_name,
+      treasury_info_ref_input_output.value,
+      treasury_info_nft_policy_id,
+      treasury_info_nft_asset_name,
     ) == 1
   datum.current_treasury_btc_address
+}
+
+fn zk_verify_peg_in_tx(
+  _oracle_state: OracleState,
+  _current_treasury_btc_address: ByteArray,
+) {
+  //TODO zk proof of the Bitcoin tx where:
+  //1) The tx contains nft.asset_name in the metadata
+  //2) Has sent to datum.treasury_btc_address exactly datum.btc_amount_to_mint BTC
+  //3) datum.btc_source_address has signed that tx
+  True
 }

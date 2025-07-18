@@ -11,7 +11,7 @@ pub type PegOutPrivateDatum {
 pub type PegOutPrivateMintRedeemer {
   config_ref_input_index: Int,
   input_ref: OutputReference,
-  treasury_movement_ref_input_index: Int,
+  treasury_info_ref_input_index: Int,
 }
 
 pub type PegOutPrivateWithdrawRedeemer {
@@ -21,5 +21,8 @@ pub type PegOutPrivateWithdrawRedeemer {
 
 pub type PegOutPrivateAction {
   Cancel { peg_out_private_token_asset_name: ByteArray }
-  Prove { peg_out_private_token_asset_name: ByteArray }
+  Prove {
+    peg_out_private_token_asset_name: ByteArray,
+    oracle_state_ref_input_index: Int,
+  }
 }

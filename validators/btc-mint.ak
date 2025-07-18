@@ -1,23 +1,14 @@
-use aiken/builtin
 use aiken/collection/dict
 use aiken/collection/list
-use aiken/option
-use aiken/primitive/bytearray
 use bifrost/constants.{btc_asset_name}
 use bifrost/types/btc_mint.{BtcMintRedeemer}
-use bifrost/types/peg_in.{
-  Cancel, PegInDatum, PegInMintRedeemer, PegInWithdrawRedeemer, Prove,
-}
-use bifrost/utils.{hash_output_ref}
-use cardano/address.{Credential, Script}
-use cardano/assets.{PolicyId, Value, flatten, quantity_of, tokens}
-use cardano/transaction.{
-  InlineDatum, Input, Output, Transaction, Withdraw, find_input,
-}
+use bifrost/types/peg_in.{PegInDatum, PegInWithdrawRedeemer, Prove}
+use bifrost/utils
+use cardano/address.{Script}
+use cardano/assets.{PolicyId, flatten, quantity_of, tokens}
+use cardano/transaction.{InlineDatum, Input, Output, Transaction, Withdraw}
 
 validator btc_mint_validator(
-  config_policy_id: ByteArray,
-  config_asset_name: ByteArray,
   peg_in_spend_script_hash: ByteArray,
   peg_in_policy_id: ByteArray,
 ) {

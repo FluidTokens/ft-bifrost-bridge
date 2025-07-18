@@ -1,15 +1,12 @@
 use aiken/builtin
 use aiken/collection/dict
 use aiken/collection/list
-use aiken/collection/pairs
 use aiken/crypto
-use aiken/interval.{Finite}
-use aiken/primitive/bytearray
-use cardano/address.{Address, Script, VerificationKey}
-use cardano/assets.{AssetName, PolicyId, Value, quantity_of, reduce, tokens}
-use cardano/transaction.{
-  InlineDatum, Input, Output, OutputReference, Transaction,
-}
+use bifrost/constants
+use bifrost/types/bitcoin_oracle.{OracleState}
+use cardano/address.{Address, VerificationKey}
+use cardano/assets.{AssetName, PolicyId, Value, quantity_of, tokens}
+use cardano/transaction.{InlineDatum, Input, Output, OutputReference}
 
 pub fn hash_output_ref(outputRef: OutputReference) -> ByteArray {
   outputRef |> builtin.serialise_data |> crypto.blake2b_224
@@ -68,4 +65,30 @@ pub fn get_singleton_asset_with_policy(
       |> dict.to_pairs
 
   p
+}
+
+pub fn get_oracle_state(
+  oracle_state_ref_input: Input,
+  btc_oracle_policy_id: ByteArray,
+) {
+  expect
+    quantity_of(
+      oracle_state_ref_input.output.value,
+      btc_oracle_policy_id,
+      constants.btc_oracle_asset_name,
+    ) > 0
+  expect InlineDatum(outputDatum) = oracle_state_ref_input.output.datum
+  expect parsed_oracle_state: OracleState = outputDatum
+  parsed_oracle_state
+}
+
+pub fn get_treasury_info_as_data_list(
+  treasury_info_ref_input: Input,
+  treasury_info_nft_policy_id: ByteArray,
+) {
+  get_config_as_data_list(
+    treasury_info_ref_input,
+    treasury_info_nft_policy_id,
+    constants.treasury_info_nft_asset_name,
+  )
 }

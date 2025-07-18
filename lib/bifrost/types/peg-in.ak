@@ -11,7 +11,7 @@ pub type PegInDatum {
 pub type PegInMintRedeemer {
   config_ref_input_index: Int,
   input_ref: OutputReference,
-  treasury_movement_ref_input_index: Int,
+  treasury_info_ref_input_index: Int,
 }
 
 pub type PegInWithdrawRedeemer {
@@ -21,5 +21,9 @@ pub type PegInWithdrawRedeemer {
 
 pub type PegInAction {
   Cancel { peg_in_token_asset_name: ByteArray }
-  Prove { peg_in_token_asset_name: ByteArray }
+  Prove {
+    peg_in_token_asset_name: ByteArray,
+    oracle_state_ref_input_index: Int,
+    treasury_info_ref_input_index: Int,
+  }
 }

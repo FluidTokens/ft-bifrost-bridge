@@ -20,4 +20,9 @@ name = "anastasia-labs/aiken-design-patterns"
 version = "v1.2.0"
 source = "github"
 
+[[dependencies]]
+name = "aiken-lang/merkle-patricia-forestry"
+version = "2.1.0"
+source = "github"
+
 [config]

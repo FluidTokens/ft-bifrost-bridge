@@ -1,9 +1,7 @@
 pub type RegisteredSposDatum {
   registration_time: Int,
-  registration_epoch: Int,
-  spo_cardano_key: ByteArray,
-  spo_btc_key: ByteArray,
-  spo_ada_stake: Int,
+  spo_cardano_ecdsa_key: ByteArray,
+  spo_bitcoin_secp256k1_key: ByteArray,
 }
 
 pub type RegisteredSposMintRedeemer {
@@ -14,6 +12,7 @@ pub type RegisteredSposMintRedeemer {
     config_ref_input_index: Int,
     prepended_node_output_index: Int,
     anchor_node_output_index: Int,
+    spo_bitcoin_secp256k1_key_signature: ByteArray,
   }
   Deregister {
     node_to_deregister_key: ByteArray,

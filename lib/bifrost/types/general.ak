@@ -1,6 +1,6 @@
 use aiken/crypto.{VerificationKeyHash}
 use cardano/address.{Credential}
-use cardano/assets.{AssetName, PolicyId, Value}
+use cardano/assets.{Value}
 use cardano/transaction.{Input}
 
 pub type AuthorizationMethod {
