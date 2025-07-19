@@ -5,7 +5,7 @@ use bifrost/types/btc_mint.{BtcMintRedeemer}
 use bifrost/types/peg_in.{PegInDatum, PegInWithdrawRedeemer, Prove}
 use bifrost/utils
 use cardano/address.{Script}
-use cardano/assets.{PolicyId, flatten, quantity_of, tokens}
+use cardano/assets.{PolicyId, quantity_of, tokens}
 use cardano/transaction.{InlineDatum, Input, Output, Transaction, Withdraw}
 
 validator btc_mint_validator(
@@ -15,11 +15,9 @@ validator btc_mint_validator(
   //We exclude the burnt tokens (quantity < 0) as they are always allowed
   //Only 1 AssetName can be minted
   mint(redeemer: BtcMintRedeemer, policy_id: PolicyId, self: Transaction) {
-    let minted_tokens =
-      list.filter(
-        dict.to_pairs(tokens(self.mint, policy_id)),
-        fn(tokenPair) { tokenPair.2nd > 0 },
-      )
+    let only_btc_minted =
+      list.length(dict.to_pairs(tokens(self.mint, policy_id))) == 1
+    let total_minted_btc = quantity_of(self.mint, policy_id, btc_asset_name)
 
     let peg_in_inputs =
       list.filter(
@@ -31,20 +29,19 @@ validator btc_mint_validator(
         },
       )
 
+    let peg_in_withdraw_redeemer =
+      utils.safe_list_at(
+        self.redeemers,
+        redeemer.peg_in_withdraw_redeemer_index,
+      )
+    expect peg_in_withdraw_redeemer.1st == Withdraw(Script(peg_in_policy_id))
+    expect peg_in_redeemer: PegInWithdrawRedeemer = peg_in_withdraw_redeemer.2nd
+
     let peg_in_prove_inputs =
       list.indexed_foldr(
         peg_in_inputs,
         [],
         fn(index, input, result) {
-          let peg_in_withdraw_redeemer =
-            utils.safe_list_at(
-              self.redeemers,
-              redeemer.peg_in_withdraw_redeemer_index,
-            )
-          expect
-            peg_in_withdraw_redeemer.1st == Withdraw(Script(peg_in_policy_id))
-          expect peg_in_redeemer: PegInWithdrawRedeemer =
-            peg_in_withdraw_redeemer.2nd
           let peg_in_redeemer_action =
             utils.safe_list_at(peg_in_redeemer.actions_for_each_input, index)
 
@@ -61,10 +58,7 @@ validator btc_mint_validator(
         fn(output) { quantity_of(output.value, policy_id, btc_asset_name) > 0 },
       )
 
-    if list.length(minted_tokens) > 0 {
-      let only_btc_minted = list.length(flatten(self.mint)) == 1
-      let total_minted_btc = quantity_of(self.mint, policy_id, btc_asset_name)
-
+    if total_minted_btc > 0 {
       let total_btc_in_output =
         list.indexed_foldr(
           peg_in_prove_inputs,

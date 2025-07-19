@@ -77,14 +77,6 @@ validator mint(config_policy_id: PolicyId, config_asset_name: ByteArray) {
             node_outputs,
             node_mint,
           ),
-          ordered.prepend(
-            Key(key_to_prepend),
-            prepended_node_output_index,
-            anchor_node_output_index,
-            node_in_outputs,
-            node_outputs,
-            node_mint,
-          ),
           list.has(self.extra_signatories, key_to_prepend),
           registered_spo_data.registration_time == valid_to + spo_registration_duration,
           verify_ed25519_signature(

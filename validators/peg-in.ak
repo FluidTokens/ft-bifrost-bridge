@@ -7,7 +7,6 @@ use bifrost/types/bitcoin_oracle.{OracleState}
 use bifrost/types/peg_in.{
   Cancel, PegInDatum, PegInMintRedeemer, PegInWithdrawRedeemer, Prove,
 }
-use bifrost/types/treasury_info.{TreasuryInfoDatum}
 use bifrost/utils
 use cardano/address.{Credential, Script}
 use cardano/assets.{PolicyId, quantity_of, tokens}
@@ -32,24 +31,24 @@ validator peg_in_validator(
       )
     let treasury_info_nft_policy_id =
       builtin.un_b_data(utils.safe_list_at(config, 0))
-    let treasury_info_nft_asset_name =
-      builtin.un_b_data(utils.safe_list_at(config, 1))
     let minted_tokens =
       list.filter(
         dict.to_pairs(tokens(self.mint, policy_id)),
         fn(tokenPair) { tokenPair.2nd > 0 },
       )
-    let peg_in_outputs =
-      list.filter(
-        self.outputs,
-        fn(output) {
-          output.address.payment_credential == Script(peg_in_spend_script_hash)
-        },
-      )
-    let input_ref_hash = utils.hash_output_ref(redeemer.input_ref)
-    let is_input_ref_spent =
-      option.is_some(find_input(self.inputs, redeemer.input_ref))
     if list.length(minted_tokens) > 0 {
+      let peg_in_outputs =
+        list.filter(
+          self.outputs,
+          fn(output) {
+            output.address.payment_credential == Script(
+              peg_in_spend_script_hash,
+            )
+          },
+        )
+      let input_ref_hash = utils.hash_output_ref(redeemer.input_ref)
+      let is_input_ref_spent =
+        option.is_some(find_input(self.inputs, redeemer.input_ref))
       let is_each_minted_token_accounted_for =
         list.indexed_foldr(
           minted_tokens,
@@ -74,12 +73,16 @@ validator peg_in_validator(
                 self.reference_inputs,
                 redeemer.treasury_info_ref_input_index,
               )
-            let output_has_correct_datum =
-              datum.treasury_btc_address == get_current_treasury_btc_address(
+
+            let treasury_info =
+              utils.get_treasury_info_as_data_list(
+                treasury_info_ref_input,
                 treasury_info_nft_policy_id,
-                treasury_info_nft_asset_name,
-                treasury_info_ref_input.output,
               )
+            let current_treasury_btc_address =
+              builtin.un_b_data(utils.safe_list_at(treasury_info, 0))
+            let output_has_correct_datum =
+              datum.treasury_btc_address == current_treasury_btc_address
             and {
               quantity == 1,
               correct_asset_name,
@@ -222,22 +225,6 @@ validator peg_in_validator(
   else(_) {
     fail
   }
-}
-
-fn get_current_treasury_btc_address(
-  treasury_info_nft_policy_id: ByteArray,
-  treasury_info_nft_asset_name: ByteArray,
-  treasury_info_ref_input_output: Output,
-) {
-  expect InlineDatum(outputDatum) = treasury_info_ref_input_output.datum
-  expect datum: TreasuryInfoDatum = outputDatum
-  expect
-    quantity_of(
-      treasury_info_ref_input_output.value,
-      treasury_info_nft_policy_id,
-      treasury_info_nft_asset_name,
-    ) == 1
-  datum.current_treasury_btc_address
 }
 
 fn zk_verify_peg_in_tx(
