@@ -6,8 +6,8 @@ use aiken/primitive/bytearray
 use bifrost/constants
 use bifrost/types/bitcoin_oracle.{OracleState}
 use bifrost/types/peg_out/peg_out_private.{
-  Cancel, PegOutPrivateDatum, PegOutPrivateMintRedeemer,
-  PegOutPrivateWithdrawRedeemer, Prove,
+  PegOutPrivateDatum, PegOutPrivateMintRedeemer, PegOutPrivateWithdrawRedeemer,
+  Prove,
 }
 use bifrost/utils
 use cardano/address.{Credential, Script}
@@ -41,7 +41,7 @@ validator peg_out_private_validator(
     let minted_tokens =
       list.filter(
         dict.to_pairs(tokens(self.mint, policy_id)),
-        fn(tokenPair) { tokenPair.2nd > 0 },
+        fn(token_pair) { token_pair.2nd > 0 },
       )
     if list.length(minted_tokens) > 0 {
       let peg_out_private_outputs =
@@ -73,8 +73,8 @@ validator peg_out_private_validator(
                 dict.size(assets.tokens(output.value, policy_id)) == 1,
                 assets.quantity_of(output.value, policy_id, asset_name) == 1,
               }
-            expect InlineDatum(outputDatum) = output.datum
-            expect datum: PegOutPrivateDatum = outputDatum
+            expect InlineDatum(output_datum) = output.datum
+            expect datum: PegOutPrivateDatum = output_datum
             let treasury_info_ref_input =
               utils.safe_list_at(
                 self.reference_inputs,
@@ -154,66 +154,42 @@ validator peg_out_private_validator(
           utils.safe_list_at(redeemer.actions_for_each_input, index)
         let is_owner =
           utils.is_signed_by(datum.ada_user_address, self.extra_signatories)
-        when redeemer_action is {
-          Cancel { peg_out_private_token_asset_name } -> {
-            let burn_the_nft = and {
-                quantity_of(
-                  input.output.value,
-                  peg_out_private_policy_id,
-                  peg_out_private_token_asset_name,
-                ) == 1,
-                quantity_of(
-                  self.mint,
-                  peg_out_private_policy_id,
-                  peg_out_private_token_asset_name,
-                ) == -1,
-              }
-            and {
-              is_owner,
-              burn_the_nft,
-            }
-          }
-          Prove {
-            peg_out_private_token_asset_name,
+        let Prove {
+          peg_out_private_token_asset_name,
+          oracle_state_ref_input_index,
+        } = redeemer_action
+        let btc_policy_id = builtin.un_b_data(utils.safe_list_at(config, 1))
+        let btc_oracle_policy_id =
+          builtin.un_b_data(utils.safe_list_at(config, 2))
+
+        let oracle_state_ref_input =
+          utils.safe_list_at(
+            self.reference_inputs,
             oracle_state_ref_input_index,
-          } -> {
-            let btc_policy_id = builtin.un_b_data(utils.safe_list_at(config, 1))
-            let btc_oracle_policy_id =
-              builtin.un_b_data(utils.safe_list_at(config, 2))
+          )
 
-            let oracle_state_ref_input =
-              utils.safe_list_at(
-                self.reference_inputs,
-                oracle_state_ref_input_index,
-              )
-
-            let oracle_state =
-              utils.get_oracle_state(
-                oracle_state_ref_input,
-                btc_oracle_policy_id,
-              )
-            let zk_verification = zk_verify_refund(oracle_state)
-            let burn_the_nft = and {
-                quantity_of(
-                  input.output.value,
-                  peg_out_private_policy_id,
-                  peg_out_private_token_asset_name,
-                ) == 1,
-                quantity_of(
-                  self.mint,
-                  peg_out_private_policy_id,
-                  peg_out_private_token_asset_name,
-                ) == -1,
-              }
-            let burn_the_btc =
-              quantity_of(self.mint, btc_policy_id, constants.btc_asset_name) == datum.btc_amount_to_burn * -1
-            and {
-              is_owner,
-              zk_verification,
-              burn_the_nft,
-              burn_the_btc,
-            }
+        let oracle_state =
+          utils.get_oracle_state(oracle_state_ref_input, btc_oracle_policy_id)
+        let zk_verification = zk_verify_refund(oracle_state)
+        let burn_the_nft = and {
+            quantity_of(
+              input.output.value,
+              peg_out_private_policy_id,
+              peg_out_private_token_asset_name,
+            ) == 1,
+            quantity_of(
+              self.mint,
+              peg_out_private_policy_id,
+              peg_out_private_token_asset_name,
+            ) == -1,
           }
+        let burn_the_btc =
+          quantity_of(self.mint, btc_policy_id, constants.btc_asset_name) == datum.btc_amount_to_burn * -1
+        and {
+          is_owner,
+          zk_verification,
+          burn_the_nft,
+          burn_the_btc,
         }
       },
     )
