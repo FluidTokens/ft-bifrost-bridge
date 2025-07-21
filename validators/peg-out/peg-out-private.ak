@@ -6,8 +6,8 @@ use aiken/primitive/bytearray
 use bifrost/constants
 use bifrost/types/bitcoin_oracle.{OracleState}
 use bifrost/types/peg_out/peg_out_private.{
-  PegOutPrivateDatum, PegOutPrivateMintRedeemer, PegOutPrivateWithdrawRedeemer,
-  Prove,
+  Cancel, PegOutPrivateDatum, PegOutPrivateMintRedeemer,
+  PegOutPrivateWithdrawRedeemer, Prove,
 }
 use bifrost/utils
 use cardano/address.{Credential, Script}
@@ -154,42 +154,112 @@ validator peg_out_private_validator(
           utils.safe_list_at(redeemer.actions_for_each_input, index)
         let is_owner =
           utils.is_signed_by(datum.ada_user_address, self.extra_signatories)
-        let Prove {
-          peg_out_private_token_asset_name,
-          oracle_state_ref_input_index,
-        } = redeemer_action
-        let btc_policy_id = builtin.un_b_data(utils.safe_list_at(config, 1))
-        let btc_oracle_policy_id =
-          builtin.un_b_data(utils.safe_list_at(config, 2))
-
-        let oracle_state_ref_input =
-          utils.safe_list_at(
-            self.reference_inputs,
+        when redeemer_action is {
+          Cancel {
+            peg_out_private_token_asset_name,
             oracle_state_ref_input_index,
-          )
+            treasury_info_ref_input_index,
+          } -> {
+            let btc_oracle_policy_id =
+              builtin.un_b_data(utils.safe_list_at(config, 2))
 
-        let oracle_state =
-          utils.get_oracle_state(oracle_state_ref_input, btc_oracle_policy_id)
-        let zk_verification = zk_verify_refund(oracle_state)
-        let burn_the_nft = and {
-            quantity_of(
-              input.output.value,
-              peg_out_private_policy_id,
-              peg_out_private_token_asset_name,
-            ) == 1,
-            quantity_of(
-              self.mint,
-              peg_out_private_policy_id,
-              peg_out_private_token_asset_name,
-            ) == -1,
+            let oracle_state_ref_input =
+              utils.safe_list_at(
+                self.reference_inputs,
+                oracle_state_ref_input_index,
+              )
+
+            let oracle_state =
+              utils.get_oracle_state(
+                oracle_state_ref_input,
+                btc_oracle_policy_id,
+              )
+            let treasury_info_nft_policy_id =
+              builtin.un_b_data(utils.safe_list_at(config, 0))
+            let treasury_info_ref_input =
+              utils.safe_list_at(
+                self.reference_inputs,
+                treasury_info_ref_input_index,
+              )
+            let treasury_info =
+              utils.get_treasury_info_as_data_list(
+                treasury_info_ref_input,
+                treasury_info_nft_policy_id,
+              )
+            let current_treasury_btc_address =
+              builtin.un_b_data(utils.safe_list_at(treasury_info, 0))
+            let burn_the_nft = and {
+                quantity_of(
+                  input.output.value,
+                  peg_out_private_policy_id,
+                  peg_out_private_token_asset_name,
+                ) == 1,
+                quantity_of(
+                  self.mint,
+                  peg_out_private_policy_id,
+                  peg_out_private_token_asset_name,
+                ) == -1,
+              }
+            let zk_verification =
+              zk_verify_missed_peg_out(
+                oracle_state,
+                datum.treasury_btc_address,
+                current_treasury_btc_address,
+                peg_out_private_token_asset_name,
+              )
+            and {
+              is_owner,
+              burn_the_nft,
+              datum.treasury_btc_address != current_treasury_btc_address,
+              zk_verification,
+            }
           }
-        let burn_the_btc =
-          quantity_of(self.mint, btc_policy_id, constants.btc_asset_name) == datum.btc_amount_to_burn * -1
-        and {
-          is_owner,
-          zk_verification,
-          burn_the_nft,
-          burn_the_btc,
+          Prove {
+            peg_out_private_token_asset_name,
+            oracle_state_ref_input_index,
+          } -> {
+            let btc_policy_id = builtin.un_b_data(utils.safe_list_at(config, 1))
+            let btc_oracle_policy_id =
+              builtin.un_b_data(utils.safe_list_at(config, 2))
+
+            let oracle_state_ref_input =
+              utils.safe_list_at(
+                self.reference_inputs,
+                oracle_state_ref_input_index,
+              )
+
+            let oracle_state =
+              utils.get_oracle_state(
+                oracle_state_ref_input,
+                btc_oracle_policy_id,
+              )
+            let zk_verification =
+              zk_verify_refund(
+                oracle_state,
+                datum.treasury_btc_address,
+                peg_out_private_token_asset_name,
+              )
+            let burn_the_nft = and {
+                quantity_of(
+                  input.output.value,
+                  peg_out_private_policy_id,
+                  peg_out_private_token_asset_name,
+                ) == 1,
+                quantity_of(
+                  self.mint,
+                  peg_out_private_policy_id,
+                  peg_out_private_token_asset_name,
+                ) == -1,
+              }
+            let burn_the_btc =
+              quantity_of(self.mint, btc_policy_id, constants.btc_asset_name) == datum.btc_amount_to_burn * -1
+            and {
+              is_owner,
+              zk_verification,
+              burn_the_nft,
+              burn_the_btc,
+            }
+          }
         }
       },
     )
@@ -200,9 +270,26 @@ validator peg_out_private_validator(
   }
 }
 
-fn zk_verify_refund(_oracle_state: OracleState) {
+fn zk_verify_missed_peg_out(
+  _oracle_state: OracleState,
+  _old_treasury_btc_address: ByteArray,
+  _new_treasury_btc_address: ByteArray,
+  _peg_out_private_nft_asset_name: ByteArray,
+) {
   //TODO zk proof of the treasury movement tx where:
-  //1) the refund has happened coming from datum.treasury_btc_address
+  //1) the tx has happened coming from old_treasury_btc_address to new_treasury_btc_address
+  //2) no output goes to datum.btc_destination_address with output.metadata == peg_out_private_nft_asset_name
+  True
+}
+
+fn zk_verify_refund(
+  _oracle_state: OracleState,
+  _treasury_btc_address: ByteArray,
+  _peg_out_private_nft_asset_name: ByteArray,
+) {
+  //TODO zk proof of the treasury movement tx where:
+  //1) the refund has happened coming from treasury_btc_address
   //2) datum.btc_destination_address receives exactly btc_amount_to_burn BTC
+  //3) output.metadata == peg_out_private_nft_asset_name
   True
 }

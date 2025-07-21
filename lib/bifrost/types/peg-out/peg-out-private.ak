@@ -20,6 +20,14 @@ pub type PegOutPrivateWithdrawRedeemer {
 }
 
 pub type PegOutPrivateAction {
+  //Cancel includes getting back the locked fBTC.
+  //This is doable only after the Treasury Movement has been registered on Cardano.
+  //A ZK proof is required showing that for some reason the peg out didn't happen on Bitcoin
+  Cancel {
+    peg_out_private_token_asset_name: ByteArray,
+    oracle_state_ref_input_index: Int,
+    treasury_info_ref_input_index: Int,
+  }
   Prove {
     peg_out_private_token_asset_name: ByteArray,
     oracle_state_ref_input_index: Int,
