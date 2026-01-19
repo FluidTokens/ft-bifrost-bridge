@@ -9,6 +9,8 @@ Bifrost takes inspiration from all these solutions, but this time Cardano is use
 
 It then becomes easier to connect Cardano, a UTXO blockchain with smart contracts, to other smart contract blockchains and Layer 2s, making Cardano the central component of a safe bridging process.
 
+![General bridge design](./images/Bridging_Design.png)
+
 The Cardano SPOs collectively become the responsible custodians of bridged assets on the original blockchain. For example, SPOs keep and manage the locked BTC on the Bitcoin side, while its bridged version bBTC circulates freely on Cardano.
 
 Bridge | Stacks Frost bridge | BitVM2 | Rosen Bridge | Bifrost |
@@ -29,7 +31,7 @@ Once big amounts of liquidity have been bridged to Cardano, for this type of sma
 The security of Bifrost is guaranteed by SPOs participation: for a strong and reliable bridge, most of the top SPOs by delegation must participate in the protocol.
 
 ## Components
-
+![Bifrost High Level Diagram](./images/Bifrost_HLD.png)
 Bifrost setup is made by the following components:
 
 * **Cardano**: the destination blockchain where bridged assets can safely participate in DeFi activities.
