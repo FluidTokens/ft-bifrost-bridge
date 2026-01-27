@@ -82,7 +82,7 @@ These are the steps to execute a correct peg-in:
 * On Cardano, mint a unique peg_in.ak NFT and send it to the peg_in.ak spend script, putting in the datum the current Bitcoin Treasury Address.
 * On Bitcoin, send to the Bitcoin Treasury Address the amount of BTC to peg-in in a single Output adding in the transaction metadata the asset name of the peg_in.ak NFT.
 * Wait for the watchtowers to post on Cardano the Bitcoin block that contains the Bitcoin transaction (at least 100 Bitcoin blocks must have passed, ~12  hours).
-* Create a ZK proof of the Bitcoin transaction and use it to complete the Cardano peg-in request, minting the correct amount of fBTC and burning the peg-in NFT.
+* Create a peg-in Bitcoin transaction inclusion proof using Binocular oracle and use it to complete the Cardano peg-in request, minting the correct amount of fBTC and burning the peg-in NFT.
 
 ## User peg-out flow
 
@@ -94,7 +94,7 @@ These are the steps to execute a correct peg-out:
 * Retrieve the current Bitcoin Treasury Address that is controlled by the Cardano SPOs.
 * On Cardano, mint a unique peg_out.ak NFT and send it, along with the correct number of fBTC, to the peg_out.ak spend script, putting in the datum the current Bitcoin Treasury Address.
 * Wait for the watchtowers to post the Treasury Movement transaction of the next Epoch, that includes the refunds for the withdrawers (at least 8 Bitcoin blocks must have passed). At this point, you have received your BTC on Bitcoin from the Bitcoin Treasury with a utxo that contains your peg_out.ak NFT AssetName in the transaction metadata.
-* Create a ZK proof of the refund and use it to complete the Cardano peg-out request, burning the peg_out.ak NFT and the 30 fBTC.
+* Create a peg-out Bitcoin transaction inclusion proof using Binocular oracle and use it to complete the Cardano peg-out request, burning the peg_out.ak NFT and the 30 fBTC.
 
 ## Guaranteeing censor-resistant peg-ins and peg-outs
 
