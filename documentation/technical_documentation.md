@@ -197,6 +197,8 @@ A single global UTxO that tracks all registered `pool_id` values using a **Patri
 - Values: empty (presence in tree is sufficient; binding data stored in individual Membership UTxOs).
 - The PMT provides $O(\log n)$ proofs of membership and non-membership.
 
+The PMT implementation uses the Haskell Merkle Patricia Forestry library [8]. On-chain verification is implemented in Aiken [9].
+
 #### 4. Registration Message and Signature
 
 The SPO's cold key signs a message binding their Bifrost identity:
@@ -674,3 +676,7 @@ This 1-of-n honesty assumption is significantly weaker than typical bridge trust
 [6] *zkFold Symbolic* (github repository): https://github.com/zkFold/symbolic/tree/main/symbolic-base/src/ZkFold/Protocol/Plonkup
 
 [7] *zkFold-Cardano* (github repository): https://github.com/zkFold/zkfold-cardano/tree/main/zkfold-cardano/src/ZkFold/Cardano
+
+[8] *Haskell Merkle Patricia Forestry* (github repository): https://github.com/zkFold/haskell-merkle-patricia-forestry
+
+[9] *Bifrost On-Chain Validators* (Aiken): https://github.com/FluidTokens/ft-bifrost-bridge/tree/main/onchain/validators
