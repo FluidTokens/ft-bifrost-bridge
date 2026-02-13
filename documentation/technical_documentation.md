@@ -55,6 +55,8 @@ Bifrost logic is fully encapsulated in the following solutions:
 
 ## Components relationships
 
+![Bifrost Flow Chart](./images/Bifrost_flow_chart.png)
+
 Watchtowers, who run the watchtower program, challenge each other to be the first to post the best source blockchain chain of valid blocks in the Watchtower smart contract. The winner for each chain is rewarded with some ADA, proportionally for each valid block posted.
 
 Depositors, who want to peg-in, mint the proper NFT in peg_in.ak, send their source blockchain assets to the treasury address and wait for the epoch to end.
