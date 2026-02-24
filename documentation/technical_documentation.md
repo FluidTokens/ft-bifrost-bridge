@@ -83,10 +83,10 @@ These are the steps to execute a correct peg-in:
 
 * Check the status of Bifrost: if the bridge is correctly operational and we are not too near the end of the current Cardano epoch, the peg-in can be done.
 * Retrieve the current Bitcoin Treasury Address that is controlled by the Cardano SPOs.
-* On Cardano, mint a unique peg_in.ak NFT and send it to the peg_in.ak spend script, putting in the datum the current Bitcoin Treasury Address.
-* On Bitcoin, send to the Bitcoin Treasury Address the amount of BTC to peg-in in a single Output adding in the transaction metadata the asset name of the peg_in.ak NFT.
+* On Cardano, send MIN_ADA to the peg_in.ak spend script, putting in the datum of this utxo the current Bitcoin Treasury Address.
+* On Bitcoin, send the amount of BTC to peg-in in a Bitcoin Script that can be spent in under two conditions: either the Bitcoin Treasury key can spend it or you can spend it after 1 month has passed. This allows to either let the SPOs send your BTC to the Treasury or let you to get back your BTC in case of unexpected problems (even if theorically it should never happen).
 * Wait for the watchtowers to post on Cardano the Bitcoin block that contains the Bitcoin transaction (at least 100 Bitcoin blocks must have passed, ~12  hours).
-* Create a peg-in Bitcoin transaction inclusion proof using Binocular oracle and use it to complete the Cardano peg-in request, minting the correct amount of fBTC and burning the peg-in NFT.
+* Create a peg-in Bitcoin transaction inclusion proof using Binocular oracle and use it to complete the Cardano peg-in request, proving that the peg-in utxo doesn't exist yet in the merkle tree of already completed peg-ins and minting the correct amount of fBTC.
 
 ## User peg-out flow
 
@@ -96,9 +96,9 @@ These are the steps to execute a correct peg-out:
 
 * Check the status of Bifrost: if the bridge is correctly operational and we are not too near the end of the current Cardano epoch, the peg-in can be done.
 * Retrieve the current Bitcoin Treasury Address that is controlled by the Cardano SPOs.
-* On Cardano, mint a unique peg_out.ak NFT and send it, along with the correct number of fBTC, to the peg_out.ak spend script, putting in the datum the current Bitcoin Treasury Address.
-* Wait for the watchtowers to post the Treasury Movement transaction of the next Epoch, that includes the refunds for the withdrawers (at least 8 Bitcoin blocks must have passed). At this point, you have received your BTC on Bitcoin from the Bitcoin Treasury with a utxo that contains your peg_out.ak NFT AssetName in the transaction metadata.
-* Create a peg-out Bitcoin transaction inclusion proof using Binocular oracle and use it to complete the Cardano peg-out request, burning the peg_out.ak NFT and the 30 fBTC.
+* On Cardano, send the correct number of fBTC to the peg_out.ak spend script, putting in the datum the current Bitcoin Treasury Address.
+* Wait for the watchtowers to post the Treasury Movement transaction of the next Epoch, that includes the refunds for the withdrawers (at least 8 Bitcoin blocks must have passed). At this point, you have received your BTC on Bitcoin from the Bitcoin Treasury.
+* Now you can create a peg-out Bitcoin transaction inclusion proof using Binocular oracle and use it to complete the Cardano peg-out request, burning the locked fBTC and retrieving the MIN_ADA. If for some unexpected reasons the bridge didn't create the peg-out transaction on Bitcoin, you can use an exclusion proof to unlock your fBTC and try again.
 
 ## Guaranteeing censor-resistant peg-ins and peg-outs
 
@@ -110,7 +110,7 @@ As long as the Cardano SPOs and the watchtowers are collaborative, each peg-in o
 Therefore, the potential additional trust assumptions in Bifrost are the Cardano SPOs and the watchtowers:
 
 * Even if the user becomes a Cardano SPO, he would be just a small part of the total weight-based set of SPOs. Luckily, the strong majority of the SPOs are always incentivized in behaving correctly and on time, like they do when they participate in block-production consensus on Cardano. In fact, the security of Bifrost directly impacts their revenue model: more assets moved with Bifrost imply more Cardano transactions and an increase of the ADA price caused by the bigger demand to execute these transactions. Cardano SPOs want the bridge to work well because their revenue stream strongly depends on it.
-* Watchtowers are an "always open" set of nodes that challenge each other to post on Cardano the best chain of block from the source blockchains (ex. from Bitcoin). While the watchtowers earn rewards for doing this job, they could potentially collude and stop the posting of new blocks, halting the bridge for an unbounded timeframe. In these case the user that wants to peg-in or peg-out can spin up a watchtower himself and posting the source blockchains blocks starting from the latest confirmed ones. Because every user is able to become a watchtower any time, there will be now a safe challenge among them to post the correct chain of blocks, resuming the Bifrost operations even in case of collusion.
+* Watchtowers are an "always open" set of nodes that challenge each other to post on Cardano the best chain of block from the source blockchains (ex. from Bitcoin). While the watchtowers earn rewards for doing this job, they could potentially collude and stop the posting of new blocks, halting the bridge for an unbounded timeframe. In these case the user who wants to peg-in or peg-out can spin up a watchtower himself and post the source blockchains blocks starting from the latest confirmed ones. Because every user is able to become a watchtower any time, there will be now a safe challenge among them to post the correct chain of blocks, resuming the Bifrost operations even in case of collusion.
 
 ## Flow of Bitcoin over epochs, cerimonies
 
@@ -133,7 +133,12 @@ todo
 todo
 
 ## SPO Program
-Signature aggregation based on the FROST protocol requires: a) registration of SPOs to participate in the protocol, b) formation of a roster of Cardano SPOs and distributed key generation (every epoch), and c) group signing.  We describe each in detail.
+
+It's the program that Cardano SPOs must run and it allows signature aggregation. Being based on the FROST protocol requires: 
+1. registration of SPOs to participate in the protocol
+2. formation of a roster of Cardano SPOs and distributed key generation (every epoch) 
+3. group signing.  
+We describe each in detail.
 
 ### SPO Registration
 
@@ -530,7 +535,6 @@ This completes the epoch transition. The new roster now controls the treasury.
 
 ### Group signing
 
-
 In what follows we summarize the *preprocess* and signing stages according to the FROST documentation [2], closely following their notation, and emphasizing special considerations relevant to SPO-based FROST groups.
 
 #### Preprocess
@@ -552,15 +556,16 @@ Each SPO `P_i` in the subset participating in `signing` performs these steps.
 
 ## SPOs communication
 
-The main algorithms have been chosen: eventual ZK proof algorithms needed, consensus among SPOs and communication among SPOs.
+One of the most critical parts of Bifrost is the communication among SPOs and their consensus.
 
-For ZK proofs we will use **Plonkup**; see [5].  We have a complete implementation of Plonkup, as can be seen in repositories [6] and [7].
+For ZK proofs we will use **Plonkup**; see [5]. We have a complete implementation of Plonkup, as can be seen in repositories [6] and [7].
 
-## Watchtowers and Bitcoin State Verification (Lantr)
+## Watchtowers and source blockchain (eg. Bitcoin) State Verification
 
 ### Watchtower Architecture
 
 Watchtowers are permissionless participants who maintain Bitcoin blockchain state on Cardano. They serve as the critical link between the Bitcoin and Cardano networks, ensuring that BiFrost has accurate, up-to-date information about the Bitcoin blockchain.
+Watchtowers use Binocular, a technology stack previously created and now improved on Bifrost.
 
 **Key Design Principles:**
 
@@ -572,7 +577,7 @@ Watchtowers are permissionless participants who maintain Bitcoin blockchain stat
 
 1. **Monitor Bitcoin Network**: Watchtowers continuously track the Bitcoin blockchain for new blocks as they are mined.
 
-2. **Submit Block Headers**: When new Bitcoin blocks are found, watchtowers submit the 80-byte block headers to the Binocular Oracle smart contract on Cardano. These headers contain all information needed to verify Bitcoin consensus rules.
+2. **Submit Block Headers**: When new Bitcoin blocks are found, watchtowers submit the 80-byte block headers to watchtower.ak, which is the Binocular Oracle smart contract on Cardano. These headers contain all information needed to verify Bitcoin consensus rules.
 
 3. **Compete for Accuracy**: Multiple watchtowers naturally compete to submit the most accurate chain. If a watchtower submits headers from an invalid or weaker fork, other watchtowers can challenge by submitting the correct chain with higher cumulative proof-of-work.
 
@@ -661,7 +666,7 @@ BiFrost's watchtower design relies on a minimal trust assumption: only one hones
 * They can then submit the necessary Bitcoin blocks and proofs for their own transactions
 * This ensures BiFrost remains operational even in adversarial conditions
 
-This 1-of-n honesty assumption is significantly weaker than typical bridge trust models that require trusting a majority or specific set of operators.
+This 1-of-n honesty assumption is significantly stronger than typical bridge trust models that require trusting a majority or specific set of operators.
 
 ## References
 
