@@ -51,7 +51,7 @@ Bifrost logic is fully encapsulated in the following solutions:
   * **watchtower.ak**: The watchtowers (anyone) post the best chain of blocks here, other watchtowers eventually challenge it by posting a better version and the winner gets rewarded by the end of the availability window.
   * **peg_in.ak**: watchtowers create PegInRequest UTxOs here by minting a unique NFT and providing a Binocular inclusion proof of the source blockchain deposit transaction. The datum contains the depositor's Cardano address, source blockchain txid, output index, and deposit amount. This makes peg-in deposits visible to SPOs for inclusion in the Treasury Movement transaction.
   * **peg_out.ak**: when a withdrawer wants to unlock the bridged assets on the proper source blockchain, he locks his bridged assets at this smart contract along with a freshly minted unique NFT. The datum contains the source blockchain destination address where assets should be sent. SPOs read these UTxOs to include peg-out payments in the Treasury Movement transaction.
-  * **treasury.ak**: stores the current Treasury public key `Y` as a reference UTxO. After each DKG, the current roster posts the new group public key here, authenticated by a FROST group signature from the current roster. Depositors and validators read this to derive the current Treasury address. For the first epoch, the initial Treasury public key is set during protocol bootstrap.
+  * **treasury.ak**: stores the current Treasury public key $Y$ as a reference UTxO. After each DKG, the current roster posts the new group public key here, authenticated by a FROST group signature from the current roster. Depositors and validators read this to derive the current Treasury address. For the first epoch, the initial Treasury public key is set during protocol bootstrap.
   * **treasury_movement.ak**: SPOs post signed source blockchain Treasury Movement transactions here. The datum contains the serialized signed transaction, the epoch number, and references to the PegInRequest and PegOut UTxOs it covers. Watchtowers monitor this contract and relay the signed transactions to the source blockchain.
   * **bridged_asset.ak**: minting and burning of bridged assets (e.g. fBTC). Anyone can mint fBTC by providing a Binocular inclusion proof that the Treasury Movement transaction (which swept the corresponding peg-in) is confirmed on the source blockchain, along with a reference to the PegInRequest UTxO. Anyone can burn fBTC by providing a similar proof for a peg-out, along with a reference to the PegOut UTxO. This permissionless design ensures censorship resistance.
 
@@ -93,7 +93,7 @@ A user who wants to move his BTC from Bitcoin to Cardano is called a depositor.
 These are the steps to execute a correct peg-in:
 
 * Check the status of Bifrost: if the bridge is correctly operational and we are not too near the end of the current Cardano epoch, the peg-in can be done.
-* Retrieve the current Bitcoin Treasury Address from `treasury.ak` on Cardano (the Treasury public key `Y` is published there after each DKG).
+* Retrieve the current Bitcoin Treasury Address from `treasury.ak` on Cardano (the Treasury public key $Y$ is published there after each DKG).
 * On Bitcoin, send the amount of BTC to peg-in to a Taproot address that can be spent under two conditions: either the Bitcoin Treasury key can spend it or the depositor can spend it after 1 month has passed. This allows either the SPOs to sweep the BTC into the Treasury or the depositor to reclaim the BTC in case of unexpected problems. The transaction must include an OP_RETURN output containing: `"BFR" || cardano_address (57 bytes)`. This metadata allows watchtowers to identify peg-in transactions on the Bitcoin network and determines where fBTC will be minted.
 * Wait for watchtowers to detect the Bitcoin transaction, post the corresponding Bitcoin block to the Binocular Oracle, and create a PegInRequest UTxO on Cardano (peg_in.ak) by minting an NFT and providing a transaction inclusion proof.
 * Wait for the SPOs to include this peg-in in the Treasury Movement transaction at the next epoch boundary. The SPOs sign this transaction with FROST and post it to Cardano (treasury_movement.ak). Watchtowers then relay the signed transaction to Bitcoin.
@@ -309,7 +309,7 @@ The protocol supports **temporary banning** of SPOs who misbehave during DKG or 
 
 #### 1. Overview
 
-The FROST Distributed Key Generation (DKG) process runs **entirely off-chain** using SPOs' `bifrost_url` endpoints. The DKG produces a group public key `Y` and individual signing shares `s_i` for each participant. Upon successful completion, the **current roster** constructs and signs a Treasury Movement transaction that moves the treasury to the new address derived from `Y`, and posts the signed transaction to Cardano at `treasury_movement.ak` for watchtowers to relay to the source blockchain. No DKG result is posted on Cardano.
+The FROST Distributed Key Generation (DKG) process runs **entirely off-chain** using SPOs' `bifrost_url` endpoints. The DKG produces a group public key $Y$ and individual signing shares $s_i$ for each participant. Upon successful completion, the **current roster** constructs and signs a Treasury Movement transaction that moves the treasury to the new address derived from $Y$, and posts the signed transaction to Cardano at `treasury_movement.ak` for watchtowers to relay to the source blockchain. No DKG result is posted on Cardano.
 
 **Prerequisite**: SPOs must complete SPO Registration (see previous section) before participating in DKG.
 
@@ -340,11 +340,11 @@ All SPOs with valid Bifrost Membership Tokens (present in the registry linked-li
 
 ##### 4.2 Canonical Ordering
 
-Candidates are ordered **lexicographically by `bifrost_id_pk`** (32-byte comparison). Each participant is assigned an index `i = 1..n` based on their position in this ordering.
+Candidates are ordered **lexicographically by `bifrost_id_pk`** (32-byte comparison). Each participant is assigned an index $i = 1..n$ based on their position in this ordering.
 
 ##### 4.3 Candidate Information
 
-For each candidate `P_i`, the following information is retrieved:
+For each candidate $P_i$, the following information is retrieved:
 - `pool_id` — from Membership UTxO.
 - `bifrost_id_pk` — from Membership UTxO datum.
 - `bifrost_url` — from Membership UTxO datum.
@@ -352,27 +352,27 @@ For each candidate `P_i`, the following information is retrieved:
 
 #### 5. Round 0: Initialization
 
-Each SPO `P_i` performs the following initialization steps:
+Each SPO $P_i$ performs the following initialization steps:
 
 1. Determine the current epoch.
 2. Retrieve the registry linked-list state from the end of the previous epoch.
 3. Enumerate all candidates from the linked-list.
 4. Query delegated stake for each candidate.
-5. Compute threshold `t` as described in Section 3.
+5. Compute threshold $t$ as described in Section 3.
 6. Order candidates lexicographically by `bifrost_id_pk` and assign indices.
 7. Verify own participation (own `pool_id` is in the candidate set).
 
 #### 6. Round 1: Commitments and Proofs of Knowledge
 
-Each SPO `P_i` performs the following steps per FROST specification [2]:
+Each SPO $P_i$ performs the following steps per FROST specification [2]:
 
-1. Construct a random polynomial `f_i(x)` of degree `t-1` over the Secp256k1 scalar field.
-2. Compute proof of knowledge `sigma_i` of the degree-zero coefficient `a_{i0}`.
-3. Compute public commitment `C_i = [phi_{i0}, ..., phi_{i(t-1)}]` where `phi_{ij} = a_{ij} * G`.
+1. Construct a random polynomial $f_i(x)$ of degree $t-1$ over the Secp256k1 scalar field.
+2. Compute proof of knowledge $σ_i$ of the degree-zero coefficient $a_{i0}$.
+3. Compute public commitment $C_i = [φ_{i0}, ..., φ_{i(t-1)}]$ where $φ_{ij} = a_{ij} · G$.
 
 ##### 6.1 Round 1 Payload
 
-Each `P_i` publishes their Round 1 data at:
+Each $P_i$ publishes their Round 1 data at:
 
 ```
 <bifrost_url>/dkg/<epoch>/round1/<pool_id>.json
@@ -388,28 +388,28 @@ Each `P_i` publishes their Round 1 data at:
 ```
 
 Where:
-- `commitment` is an array of `t` compressed Secp256k1 points (33 bytes each).
+- `commitment` is an array of $t$ compressed Secp256k1 points (33 bytes each).
 - `sigma_i` is the Schnorr proof of knowledge (challenge || response, 64 bytes).
 
 ##### 6.2 Round 1 Verification
 
-Each `P_i` fetches Round 1 payloads from all other participants and verifies that `sigma_i` is a valid proof of knowledge for `phi_{l0}`.
+Each $P_i$ fetches Round 1 payloads from all other participants and verifies that $σ_i$ is a valid proof of knowledge for $φ_{l0}$.
 
-If verification fails for any participant `P_l`, the process proceeds to **Misbehavior Handling** (Section 9).
+If verification fails for any participant $P_l$, the process proceeds to **Misbehavior Handling** (Section 9).
 
 #### 7. Round 2: Secret Share Distribution
 
-Each SPO `P_i` computes and distributes secret shares to all other participants.
+Each SPO $P_i$ computes and distributes secret shares to all other participants.
 
 ##### 7.1 Share Computation
 
-For each participant `P_l` (where `l ≠ i`), compute the secret share `(l, f_i(l))`.
+For each participant $P_l$ (where $l ≠ i$), compute the secret share $(l, f_i(l))$.
 
 ##### 7.2 Share Encryption
 
-For each recipient `P_l`:
+For each recipient $P_l$:
 
-1. Generate ephemeral Secp256k1 keypair `(e_i, E_i)`.
+1. Generate ephemeral Secp256k1 keypair $(e_i, E_i)$.
 2. Compute shared secret: `ss = ECDH(e_i, bifrost_id_pk_l)`.
 3. Derive symmetric key: `k = HKDF(ss, info = "bifrost-dkg-share")`.
 4. Encrypt share: `ciphertext = f_i(l) XOR k` (32 bytes).
@@ -418,7 +418,7 @@ The share is a 32-byte Secp256k1 scalar, encrypted with the derived key.
 
 ##### 7.3 Round 2 Payload
 
-Each `P_i` publishes their Round 2 data at:
+Each $P_i$ publishes their Round 2 data at:
 
 ```
 <bifrost_url>/dkg/<epoch>/round2/<pool_id>.json
@@ -440,69 +440,59 @@ Each `P_i` publishes their Round 2 data at:
 
 Where:
 - `recipient_pool_id` identifies the intended recipient.
-- `ephemeral_pk` is the compressed Secp256k1 ephemeral public key `E_i`.
+- `ephemeral_pk` is the compressed Secp256k1 ephemeral public key $E_i$.
 - `ciphertext` is the XOR-encrypted share.
-- The `shares` array contains `n-1` entries (one per other participant).
+- The `shares` array contains $n-1$ entries (one per other participant).
 
 ##### 7.4 Round 2 Decryption and Verification
 
-Each recipient `P_l`:
+Each recipient $P_l$:
 
-1. Fetch Round 2 payload from each sender `P_i`.
+1. Fetch Round 2 payload from each sender $P_i$.
 2. Find the entry where `recipient_pool_id == pool_id_l`.
 3. Compute shared secret: `ss = ECDH(bifrost_id_sk_l, ephemeral_pk)`.
 4. Derive key `k = HKDF(ss, info = "bifrost-dkg-share")` and decrypt: `f_i(l) = ciphertext XOR k`.
 5. Verify the share against sender's Round 1 commitment:
-   ```
-   f_i(l) * G == sum_{j=0}^{t-1} (l^j * phi_{ij})
-   ```
 
-If verification fails for any share from `P_i`, the process proceeds to **Misbehavior Handling** (Section 9).
+   $f_i(l) · G = \sum_{j=0}^{t-1} (l^j · φ_{ij})$
+
+If verification fails for any share from $P_i$, the process proceeds to **Misbehavior Handling** (Section 9).
 
 #### 8. Finalization
 
-Upon successful verification of all shares, each `P_i`:
+Upon successful verification of all shares, each $P_i$:
 
-1. Computes their long-lived private signing share:
-   ```
-   s_i = sum_{l=1}^{n} f_l(i)
-   ```
+1. Computes their long-lived private signing share: $s_i = \sum_{l=1}^{n} f_l(i)$
 
-2. Computes their public verification share:
-   ```
-   Y_i = s_i * G
-   ```
+2. Computes their public verification share: $Y_i = s_i · G$
 
-3. Computes the group public key:
-   ```
-   Y = sum_{l=1}^{n} phi_{l0}
-   ```
+3. Computes the group public key: $Y = \sum_{l=1}^{n} φ_{l0}$
 
-4. Derives the Bitcoin treasury address from `Y` (Taproot address).
+4. Derives the Bitcoin treasury address from $Y$ (Taproot address).
 
-All participants arrive at the same group public key `Y`.
+All participants arrive at the same group public key $Y$.
 
-5. The **current roster** publishes the new group public key `Y` on Cardano at `treasury.ak`, authenticated by a FROST group signature from the current roster. This makes the new Treasury address publicly verifiable on-chain, allowing depositors to look up the correct Treasury address and enabling `peg_in.ak` to validate peg-in deposits on-chain.
+5. The **current roster** publishes the new group public key $Y$ on Cardano at `treasury.ak`, authenticated by a FROST group signature from the current roster. This makes the new Treasury address publicly verifiable on-chain, allowing depositors to look up the correct Treasury address and enabling `peg_in.ak` to validate peg-in deposits on-chain.
 
 #### 9. Misbehavior Handling
 
-If any participant `P_m` misbehaves (invalid proof of knowledge in Round 1, or invalid share in Round 2), the current roster **bans** them (Section 7.2) with an exponential timeout and restarts DKG.
+If any participant $P_m$ misbehaves (invalid proof of knowledge in Round 1, or invalid share in Round 2), the current roster **bans** them (Section 7.2) with an exponential timeout and restarts DKG.
 
 ##### 9.1 DKG Restart
 
 After the ban transaction is confirmed on Cardano:
 
 1. Banned SPOs are excluded from the candidate set for this epoch's DKG.
-2. Threshold `t` is recomputed with the reduced candidate set.
+2. Threshold $t$ is recomputed with the reduced candidate set.
 3. DKG restarts from Round 0.
 
 **Note**: Banning temporarily excludes the SPO with an exponentially increasing timeout, allowing them to rejoin after the ban expires.
 
 #### 10. Treasury Handoff
 
-Upon successful DKG completion and publication of the new Treasury public key `Y` to `treasury.ak`:
+Upon successful DKG completion and publication of the new Treasury public key $Y$ to `treasury.ak`:
 
-1. The **new roster** derives the Bitcoin Taproot address from group public key `Y`.
+1. The **new roster** derives the Bitcoin Taproot address from group public key $Y$.
 2. The **current roster** reads all confirmed PegInRequest UTxOs and pending PegOut UTxOs from Cardano.
 3. The **current roster** constructs a Treasury Movement Bitcoin transaction that:
    - Spends the current treasury UTxO, sending remaining funds to the new treasury address.
@@ -518,7 +508,7 @@ Once the Treasury Movement transaction is confirmed on Bitcoin, the epoch transi
 #### 11. Security Properties
 
 - **Off-chain execution**: No DKG data is posted on Cardano; only the signed Treasury Movement transaction (posted to `treasury_movement.ak`) and the resulting source blockchain transaction are publicly visible.
-- **Threshold security**: Any `t` signers control stake above the security threshold.
+- **Threshold security**: Any $t$ signers control stake above the security threshold.
 - **Misbehavior accountability**: Fraudulent SPOs can be identified and excluded.
 - **Current roster authority**: Only the current roster can authorize exclusions, preventing new roster self-dealing.
 - **Replay resistance**: Each DKG is bound to a unique epoch number.
@@ -530,20 +520,20 @@ In what follows we summarize the *preprocess* and signing stages according to th
 
 #### Preprocess
 
-Each SPO `P_i` in the roster performs this stage prior to signing.
-1. Samples random single-use nonces `(d_{ij}, e_{ij})`.
-2. Derives commitment shares `(D_{ij}, E_{ij})`.
-3. Stores `((d_{ij}, D_{ij})`, `(e_{ij}, E_{ij}))` for later use in signing operations.
-4. With `L_i` the list of `(D_{ij}, E_{ij})`, publishes `(i, L_i)` as datum attached to UTxO with participation token.
+Each SPO $P_i$ in the roster performs this stage prior to signing.
+1. Samples random single-use nonces $(d_{ij}, e_{ij})$.
+2. Derives commitment shares $(D_{ij}, E_{ij})$.
+3. Stores $((d_{ij}, D_{ij}), (e_{ij}, E_{ij}))$ for later use in signing operations.
+4. With $L_i$ the list of $(D_{ij}, E_{ij})$, publishes $(i, L_i)$ as datum attached to UTxO with participation token.
 
 ### Signing mechanism
 
-Each SPO `P_i` in the subset participating in `signing` performs these steps.
-1. Receives message `m` to be signed and queries from blockchain the list `B` of triads `(i, D_i, E_i)` corresponding to SPO’s in the subset.
-2. Each `P_i` then computes the set of binding values, the group commitment `R` and the challenge.
-3. Each `P_i` computes their response (signing share) `z_i` using their long-lived secret share `s_i`.
-4. Each `P_i` verifies the validity of each response `z_i`, identifying and reporting misbehaving participants.  If a misbehaving participant exists, process is aborted; otherwise continue.
-5. Each `P_i` can compute the group’s response (the sum of `z_i`‘s.), arriving to the same signature `sigma = (R, z)`, which they can publish along with message `m`.
+Each SPO $P_i$ in the subset participating in signing performs these steps.
+1. Receives message $m$ to be signed and queries from blockchain the list $B$ of triads $(i, D_i, E_i)$ corresponding to SPOs in the subset.
+2. Each $P_i$ then computes the set of binding values, the group commitment $R$ and the challenge.
+3. Each $P_i$ computes their response (signing share) $z_i$ using their long-lived secret share $s_i$.
+4. Each $P_i$ verifies the validity of each response $z_i$, identifying and reporting misbehaving participants. If a misbehaving participant exists, process is aborted; otherwise continue.
+5. Each $P_i$ can compute the group's response (the sum of $z_i$'s), arriving to the same signature $σ = (R, z)$, which they can publish along with message $m$.
 
 ## SPOs communication
 
@@ -555,7 +545,7 @@ For ZK proofs we will use **Plonkup**; see [5]. We have a complete implementatio
 
 ### Watchtower Architecture
 
-Watchtowers are permissionless participants who maintain Bitcoin blockchain state on Cardano. They serve as the critical link between the Bitcoin and Cardano networks, ensuring that BiFrost has accurate, up-to-date information about the Bitcoin blockchain.
+Watchtowers are permissionless participants who maintain Bitcoin blockchain state on Cardano. They serve as the critical link between the Bitcoin and Cardano networks, ensuring that Bifrost has accurate, up-to-date information about the Bitcoin blockchain.
 Watchtowers use Binocular, a technology stack previously created and now improved on Bifrost.
 
 **Key Design Principles:**
@@ -574,9 +564,9 @@ Watchtowers use Binocular, a technology stack previously created and now improve
 
 4. **Maintain Oracle Liveness**: Watchtowers ensure the Oracle never becomes stale by continuously updating it with the latest Bitcoin state. This is essential for timely peg-in and peg-out processing.
 
-### BiFrost-Specific Watchtower Duties
+### Bifrost-Specific Watchtower Duties
 
-Beyond maintaining general Bitcoin state, watchtowers perform specialized duties for the BiFrost bridge. The architecture has the following key constraints: SPO programs have access to Cardano chain state but not to Bitcoin chain state; watchtowers have access to Bitcoin chain state but not to SPO programs or SPO private keys. Cardano serves as the shared data layer between both parties.
+Beyond maintaining general Bitcoin state, watchtowers perform specialized duties for the Bifrost bridge. The architecture has the following key constraints: SPO programs have access to Cardano chain state but not to Bitcoin chain state; watchtowers have access to Bitcoin chain state but not to SPO programs or SPO private keys. Cardano serves as the shared data layer between both parties.
 
 **Peg-in Detection and Posting**
 
@@ -586,7 +576,7 @@ Beyond maintaining general Bitcoin state, watchtowers perform specialized duties
   * Minting a unique PegIn NFT.
   * Providing a transaction inclusion proof consisting of: the raw Bitcoin transaction data, a Merkle proof linking the transaction to the block's Merkle root, and a reference to the confirmed block in the Binocular Oracle.
   * Setting the datum with: depositor's Cardano address (extracted from the OP_RETURN), Bitcoin txid, output index, BTC amount, and the Treasury Taproot address the peg-in was sent to.
-* The on-chain peg_in.ak validator verifies: (1) the Merkle proof is valid against the referenced block in Binocular, (2) the block has sufficient confirmations, (3) the OP_RETURN metadata matches the datum, (4) the transaction output sends to a valid Taproot address derived from the current Treasury public key `Y` stored in `treasury.ak`.
+* The on-chain peg_in.ak validator verifies: (1) the Merkle proof is valid against the referenced block in Binocular, (2) the block has sufficient confirmations, (3) the OP_RETURN metadata matches the datum, (4) the transaction output sends to a valid Taproot address derived from the current Treasury public key $Y$ stored in `treasury.ak`.
 
 **Treasury Movement Relay**
 
@@ -630,7 +620,7 @@ Blocks progress through multiple stages:
 * Only blocks with 100+ confirmations are considered for finality
 
 **Transaction Inclusion Proofs**
-For BiFrost operations, the Oracle provides data for Watchtowers to construct proofs that:
+For Bifrost operations, the Oracle provides data for Watchtowers to construct proofs that:
 
 * Prove a specific transaction exists within a confirmed block
 * Prove the block is part of the confirmed chain
@@ -649,7 +639,7 @@ This mechanism ensures that even if a malicious watchtower pre-computes a short 
 
 ### Security: 1-Honest-Watchtower Assumption
 
-BiFrost's watchtower design relies on a minimal trust assumption: only one honest watchtower needs to exist for the system to function correctly.
+Bifrost's watchtower design relies on a minimal trust assumption: only one honest watchtower needs to exist for the system to function correctly.
 
 **Why This Works:**
 
@@ -661,7 +651,7 @@ BiFrost's watchtower design relies on a minimal trust assumption: only one hones
 
 * A user wanting to peg-in or peg-out can always become a watchtower themselves
 * They can then submit the necessary Bitcoin blocks and proofs for their own transactions
-* This ensures BiFrost remains operational even in adversarial conditions
+* This ensures Bifrost remains operational even in adversarial conditions
 
 This 1-of-n honesty assumption is significantly stronger than typical bridge trust models that require trusting a majority or specific set of operators.
 
