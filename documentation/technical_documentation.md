@@ -11,16 +11,16 @@ It then becomes easier to connect Cardano, a UTXO blockchain with smart contract
 
 ![General bridge design](./images/Bridging_Design.png)
 
-The Cardano SPOs collectively become the responsible custodians of bridged assets on the original blockchain. For example, SPOs keep and manage the locked BTC on the Bitcoin side, while its bridged version bBTC circulates freely on Cardano.
+The Cardano SPOs collectively become the responsible custodians of bridged assets on the original blockchain. For example, SPOs keep and manage the locked BTC on the Bitcoin side, while its bridged version fBTC circulates freely on Cardano.
 
-Bridge | Stacks Frost bridge | BitVM2 | Rosen Bridge | Bifrost |
---- | --- | --- | --- |--- |
-Security assumption | Trust in small set of L2 nodes | At least 1 actor must honestly forget his private key | Trust in a set of nodes from a low marketcap blockchain | Weighted-majority of Cardano SPOs must behave honestly |
-Peg-in & Peg-out Availability | L2 nodes must be collaborative | Pre-chosen fixed set of operators must be collaborative | Majority of guards must be collaborative | Weighted-majority of Cardano SPOs must be collaborative |
-Peg-in & Peg-out Granularity | Any amount | Fixed static amounts | Any amount | Any amount |
-Speed in good case | Minutes | Minutes | Minutes | 1 Week |
-Speed in pessimistic case | Minutes | Weeks | Minutes | Weeks |
-Costs | Low | Medium | Low | Low | Medium |
+| Bridge                        | Stacks Frost bridge            | BitVM2                                                  | Rosen Bridge                                            | Bifrost                                                 |
+| ----------------------------- | ------------------------------ | ------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------- |
+| Security assumption           | Trust in small set of L2 nodes | At least 1 actor must honestly forget his private key   | Trust in a set of nodes from a low marketcap blockchain | Weighted-majority of Cardano SPOs must behave honestly  |
+| Peg-in & Peg-out Availability | L2 nodes must be collaborative | Pre-chosen fixed set of operators must be collaborative | Majority of guards must be collaborative                | Weighted-majority of Cardano SPOs must be collaborative |
+| Peg-in & Peg-out Granularity  | Any amount                     | Fixed static amounts                                    | Any amount                                              | Any amount                                              |
+| Speed in good case            | Minutes                        | Minutes                                                 | Minutes                                                 | 1 Week                                                  |
+| Speed in pessimistic case     | Minutes                        | Weeks                                                   | Minutes                                                 | Weeks                                                   |
+| Costs                         | Low                            | Medium                                                  | Low                                                     | Medium                                                  |
 
 Bifrost has been built to ensure security and availability, not speed or low costs.
 In fact, Bifrost operations may take up to 1 or more Cardano epochs (an epoch is currently equals to 5 days), as coordination and heavy operations must be executed in the correct order.
@@ -40,40 +40,51 @@ Bifrost setup is made by the following components:
 * **Withdrawers**: users that burn their bridged assets on Cardano to unlock them on the proper source blockchain.
 * **Cardano Stake Pool Operators (SPOs)**: Cardano nodes that have delegated stake by Cardano users and that participate in Cardano consensus, guaranteeing its security.
 * **Multisig treasury**: a script address on the source blockchain that holds all the bridged assets and it’s protected by a multisignature that only SPOs together can use. Each SPO has a weight equal to its delegation and a specific threshold of SPOs signature must be reached to spend/move the multisig treasury.
-* **Watchtowers**: an open and always dynamic set of actors who have visibility on both Cardano and the source blockchain. Their only duty is to compete to post the most truthful source blockchain chain of blocks. This allows Cardano to know what’s happening on the source blockchain. Anyone can become a Watchtower at any moment.
+* **Watchtowers**: an open and always dynamic set of actors who have visibility on both Cardano and the source blockchain. They compete to post the most truthful source blockchain chain of blocks to the Binocular Oracle on Cardano. They also detect peg-in transactions on the source blockchain and post them as PegInRequest UTxOs on Cardano, and they relay SPO-signed Treasury Movement transactions from Cardano to the source blockchain. Anyone can become a Watchtower at any moment.
 
 Bifrost logic is fully encapsulated in the following solutions:
 
 * **SPOs program**: this code must run along with the usual SPO stack. It gives SPOs the ability to coordinate to sign Bitcoin transactions and the ability to see and interact with the needed Cardano smart contracts.
-* **Watchtower program**: watchtowers run this software on top of source blockchain and Cardano nodes to be able to properly post the best chain of blocks to Cardano.
+* **Watchtower program**: watchtowers run this software on top of source blockchain and Cardano nodes. It posts source blockchain block headers to the Binocular Oracle, detects peg-in transactions and posts PegInRequest UTxOs on Cardano, and relays SPO-signed Treasury Movement transactions to the source blockchain.
 * Cardano smart contracts:
-  * **spos_registry.ak**: SPOs that participate in Bifrost need to register here for the next upcoming epoch. The registry is a on-chain linked list ordered by SPOs edcs key and each node also contains the SPO secp key that will be used to sign source blockchain transactions.
+  * **spos_registry.ak**: SPOs that participate in Bifrost need to register here for the next upcoming epoch. The registry is an on-chain linked list ordered by SPOs edcs key and each node also contains the SPO secp key that will be used to sign source blockchain transactions.
   * **watchtower.ak**: The watchtowers (anyone) post the best chain of blocks here, other watchtowers eventually challenge it by posting a better version and the winner gets rewarded by the end of the availability window.
-  * **peg_in.ak**: when a depositor wants to bridge his assets, he starts by minting a unique NFT and by locking it here. Burning this NFT plus the proof that the source blockchain locking transaction happened, allow the depositor to mint the bridged assets on Cardano
-  * **peg_out.ak**: when a withdrawer wants to unlock the bridged assets on the proper source blockchain, he starts the peg-out process sending his bridged assets to this smart contract along with a freshly minted unique NFT in the same eUTxO. A proof that the source blockchain unlocking transaction happened, allows the withdrawer to burn this eUTxO and retrieve the min_utxo locked ADA.
-  * **bridged_asset.ak**: At the end of peg-ins, it allows to mint the bridged version of the source blockchain assets; at the end of peg-outs it allows to burn these bridged assets.
+  * **peg_in.ak**: watchtowers create PegInRequest UTxOs here by minting a unique NFT and providing a Binocular inclusion proof of the source blockchain deposit transaction. The datum contains the depositor's Cardano address, source blockchain txid, output index, and deposit amount. This makes peg-in deposits visible to SPOs for inclusion in the Treasury Movement transaction.
+  * **peg_out.ak**: when a withdrawer wants to unlock the bridged assets on the proper source blockchain, he locks his bridged assets at this smart contract along with a freshly minted unique NFT. The datum contains the source blockchain destination address where assets should be sent. SPOs read these UTxOs to include peg-out payments in the Treasury Movement transaction.
+  * **treasury.ak**: stores the current Treasury public key `Y` as a reference UTxO. After each DKG, the current roster posts the new group public key here, authenticated by a FROST group signature from the current roster. Depositors and validators read this to derive the current Treasury address. For the first epoch, the initial Treasury public key is set during protocol bootstrap.
+  * **treasury_movement.ak**: SPOs post signed source blockchain Treasury Movement transactions here. The datum contains the serialized signed transaction, the epoch number, and references to the PegInRequest and PegOut UTxOs it covers. Watchtowers monitor this contract and relay the signed transactions to the source blockchain.
+  * **bridged_asset.ak**: minting and burning of bridged assets (e.g. fBTC). Anyone can mint fBTC by providing a Binocular inclusion proof that the Treasury Movement transaction (which swept the corresponding peg-in) is confirmed on the source blockchain, along with a reference to the PegInRequest UTxO. Anyone can burn fBTC by providing a similar proof for a peg-out, along with a reference to the PegOut UTxO. This permissionless design ensures censorship resistance.
 
 ## Components relationships
 
 ![Bifrost Flow Chart](./images/Bifrost_flow_chart.png)
 
-Watchtowers, who run the watchtower program, challenge each other to be the first to post the best source blockchain chain of valid blocks in the Watchtower smart contract. The winner for each chain is rewarded with some ADA, proportionally for each valid block posted.
+Watchtowers, who run the watchtower program, challenge each other to be the first to post the best source blockchain chain of valid blocks in the Binocular Oracle smart contract (watchtower.ak). The winner for each chain is rewarded with some ADA, proportionally for each valid block posted.
 
-Depositors, who want to peg-in, mint the proper NFT in peg_in.ak, send their source blockchain assets to the treasury address and wait for the epoch to end.
+Depositors, who want to peg-in, send their source blockchain assets to a unique Taproot address with an OP_RETURN metadata marker identifying the transaction as a Bifrost peg-in. Watchtowers detect these transactions on the source blockchain, and once confirmed, create PegInRequest UTxOs on Cardano (peg_in.ak) by minting an NFT and providing an inclusion proof.
 
-Withdrawers, who want to peg-out, mint the proper NFT, send it along their bridged assets to peg_out.ak and wait for the epoch to end.
+Withdrawers, who want to peg-out, lock their bridged assets (e.g. fBTC) along with a freshly minted NFT at peg_out.ak, specifying their source blockchain destination address in the datum.
 
 SPOs, who register with their delegated stake to join the next epoch in spos_registry.ak, own both a unique edcs key and a secp key. The registration is accepted only if the SPO has a delegated stake bigger than a minimum threshold.
 
-At the end of each epoch, the registered SPOs (that normally also include the old group) verify each other’s delegated stake to ensure honesty and participate in a ceremony to generate their new shared multisignature address.
+At the end of each epoch, the registered SPOs (that normally also include the old group) verify each other's delegated stake to ensure honesty and participate in a DKG ceremony to generate their new shared multisignature address.
 
-The old SPOs group then transfers ownership of the source blockchain treasury to the new SPOs group executing a source blockchain transaction from the old SPOs Treasury address to the new one.
+The old SPOs group then constructs a Treasury Movement transaction on the source blockchain that:
 
-This transaction also aggregates all the peg-in transactions to always keep the treasury in one single UTxO.
+* Spends the current treasury UTxO, sending remaining funds to the new SPOs Treasury address.
+* Collects (spends) all confirmed peg-in UTxOs, consolidating them into the treasury.
+* Sends the correct amounts from the treasury to the source blockchain addresses that have correctly requested a peg-out.
 
-This transaction also sends the correct amount of the treasury to the source blockchain addresses that have correctly requested a peg-out.
+If the resulting transaction would be too large, SPOs may split it into multiple transactions.
 
-At this point the depositors can burn their peg_in.ak NFT and mint their bridged assets, while the withdrawers can burn their bridged assets locked and the NFT in the peg_out.ak to earn the min_utxo ADA attached to each eUTxO.
+The SPOs sign this transaction using FROST group signing and post the serialized signed transaction to Cardano (treasury_movement.ak). Watchtowers monitor treasury_movement.ak, pick up the signed transaction, and broadcast it to the source blockchain network.
+
+Once the Treasury Movement transaction is confirmed on the source blockchain, anyone can complete the bridging operations on Cardano:
+
+* For peg-ins: provide a Binocular inclusion proof of the Treasury Movement transaction to mint the corresponding fBTC and burn the PegInRequest NFT.
+* For peg-outs: provide a Binocular inclusion proof to burn the locked fBTC and the peg-out NFT, retrieving the min_utxo ADA.
+
+This permissionless completion ensures that even if watchtowers are uncooperative, depositors and withdrawers can finalize their operations themselves.
 
 ## User peg-in flow
 
@@ -82,11 +93,12 @@ A user who wants to move his BTC from Bitcoin to Cardano is called a depositor.
 These are the steps to execute a correct peg-in:
 
 * Check the status of Bifrost: if the bridge is correctly operational and we are not too near the end of the current Cardano epoch, the peg-in can be done.
-* Retrieve the current Bitcoin Treasury Address that is controlled by the Cardano SPOs.
-* On Cardano, send MIN_ADA to the peg_in.ak spend script, putting in the datum of this utxo the current Bitcoin Treasury Address.
-* On Bitcoin, send the amount of BTC to peg-in in a Bitcoin Script that can be spent in under two conditions: either the Bitcoin Treasury key can spend it or you can spend it after 1 month has passed. This allows to either let the SPOs send your BTC to the Treasury or let you to get back your BTC in case of unexpected problems (even if theorically it should never happen).
-* Wait for the watchtowers to post on Cardano the Bitcoin block that contains the Bitcoin transaction (at least 100 Bitcoin blocks must have passed, ~12  hours).
-* Create a peg-in Bitcoin transaction inclusion proof using Binocular oracle and use it to complete the Cardano peg-in request, proving that the peg-in utxo doesn't exist yet in the merkle tree of already completed peg-ins and minting the correct amount of fBTC.
+* Retrieve the current Bitcoin Treasury Address from `treasury.ak` on Cardano (the Treasury public key `Y` is published there after each DKG).
+* On Bitcoin, send the amount of BTC to peg-in to a Taproot address that can be spent under two conditions: either the Bitcoin Treasury key can spend it or the depositor can spend it after 1 month has passed. This allows either the SPOs to sweep the BTC into the Treasury or the depositor to reclaim the BTC in case of unexpected problems. The transaction must include an OP_RETURN output containing: `"BFR" || cardano_payment_key_hash (28 bytes) || nonce (8 bytes)`. This metadata allows watchtowers to identify peg-in transactions on the Bitcoin network.
+* Wait for watchtowers to detect the Bitcoin transaction, post the corresponding Bitcoin block to the Binocular Oracle, and create a PegInRequest UTxO on Cardano (peg_in.ak) by minting an NFT and providing a transaction inclusion proof.
+* Wait for the SPOs to include this peg-in in the Treasury Movement transaction at the next epoch boundary. The SPOs sign this transaction with FROST and post it to Cardano (treasury_movement.ak). Watchtowers then relay the signed transaction to Bitcoin.
+* Once the Treasury Movement transaction is confirmed on Bitcoin (at least 6 Bitcoin blocks), anyone can complete the peg-in on Cardano by providing a Binocular inclusion proof of the Treasury Movement transaction. This mints the correct amount of fBTC to the depositor's Cardano address and burns the PegInRequest NFT.
+* If the peg-in was not included in the Treasury Movement transaction (e.g., it arrived too late in the epoch), it rolls over to the next epoch. If the Treasury key has rotated and the peg-in can no longer be swept, the depositor uses the 1-month timeout spending path to reclaim their BTC and can retry with the new Treasury address.
 
 ## User peg-out flow
 
@@ -94,11 +106,11 @@ Let's use Bitcoin as example.
 A user who wants to move his BTC from Cardano to Bitcoin is called a withdrawer.
 These are the steps to execute a correct peg-out:
 
-* Check the status of Bifrost: if the bridge is correctly operational and we are not too near the end of the current Cardano epoch, the peg-in can be done.
-* Retrieve the current Bitcoin Treasury Address that is controlled by the Cardano SPOs.
-* On Cardano, send the correct number of fBTC to the peg_out.ak spend script, putting in the datum the current Bitcoin Treasury Address.
-* Wait for the watchtowers to post the Treasury Movement transaction of the next Epoch, that includes the refunds for the withdrawers (at least 8 Bitcoin blocks must have passed). At this point, you have received your BTC on Bitcoin from the Bitcoin Treasury.
-* Now you can create a peg-out Bitcoin transaction inclusion proof using Binocular oracle and use it to complete the Cardano peg-out request, burning the locked fBTC and retrieving the MIN_ADA. If for some unexpected reasons the bridge didn't create the peg-out transaction on Bitcoin, you can use an exclusion proof to unlock your fBTC and try again.
+* Check the status of Bifrost: if the bridge is correctly operational and we are not too near the end of the current Cardano epoch, the peg-out can be done.
+* On Cardano, lock the correct amount of fBTC plus MIN_ADA at the peg_out.ak spend script, minting a unique NFT. The datum contains the Bitcoin destination address where BTC should be sent.
+* Wait for the SPOs to include this peg-out in the Treasury Movement transaction at the next epoch boundary. The SPOs sign this transaction with FROST and post it to Cardano (treasury_movement.ak). Watchtowers then relay the signed transaction to Bitcoin. At this point, the withdrawer has received BTC at their specified Bitcoin address.
+* Once the Treasury Movement transaction is confirmed on Bitcoin (at least 6 Bitcoin blocks), anyone can complete the peg-out on Cardano by providing a Binocular inclusion proof of the Treasury Movement transaction. This burns the locked fBTC and the peg-out NFT, returning the MIN_ADA to the withdrawer.
+* If for unexpected reasons the Treasury Movement transaction did not include the peg-out payment, the withdrawer can use a Binocular exclusion proof to unlock their fBTC and try again in the next epoch.
 
 ## Guaranteeing censor-resistant peg-ins and peg-outs
 
@@ -110,9 +122,9 @@ As long as the Cardano SPOs and the watchtowers are collaborative, each peg-in o
 Therefore, the potential additional trust assumptions in Bifrost are the Cardano SPOs and the watchtowers:
 
 * Even if the user becomes a Cardano SPO, he would be just a small part of the total weight-based set of SPOs. Luckily, the strong majority of the SPOs are always incentivized in behaving correctly and on time, like they do when they participate in block-production consensus on Cardano. In fact, the security of Bifrost directly impacts their revenue model: more assets moved with Bifrost imply more Cardano transactions and an increase of the ADA price caused by the bigger demand to execute these transactions. Cardano SPOs want the bridge to work well because their revenue stream strongly depends on it.
-* Watchtowers are an "always open" set of nodes that challenge each other to post on Cardano the best chain of block from the source blockchains (ex. from Bitcoin). While the watchtowers earn rewards for doing this job, they could potentially collude and stop the posting of new blocks, halting the bridge for an unbounded timeframe. In these case the user who wants to peg-in or peg-out can spin up a watchtower himself and post the source blockchains blocks starting from the latest confirmed ones. Because every user is able to become a watchtower any time, there will be now a safe challenge among them to post the correct chain of blocks, resuming the Bifrost operations even in case of collusion.
+* Watchtowers are an "always open" set of nodes that challenge each other to post on Cardano the best chain of blocks from the source blockchains (ex. from Bitcoin), and also detect and post peg-in requests on Cardano. While the watchtowers earn rewards for doing this job, they could potentially collude and stop posting blocks or peg-in requests, halting the bridge for an unbounded timeframe. In this case the user who wants to peg-in or peg-out can spin up a watchtower himself and post the source blockchain blocks starting from the latest confirmed ones, and create their own PegInRequest UTxOs on Cardano. Because every user is able to become a watchtower at any time, there will be a safe challenge among them to post the correct chain of blocks, resuming the Bifrost operations even in case of collusion. Similarly, the completion of peg-ins and peg-outs (minting and burning fBTC) is permissionless: anyone can submit the required Binocular inclusion proofs to finalize bridging operations.
 
-## Flow of Bitcoin over epochs, cerimonies
+## Flow of Bitcoin over epochs, ceremonies
 
 todo
 
@@ -134,10 +146,10 @@ todo
 
 ## SPO Program
 
-It's the program that Cardano SPOs must run and it allows signature aggregation. Being based on the FROST protocol requires: 
+It's the program that Cardano SPOs must run and it allows signature aggregation. Being based on the FROST protocol requires:
 1. registration of SPOs to participate in the protocol
-2. formation of a roster of Cardano SPOs and distributed key generation (every epoch) 
-3. group signing.  
+2. formation of a roster of Cardano SPOs and distributed key generation (every epoch)
+3. group signing.
 We describe each in detail.
 
 ### SPO Registration
@@ -297,7 +309,7 @@ The protocol supports **temporary banning** of SPOs who misbehave during DKG or 
 
 #### 1. Overview
 
-The FROST Distributed Key Generation (DKG) process runs **entirely off-chain** using SPOs' `bifrost_url` endpoints. The DKG produces a group public key `Y` and individual signing shares `s_i` for each participant. Upon successful completion, the **current roster** signs a Bitcoin transaction moving the treasury to the new address derived from `Y`. No DKG result is posted on Cardano.
+The FROST Distributed Key Generation (DKG) process runs **entirely off-chain** using SPOs' `bifrost_url` endpoints. The DKG produces a group public key `Y` and individual signing shares `s_i` for each participant. Upon successful completion, the **current roster** constructs and signs a Treasury Movement transaction that moves the treasury to the new address derived from `Y`, and posts the signed transaction to Cardano at `treasury_movement.ak` for watchtowers to relay to the source blockchain. No DKG result is posted on Cardano.
 
 **Prerequisite**: SPOs must complete SPO Registration (see previous section) before participating in DKG.
 
@@ -470,6 +482,8 @@ Upon successful verification of all shares, each `P_i`:
 
 All participants arrive at the same group public key `Y`.
 
+5. The **current roster** publishes the new group public key `Y` on Cardano at `treasury.ak`, authenticated by a FROST group signature from the current roster. This makes the new Treasury address publicly verifiable on-chain, allowing depositors to look up the correct Treasury address and enabling `peg_in.ak` to validate peg-in deposits on-chain.
+
 #### 9. Misbehavior Handling
 
 If any participant `P_m` misbehaves (invalid proof of knowledge in Round 1, or invalid share in Round 2), the current roster **bans** them (Section 7.2) with an exponential timeout and restarts DKG.
@@ -486,21 +500,24 @@ After the ban transaction is confirmed on Cardano:
 
 #### 10. Treasury Handoff
 
-Upon successful DKG completion:
+Upon successful DKG completion and publication of the new Treasury public key `Y` to `treasury.ak`:
 
 1. The **new roster** derives the Bitcoin Taproot address from group public key `Y`.
-2. The **current roster** constructs a Bitcoin transaction that:
-   - Spends the current treasury UTxO.
-   - Sends all funds to the new treasury address.
-   - Includes peg-out fulfillments as additional outputs (if any pending).
-3. The current roster performs FROST group signing on this transaction.
-4. The signed transaction is broadcast to the Bitcoin network.
+2. The **current roster** reads all confirmed PegInRequest UTxOs and pending PegOut UTxOs from Cardano.
+3. The **current roster** constructs a Treasury Movement Bitcoin transaction that:
+   - Spends the current treasury UTxO, sending remaining funds to the new treasury address.
+   - Spends all confirmed peg-in UTxOs on Bitcoin, consolidating them into the treasury (one FROST Taproot signature per input).
+   - Includes peg-out fulfillments as additional outputs (paying the specified Bitcoin addresses).
+   - If the transaction would be too large, it is split into multiple transactions.
+4. The current roster performs FROST group signing on this transaction.
+5. The signed transaction is posted to Cardano at `treasury_movement.ak`.
+6. Watchtowers pick up the signed transaction from Cardano and broadcast it to the Bitcoin network.
 
-This completes the epoch transition. The new roster now controls the treasury.
+Once the Treasury Movement transaction is confirmed on Bitcoin, the epoch transition is complete. The new roster now controls the treasury. Anyone can then complete pending peg-ins and peg-outs on Cardano using Binocular inclusion proofs of the confirmed Treasury Movement transaction.
 
 #### 11. Security Properties
 
-- **Off-chain execution**: No DKG data is posted on Cardano; only the treasury handoff (Bitcoin tx) is publicly visible.
+- **Off-chain execution**: No DKG data is posted on Cardano; only the signed Treasury Movement transaction (posted to `treasury_movement.ak`) and the resulting source blockchain transaction are publicly visible.
 - **Threshold security**: Any `t` signers control stake above the security threshold.
 - **Misbehavior accountability**: Fraudulent SPOs can be identified and excluded.
 - **Current roster authority**: Only the current roster can authorize exclusions, preventing new roster self-dealing.
@@ -559,30 +576,36 @@ Watchtowers use Binocular, a technology stack previously created and now improve
 
 ### BiFrost-Specific Watchtower Duties
 
-Beyond maintaining general Bitcoin state, watchtowers perform specialized duties for the BiFrost bridge:
+Beyond maintaining general Bitcoin state, watchtowers perform specialized duties for the BiFrost bridge. The architecture has the following key constraints: SPO programs have access to Cardano chain state but not to Bitcoin chain state; watchtowers have access to Bitcoin chain state but not to SPO programs or SPO private keys. Cardano serves as the shared data layer between both parties.
 
-**Deposit Detection**
+**Peg-in Detection and Posting**
 
-* Monitor the Treasury Taproot address for incoming Bitcoin transactions
-* Match detected deposits to pending PegInRequest UTxOs on Cardano
-* Track transaction confirmations as blocks are added
+* Monitor the Bitcoin network for peg-in transactions by scanning for OP_RETURN outputs with the `"BFR"` prefix.
+* Each peg-in transaction sends BTC to a unique Taproot address (Treasury key spend OR 1-month timeout refund) and includes an OP_RETURN output: `"BFR" || cardano_payment_key_hash (28 bytes) || nonce (8 bytes)`. Because each peg-in goes to a unique Taproot address (derived from the depositor's timeout key), watchtowers cannot track peg-ins by address alone — the OP_RETURN metadata is what makes them identifiable.
+* Once a peg-in transaction reaches the required confirmation threshold (100 Bitcoin blocks plus 200 minutes of Binocular challenge period), watchtowers create a PegInRequest UTxO on Cardano (peg_in.ak) by:
+  * Minting a unique PegIn NFT.
+  * Providing a transaction inclusion proof consisting of: the raw Bitcoin transaction data, a Merkle proof linking the transaction to the block's Merkle root, and a reference to the confirmed block in the Binocular Oracle.
+  * Setting the datum with: depositor's Cardano payment key hash (extracted from the OP_RETURN), Bitcoin txid, output index, BTC amount, and the Treasury Taproot address the peg-in was sent to.
+* The on-chain peg_in.ak validator verifies: (1) the Merkle proof is valid against the referenced block in Binocular, (2) the block has sufficient confirmations, (3) the OP_RETURN metadata matches the datum, (4) the transaction output sends to a valid Taproot address derived from the current Treasury public key `Y` stored in `treasury.ak`.
 
-**Proof Submission for Peg-ins**
+**Treasury Movement Relay**
 
-* Once a Bitcoin deposit transaction reaches the required confirmation threshold (100 Bitcoin blocks plus 200 minutes of challenge period), watchtowers construct Merkle proofs
-* These proofs demonstrate: (1) the transaction exists in a specific block, and (2) that block is confirmed in the Binocular Oracle
-* Submitting valid proofs triggers fBTC minting for the depositor
+* Monitor Cardano's treasury_movement.ak for new signed Bitcoin transactions posted by SPOs.
+* Pick up the serialized signed Bitcoin transaction from the UTxO datum.
+* Broadcast the transaction to the Bitcoin network.
+* This is a permissionless action: any watchtower (or any user) can relay the transaction.
 
-**Peg-out Monitoring**
+**Peg-in and Peg-out Completion (Optional)**
 
-TODO
+* Once the Treasury Movement transaction is confirmed on Bitcoin, watchtowers can complete peg-ins and peg-outs on Cardano by providing Binocular inclusion proofs. However, this is not exclusive to watchtowers — anyone can perform these completion actions with the right proofs, ensuring censorship resistance.
+* For peg-in completion: provide a Binocular inclusion proof of the Treasury Movement transaction, reference the PegInRequest UTxO, mint the corresponding fBTC to the depositor's Cardano address, and burn the PegIn NFT.
+* For peg-out completion: provide a Binocular inclusion proof showing the Treasury Movement transaction paid the correct amount to the correct Bitcoin address, burn the locked fBTC and the peg-out NFT, and return the MIN_ADA to the withdrawer.
 
 **Anomaly Detection**
 
-* Continuously verify that Treasury BTC balance matches or exceeds circulating fBTC supply
-* Alert the system if invariants are violated
-* Trigger failover mechanisms if SPO signing stalls or quorum is lost
-* TODO
+* Continuously verify that Treasury BTC balance matches or exceeds circulating fBTC supply.
+* Alert the system if invariants are violated.
+* Trigger failover mechanisms if SPO signing stalls or quorum is lost.
 
 ### Binocular Oracle
 
