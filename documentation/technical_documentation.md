@@ -172,39 +172,33 @@ Before participating in Bifrost, each SPO must complete a **one-time registratio
 - Exactly **one token per SPO** (enforced by minting policy).
 - The token serves as the on-chain badge of Bifrost participation.
 
-##### 3.2 Membership UTxO
+##### 3.2 Registry Linked-List
 
-Each registered SPO has a membership UTxO at the membership script address containing:
-- **Value**: Bifrost Membership Token (with `TokenName = pool_id`) + minimum deposit amount in ADA (protocol parameter).
-- **Datum**:
+All registered SPOs are tracked using an **on-chain ordered linked-list**. Each node in the list represents a registered SPO and is stored as an individual UTxO at the registry script address. The list is ordered by SPO key, ensuring uniqueness and enabling efficient insertion and removal.
+
+- **Node Value**: Bifrost Membership Token + minimum deposit amount in ADA.
+- **Node Datum**:
 ```json
-{ bifrost_id_pk :: ByteArray
-, bifrost_url   :: ByteArray
+{ key              :: ByteArray       -- SPO key (ordering key)
+, next             :: ByteArray | Null -- key of the next node, or null for the tail
+, data             ::
+    { bifrost_id_pk :: ByteArray
+    , bifrost_url   :: ByteArray
+    }
 }
 ```
-- **Spending Conditions**: The UTxO can be spent by either:
-  1. **SPO withdrawal**: via `bifrost_id_sk` Secp256k1 signature, valid only at epoch boundary (enforced via Cardano validity intervals).
-  2. **Roster slashing**: via FROST group signature from the current roster, for slashing misbehaving participants.
+
+**Operations:**
+- **Prepend/Insert**: A new node is inserted in sorted order by verifying it is correctly positioned between its neighbors. Corresponds to `ordered.prepend` in the on-chain code.
+- **Remove**: A node is removed by relinking its neighbors. Corresponds to `ordered.remove` in the on-chain code.
+
+**Spending Conditions**: Each node UTxO can be spent by either:
+1. **SPO withdrawal**: via `bifrost_id_sk` Secp256k1 signature, valid only at epoch boundary (enforced via Cardano validity intervals).
+2. **Roster banning**: via FROST group signature from the current roster, for banning misbehaving participants.
 
 The membership script uses `verifySchnorrSecp256k1Signature` for both conditions.
 
-##### 3.3 Registry State UTxO (Patricia Merkle Tree)
-
-A single global UTxO that tracks all registered `pool_id` values using a **Patricia Merkle Tree (PMT)**. This ensures membership token uniqueness is cryptographically enforced.
-
-- **Value**: Registry thread token (NFT) to ensure uniqueness.
-- **Datum**:
-```json
-{ pmt_root :: ByteArray   -- 32-byte root hash of the Patricia Merkle Tree
-}
-```
-
-**PMT Structure:**
-- Keys: `pool_id` (28 bytes, used directly as the PMT key).
-- Values: empty (presence in tree is sufficient; binding data stored in individual Membership UTxOs).
-- The PMT provides $O(\log n)$ proofs of membership and non-membership.
-
-The PMT implementation uses the Haskell Merkle Patricia Forestry library [8]. On-chain verification is implemented in Aiken [9].
+The on-chain linked-list implementation uses the `aiken_design_patterns/linked_list/ordered` module [8].
 
 #### 4. Registration Message and Signature
 
@@ -223,15 +217,14 @@ Where:
 
 A **registration tx** performs the following:
 
-1. **Redeemer**: contains `cold_vkey`, `cold_sig`, and `pmt_non_membership_proof`.
-2. **Input**: Registry State UTxO (consumed to update PMT root).
+1. **Redeemer**: contains `cold_vkey`, `cold_sig`, `prepended_node_output_index`, and `anchor_node_output_index`.
+2. **Input**: Anchor node UTxO from the linked-list (the node after which the new node will be inserted).
 3. **Mint**: exactly one Bifrost Membership Token with `TokenName = pool_id`.
 4. **Outputs**:
-   - Membership UTxO at membership script address with:
+   - New linked-list node UTxO at registry script address with:
      - Bifrost Membership Token + minimum deposit in ADA
-     - Datum containing `bifrost_id_pk` and `bifrost_url`
-   - Updated Registry State UTxO with:
-     - New `pmt_root` after inserting `pool_id`
+     - Datum containing `bifrost_id_pk`, `bifrost_url`, and linked-list pointers (correctly ordered between neighbors)
+   - Updated anchor node UTxO with its `next` pointer updated to reference the new node
 
 #### 6. On-Chain Verification
 
@@ -241,13 +234,13 @@ The minting policy verifies:
 2. `verifyEd25519Signature(cold_vkey, "bifrost-spo" || bifrost_id_pk || bifrost_url, cold_sig)` — proves cold key authorized this Bifrost identity binding.
 3. Exactly one token minted with `TokenName = pool_id`.
 4. Output datum matches the signed message content.
-5. **PMT non-membership proof**: verifies `pool_id` is not already in the tree (prevents duplicate registration).
-6. **PMT insertion proof**: verifies new `pmt_root` is the valid result of inserting `pool_id` into the old tree.
+5. **Linked-list ordering**: verifies the new node is correctly positioned between its neighbors (the new key is greater than the anchor's key and less than the anchor's previous `next` key), preventing duplicate registration.
+6. **Linked-list state transition**: verifies the anchor node's `next` pointer is correctly updated to reference the new node.
 7. **Security deposit**: verifies the Membership UTxO contains sufficient ADA.
 
 #### 7. Revocation
 
-An SPO's membership can end through voluntary revocation or roster-initiated slashing. Both paths consume the Membership UTxO, burn the token, and update the PMT.
+An SPO's membership can end through voluntary revocation or roster-initiated banning.
 
 ##### 7.1 Voluntary Revocation
 
@@ -262,52 +255,33 @@ Where:
 - `pool_id` is the 28-byte pool identifier.
 
 **Transaction**:
-1. **Redeemer**: contains `cold_vkey`, `cold_sig`, and `pmt_membership_proof`.
+1. **Redeemer**: contains `cold_vkey`, `cold_sig`, `removed_node_input_index`, and `anchor_node_input_index`.
 2. **Validity interval**: must fall within the epoch boundary window.
 3. Spends the Membership UTxO (returning the security deposit to the SPO).
 4. Burns the Bifrost Membership Token.
-5. Consumes the Registry State UTxO and outputs it with new `pmt_root` after removing `pool_id`.
+5. Removes the node from the linked-list by updating the anchor node's `next` pointer to skip the removed node.
 
-##### 7.2 Slashing
-
-The current roster signs a slashing message:
-
-```
-"bifrost-slash" || pool_id
-```
-
-Where:
-- `"bifrost-slash"` is a 13-byte ASCII domain separator.
-- `pool_id` is the 28-byte pool identifier of the misbehaving SPO.
-
-**Transaction**:
-1. **Inputs**: Membership UTxO(s) of misbehaving SPO(s) + Registry State UTxO.
-2. **Redeemer**: FROST group signature over the slashing message.
-3. Burns the Bifrost Membership Token(s).
-4. **Outputs**:
-   - Slashed ADA deposits sent to the treasury.
-   - Updated Registry State UTxO with new `pmt_root` after removing slashed `pool_id`(s).
-
-##### 7.3 On-Chain Verification
-
-The membership script verifies one of two authorization paths:
-
-**Path A — Voluntary Revocation**:
+**On-chain verification**:
 1. `pool_id == blake2b_224(cold_vkey)` — proves the cold key owns this pool.
 2. `verifyEd25519Signature(cold_vkey, "bifrost-revoke" || pool_id, cold_sig)` — proves cold key authorized revocation.
 3. **Validity interval**: transaction validity falls within the epoch boundary window.
-4. Security deposit returned to SPO.
-
-**Path B — Slashing**:
-1. `verifySchnorrSecp256k1Signature(current_roster_pk, "bifrost-slash" || pool_id, frost_signature)` — proves the current roster authorized slashing.
-2. Security deposit sent to treasury.
-
-**Common verification (both paths)**:
-1. Exactly one token burned with `TokenName = pool_id`.
-2. **PMT membership proof**: verifies `pool_id` exists in the tree.
-3. **PMT deletion proof**: verifies new `pmt_root` is the valid result of removing `pool_id` from the old tree.
+4. Exactly one token burned with `TokenName = pool_id`.
+5. **Linked-list removal**: verifies the anchor node's `next` pointer is correctly updated to skip the removed node, maintaining list ordering.
+6. Security deposit returned to SPO.
 
 After exit, the SPO may re-register with a new Bifrost identity.
+
+##### 7.2 Banning (Exponential Timeout)
+
+The protocol supports **temporary banning** of SPOs who misbehave during DKG or signing rounds. A banned SPO retains their Membership Token and deposit but is excluded from participating in roster formation for a time-limited period.
+
+**Exponential timeout**: Each successive ban doubles the exclusion duration. For example, a first ban may last 1 epoch, a second ban 2 epochs, a fourth 4 epochs, and so on. This escalating penalty discourages repeated misbehavior while allowing recovery from occasional failures.
+
+**Ban initiation**: The current roster initiates a ban via FROST group signature.
+
+**Ban expiry**: Once the ban period elapses, the SPO automatically becomes eligible for roster participation again without needing to re-register.
+
+> **Note**: The exact behavior of the ban list is still under discussion and may be refined in future iterations.
 
 #### 8. Security Properties
 
@@ -329,7 +303,7 @@ The FROST Distributed Key Generation (DKG) process runs **entirely off-chain** u
 
 #### 2. Epoch Binding
 
-Each DKG instance is bound to a Cardano epoch. The candidate set is determined by the PMT root at the end of the previous epoch, ensuring all SPOs have the same view of registered participants.
+Each DKG instance is bound to a Cardano epoch. The candidate set is determined by the on-chain registry linked-list state at the end of the previous epoch, ensuring all SPOs have the same view of registered participants.
 
 #### 3. Threshold Calculation
 
@@ -350,7 +324,7 @@ This ensures that **any** subset of `t` signers collectively controls sufficient
 
 ##### 4.1 Candidate Enumeration
 
-All SPOs with valid Bifrost Membership Tokens (present in the PMT) are candidates for the DKG.
+All SPOs with valid Bifrost Membership Tokens (present in the registry linked-list) are candidates for the DKG.
 
 ##### 4.2 Canonical Ordering
 
@@ -369,8 +343,8 @@ For each candidate `P_i`, the following information is retrieved:
 Each SPO `P_i` performs the following initialization steps:
 
 1. Determine the current epoch.
-2. Retrieve the PMT root from the end of the previous epoch.
-3. Enumerate all candidates from the PMT.
+2. Retrieve the registry linked-list state from the end of the previous epoch.
+3. Enumerate all candidates from the linked-list.
 4. Query delegated stake for each candidate.
 5. Compute threshold `t` as described in Section 3.
 6. Order candidates lexicographically by `bifrost_id_pk` and assign indices.
@@ -498,17 +472,17 @@ All participants arrive at the same group public key `Y`.
 
 #### 9. Misbehavior Handling
 
-If any participant `P_m` misbehaves (invalid proof of knowledge in Round 1, or invalid share in Round 2), the current roster slashes them via **Membership Exit** (Section 7.2) and restarts DKG.
+If any participant `P_m` misbehaves (invalid proof of knowledge in Round 1, or invalid share in Round 2), the current roster **bans** them (Section 7.2) with an exponential timeout and restarts DKG.
 
 ##### 9.1 DKG Restart
 
-After the slashing transaction is confirmed on Cardano:
+After the ban transaction is confirmed on Cardano:
 
-1. Excluded SPOs are removed from the candidate set for this epoch's DKG.
+1. Banned SPOs are excluded from the candidate set for this epoch's DKG.
 2. Threshold `t` is recomputed with the reduced candidate set.
 3. DKG restarts from Round 0.
 
-**Note**: Slashing fully removes the misbehaving SPO from Bifrost (token burned, removed from PMT). They must complete a new registration to participate again.
+**Note**: Banning temporarily excludes the SPO with an exponentially increasing timeout, allowing them to rejoin after the ban expires.
 
 #### 10. Treasury Handoff
 
@@ -684,6 +658,4 @@ This 1-of-n honesty assumption is significantly stronger than typical bridge tru
 
 [7] *zkFold-Cardano* (github repository): https://github.com/zkFold/zkfold-cardano/tree/main/zkfold-cardano/src/ZkFold/Cardano
 
-[8] *Haskell Merkle Patricia Forestry* (github repository): https://github.com/zkFold/haskell-merkle-patricia-forestry
-
-[9] *Bifrost On-Chain Validators* (Aiken): https://github.com/FluidTokens/ft-bifrost-bridge/tree/main/onchain/validators
+[8] *Bifrost On-Chain Validators* (Aiken): https://github.com/FluidTokens/ft-bifrost-bridge/tree/main/onchain/validators
