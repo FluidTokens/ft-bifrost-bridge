@@ -1,5 +1,12 @@
 
 
+# Generate PNGs from Mermaid diagrams
+mkdir -p documentation/images
+for f in documentation/diagrams/*.mmd; do
+  [ -f "$f" ] || continue
+  mmdc -i "$f" -o "documentation/images/$(basename "$f" .mmd).png" -b white -s 4
+done
+
 # Process markdown to PDF using pandoc with mermaid filter
 pandoc documentation/technical_documentation.md \
   --pdf-engine=xelatex \

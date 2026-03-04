@@ -31,6 +31,7 @@
             aiken
             nixpkgs-fmt
             nodejs
+            nodePackages.mermaid-cli
             texliveFull
             pandoc
           ];

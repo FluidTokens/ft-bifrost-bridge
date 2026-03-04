@@ -57,8 +57,6 @@ Bifrost logic is fully encapsulated in the following solutions:
 
 ## Components relationships
 
-![Bifrost UTxO Flow](./images/utxo_flow.png)
-
 ![Bifrost Flow Chart](./images/Bifrost_flow_chart.png)
 
 Watchtowers, who run the watchtower program, challenge each other to be the first to post the best source blockchain chain of valid blocks in the Binocular Oracle smart contract (watchtower.ak). The winner for each chain is rewarded with some ADA, proportionally for each valid block posted.
@@ -96,6 +94,10 @@ Once the Treasury Movement transaction is confirmed on the source blockchain, th
 * For peg-outs: anyone can provide a Binocular inclusion proof to burn the locked fBTC and the peg-out NFT, retrieving the min_utxo ADA.
 
 Peg-out completion is fully permissionless. Peg-in completion requires the depositor's action (Schnorr signature), which gives the depositor full control over the Cardano destination address.
+
+### Cardano and Bitcoin transaction flow
+
+![Bifrost UTxO Flow](./images/utxo_flow.png)
 
 ## User peg-in flow
 
