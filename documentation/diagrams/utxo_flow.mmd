@@ -1,0 +1,71 @@
+graph LR
+    subgraph BTC["Bitcoin"]
+        direction TB
+
+        AliceBTC["Alice's BTC UTxO"]
+        PegInTx{{"Peg-in Tx"}}
+        TaprootUTxO["Peg-in Taproot UTxO<br/>(key: Y<sub>67</sub> | leaf: depositor hash+timelock)"]
+        OpReturn["OP_RETURN<br/>BFR || depositor_pubkey_hash"]
+
+        OldTreasury["Old Treasury UTxO<br/>(key: Y<sub>67</sub> | leaves: Y<sub>51</sub>, Y<sub>fed</sub>+timelock)"]
+        TreasuryMovTx{{"Treasury Movement Tx<br/>(67%: full | 51%/fed: peg-out only)"}}
+        NewTreasury["New Treasury UTxO<br/>(next epoch)"]
+        PegOutPayment["Peg-out Payment UTxO<br/>(to withdrawer)"]
+
+        AliceBTC --> PegInTx
+        PegInTx --> TaprootUTxO
+        PegInTx --> OpReturn
+
+        TaprootUTxO -. "swept by Y<sub>67</sub> only<br/>(rolls over if 51%/fed)" .-> TreasuryMovTx
+        OldTreasury --> TreasuryMovTx
+        TreasuryMovTx --> NewTreasury
+        TreasuryMovTx --> PegOutPayment
+    end
+
+    subgraph ADA["Cardano"]
+        direction TB
+
+        TreasuryAK["Treasury Hub<br/>Y<sub>67</sub>, Y<sub>51</sub><br/>(reference UTxO)"]
+        WatchtowerAK["Binocular Oracle<br/>(confirmed BTC blocks)"]
+        SPORegistry["SPO Linked-List<br/>(ordered nodes)"]
+
+        PegInAK["PegInRequest UTxO<br/>(NFT + inclusion proof<br/>+ creator pubkey hash)"]
+        PegOutAK["PegOut UTxO<br/>(NFT + locked fBTC)"]
+
+        TreasuryMovAK["Signed Treasury Movement BTC Tx UTxO<br/>(posted by SPOs)"]
+        BridgedAssetAK["fBTC Mint / Burn"]
+    end
+
+    %% Cross-chain: peg-in flow
+    OpReturn -. "watchtower detects<br/>peg-in tx" .-> PegInAK
+    WatchtowerAK -. "inclusion proof<br/>references block" .-> PegInAK
+
+    %% Cross-chain: Treasury Movement relay
+    TreasuryMovAK -. "watchtower relays<br/>signed tx to Bitcoin" .-> TreasuryMovTx
+
+    %% SPOs construct Treasury Movement
+    PegInAK -. "SPOs read peg-ins<br/>(67% path only)" .-> TreasuryMovAK
+    PegOutAK -. "SPOs read<br/>peg-out requests" .-> TreasuryMovAK
+    SPORegistry -. "roster for<br/>FROST signing" .-> TreasuryMovAK
+    TreasuryAK -. "Treasury keys for<br/>Taproot tweak" .-> TreasuryMovAK
+
+    %% Completion: mint/burn fBTC
+    TreasuryMovAK -. "inclusion proof of<br/>confirmed BTC tx" .-> BridgedAssetAK
+    PegInAK -. "depositor mints fBTC<br/>(Schnorr sig required)" .-> BridgedAssetAK
+    PegOutAK -. "peg-out completion:<br/>burn fBTC" .-> BridgedAssetAK
+
+    %% PegInRequest closure (timeout reclaim)
+    WatchtowerAK -. "creator closes if<br/>BTC timeout reclaim" .-> PegInAK
+
+    %% Styling
+    classDef btcNode fill:#f9a825,stroke:#f57f17,color:#000
+    classDef btcTx fill:#fff9c4,stroke:#f57f17,color:#000
+    classDef adaNode fill:#42a5f5,stroke:#1565c0,color:#fff
+    classDef btcBox fill:#fff8e1,stroke:#f57f17,color:#000
+    classDef adaBox fill:#e3f2fd,stroke:#1565c0,color:#000
+
+    class AliceBTC,TaprootUTxO,OpReturn,OldTreasury,NewTreasury,PegOutPayment btcNode
+    class PegInTx,TreasuryMovTx btcTx
+    class TreasuryAK,WatchtowerAK,SPORegistry,PegInAK,PegOutAK,TreasuryMovAK,BridgedAssetAK adaNode
+    class BTC btcBox
+    class ADA adaBox
