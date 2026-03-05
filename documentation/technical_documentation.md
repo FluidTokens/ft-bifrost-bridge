@@ -48,7 +48,7 @@ Bifrost logic is fully encapsulated in the following solutions:
 * **Watchtower program**: watchtowers run this software on top of source blockchain and Cardano nodes. It posts source blockchain block headers to the Binocular Oracle, detects peg-in transactions and posts PegInRequest UTxOs on Cardano, and relays SPO-signed Treasury Movement transactions to the source blockchain.
 * Cardano smart contracts:
   * **spos_registry.ak**: SPOs that participate in Bifrost need to register here for the next upcoming epoch. The registry is an on-chain linked list ordered by SPOs edcs key and each node also contains the SPO secp key that will be used to sign source blockchain transactions.
-  * **watchtower.ak**: The watchtowers (anyone) post the best chain of blocks here, other watchtowers eventually challenge it by posting a better version and the winner gets rewarded by the end of the availability window.
+  * **Binocular**: The watchtowers (anyone) post the best chain of blocks here, other watchtowers eventually challenge it by posting a better version and the winner gets rewarded by the end of the availability window.
   * **peg_in.ak**: watchtowers (or anyone) create PegInRequest UTxOs here by minting a unique NFT and providing a Binocular inclusion proof of the source blockchain deposit transaction. The datum contains the depositor's Bitcoin pubkey hash (HASH160), source blockchain txid, output index, deposit amount, and the creator's Cardano pubkey hash. This makes peg-in deposits visible to SPOs for inclusion in the Treasury Movement transaction. If the peg-in is never swept (e.g., depositor reclaimed on Bitcoin via timeout), the creator can close the PegInRequest by providing a Binocular proof that the peg-in UTxO was spent on the source blockchain (timeout reclaim), burning the PegIn NFT and reclaiming their min_utxo ADA.
   * **peg_out.ak**: when a withdrawer wants to unlock the bridged assets on the proper source blockchain, he locks his bridged assets at this smart contract along with a freshly minted unique NFT. The datum contains the source blockchain destination address where assets should be sent. SPOs read these UTxOs to include peg-out payments in the Treasury Movement transaction.
   * **treasury.ak**: stores the current Treasury FROST group public keys $Y_{67}$ and $Y_{51}$ as a reference UTxO. These correspond to two FROST groups with thresholds ensuring any signing subset controls ≥67% and ≥51% of stake respectively. After each pair of DKGs, the current roster posts the new group public keys here, authenticated by a FROST group signature from the current roster. Depositors and validators read these to derive the current Treasury address. For the first epoch, the initial Treasury public keys are set during protocol bootstrap.
@@ -59,7 +59,7 @@ Bifrost logic is fully encapsulated in the following solutions:
 
 ![Bifrost Flow Chart](./images/Bifrost_flow_chart.png)
 
-Watchtowers, who run the watchtower program, challenge each other to be the first to post the best source blockchain chain of valid blocks in the Binocular Oracle smart contract (watchtower.ak). The winner for each chain is rewarded with some ADA, proportionally for each valid block posted.
+Watchtowers, who run the watchtower program, challenge each other to be the first to post the best source blockchain chain of valid blocks in the Binocular Oracle smart contract. The winner for each chain is rewarded with some ADA, proportionally for each valid block posted.
 
 Depositors, who want to peg-in, send their source blockchain assets to a unique Taproot address with an OP_RETURN metadata marker identifying the transaction as a Bifrost peg-in. Watchtowers detect these transactions on the source blockchain, and once confirmed, create PegInRequest UTxOs on Cardano (peg_in.ak) by minting an NFT and providing an inclusion proof.
 
@@ -691,7 +691,7 @@ Watchtowers use Binocular, a technology stack previously created and now improve
 
 1. **Monitor Bitcoin Network**: Watchtowers continuously track the Bitcoin blockchain for new blocks as they are mined.
 
-2. **Submit Block Headers**: When new Bitcoin blocks are found, watchtowers submit the 80-byte block headers to watchtower.ak, which is the Binocular Oracle smart contract on Cardano. These headers contain all information needed to verify Bitcoin consensus rules.
+2. **Submit Block Headers**: When new Bitcoin blocks are found, watchtowers submit the 80-byte block headers to Binocular Oracle smart contract on Cardano. These headers contain all information needed to verify Bitcoin consensus rules.
 
 3. **Compete for Accuracy**: Multiple watchtowers naturally compete to submit the most accurate chain. If a watchtower submits headers from an invalid or weaker fork, other watchtowers can challenge by submitting the correct chain with higher cumulative proof-of-work.
 
