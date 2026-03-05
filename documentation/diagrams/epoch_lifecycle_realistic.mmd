@@ -1,0 +1,37 @@
+%%{init: {'theme': 'default', 'themeVariables': {'critBkgColor': '#f9a825', 'critBorderColor': '#f57f17'}}}%%
+gantt
+    title Bifrost Realistic Epoch — Happy Path (67% quorum)
+    dateFormat YYYY-MM-DD HH:mm
+    axisFormat %d %b %H:00
+    tickInterval 12hour
+
+    section Ceremony
+    Epoch N start                          :milestone, snap, 2025-01-01 00:00, 0d
+    DKG Roster B (~5 min)                  :dkg, 2025-01-01 00:00, 2025-01-01 01:00
+    Post Y to treasury.ak                  :updy, 2025-01-01 01:00, 2025-01-01 02:00
+
+    section Peg requests (continuous)
+    Peg-in / peg-out requests arriving     :active, pegs, 2025-01-01 00:00, 2025-01-06 00:00
+
+    section TM #1
+    Build + FROST sign 67% (~6 min)        :tm1, 2025-01-01 12:00, 2025-01-01 13:00
+    Binocular confirmation (~20h)         :crit, tm1c, 2025-01-01 13:00, 2025-01-02 09:00
+    Peg completions                        :tm1d, 2025-01-02 09:00, 2025-01-02 12:00
+
+    section TM #2
+    Build + FROST sign 67% (~6 min)        :tm2, 2025-01-02 12:00, 2025-01-02 13:00
+    Binocular confirmation (~20h)         :crit, tm2c, 2025-01-02 13:00, 2025-01-03 09:00
+    Peg completions                        :tm2d, 2025-01-03 09:00, 2025-01-03 12:00
+
+    section TM #3
+    Build + FROST sign 67% (~6 min)        :tm3, 2025-01-03 12:00, 2025-01-03 13:00
+    Binocular confirmation (~20h)         :crit, tm3c, 2025-01-03 13:00, 2025-01-04 09:00
+    Peg completions                        :tm3d, 2025-01-04 09:00, 2025-01-04 12:00
+
+    section TM #4 (treasury handoff to Roster B)
+    Build + FROST sign 67% (~6 min)        :tm4, 2025-01-04 12:00, 2025-01-04 13:00
+    Binocular confirmation (~20h)         :crit, tm4c, 2025-01-04 13:00, 2025-01-05 09:00
+    Peg completions                        :tm4d, 2025-01-05 09:00, 2025-01-05 12:00
+
+    section Epoch N+1
+    Roster B takes over                    :milestone, snap1, 2025-01-06 00:00, 0d

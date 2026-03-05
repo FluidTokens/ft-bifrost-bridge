@@ -1,3 +1,4 @@
+%%{init: {'theme': 'default', 'themeVariables': {'critBkgColor': '#f9a825', 'critBorderColor': '#f57f17', 'doneBkgColor': '#ef5350', 'doneBorderColor': '#c62828'}}}%%
 gantt
     title Bifrost Epoch Lifecycle — Roster A → Roster B
     dateFormat YYYY-MM-DD HH:mm
@@ -17,8 +18,8 @@ gantt
     Update Y (Roster A posts Roster B keys)  :n_updy, 2025-01-02 12:00, 2025-01-02 18:00
     Build Treasury Movement Tx (Roster A)  :n_build, 2025-01-02 18:00, 2025-01-03 00:00
     FROST sign 67% (Roster A)              :n_s67, 2025-01-03 00:00, 2025-01-05 23:00
-    FROST sign 51% fallback (Roster A)     :crit, n_s51, 2025-01-04 00:00, 2025-01-05 23:00
-    Federation TM (last resort)            :crit, n_fed, 2025-01-05 00:00, 2025-01-05 23:00
+    FROST sign 51% fallback (Roster A)     :done, n_s51, 2025-01-04 00:00, 2025-01-05 23:00
+    Federation TM (last resort)            :done, n_fed, 2025-01-05 00:00, 2025-01-05 23:00
     TM submission deadline                 :milestone, n_dl, 2025-01-05 23:00, 0d
     New peg requests (next batch)          :n_new, 2025-01-02 12:00, 2025-01-06 00:00
 
@@ -32,8 +33,8 @@ gantt
     Update Y (Roster B posts Roster C keys)  :n1_updy, 2025-01-07 12:00, 2025-01-07 18:00
     Build Treasury Movement Tx (Roster B)  :n1_build, 2025-01-07 18:00, 2025-01-08 00:00
     FROST sign 67% (Roster B)              :n1_s67, 2025-01-08 00:00, 2025-01-10 23:00
-    FROST sign 51% fallback (Roster B)     :crit, n1_s51, 2025-01-09 00:00, 2025-01-10 23:00
-    Federation TM (last resort)            :crit, n1_fed, 2025-01-10 00:00, 2025-01-10 23:00
+    FROST sign 51% fallback (Roster B)     :done, n1_s51, 2025-01-09 00:00, 2025-01-10 23:00
+    Federation TM (last resort)            :done, n1_fed, 2025-01-10 00:00, 2025-01-10 23:00
     TM submission deadline                 :milestone, n1_dl, 2025-01-10 23:00, 0d
     New peg requests (next batch)          :n1_new, 2025-01-07 12:00, 2025-01-11 00:00
     Epoch N+2 · Roster C takes over        :milestone, n2_snap, 2025-01-11 00:00, 0d

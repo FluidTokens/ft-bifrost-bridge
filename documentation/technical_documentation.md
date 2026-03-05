@@ -261,6 +261,18 @@ The diagram above shows two consecutive Cardano epochs with roster handoff from 
 9. **TM submission deadline** — the signed transaction must be posted to `treasury_movement.ak` before the epoch ends.
 10. **New peg requests** — after the pegs snapshot, new requests accumulate for the next epoch's batch.
 
+### Realistic epoch timeline (happy path)
+
+![Realistic epoch lifecycle](images/epoch_lifecycle_realistic.png)
+
+The epoch lifecycle above shows generous time windows for the signing cascade (67% → 51% → federation). In the happy path, when 67% quorum is available, the epoch proceeds much faster:
+
+- **DKG**: ~5 minutes (off-chain, SPOs communicate via `bifrost_url` endpoints).
+- **FROST 67% signing**: ~1 minute per Treasury Movement transaction.
+- **Multiple TM batches**: the roster processes peg requests in multiple batches throughout the epoch, each cycling through build → sign → broadcast → Bitcoin confirmation.
+
+The bottleneck is Bitcoin confirmation: each Treasury Movement requires ~100 Bitcoin blocks (~16.7 hours) plus the ~200-minute Binocular challenge period, totaling ~20 hours. With a 5-day Cardano epoch, 4–5 TM batches fit sequentially, each handling its own set of peg-in and peg-out requests. The final TM of the epoch moves the treasury to the new roster's Taproot address.
+
 ## Flow of SPOs on Cardano
 
 todo
