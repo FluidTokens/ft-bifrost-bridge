@@ -23,6 +23,7 @@ PDFS       := $(patsubst $(DOC_DIR)/%.md,$(DOC_DIR)/%.pdf,$(MD_SRCS))
 
 PANDOC_FLAGS := --pdf-engine=xelatex \
   --from=markdown+tex_math_single_backslash \
+  --resource-path=$(DOC_DIR) \
   --highlight-style=tango \
   -V geometry:margin=1in \
   -V colorlinks=true \
