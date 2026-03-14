@@ -4,11 +4,11 @@ graph LR
 
         AliceBTC["Alice's BTC UTxO"]
         PegInTx{{"Peg-in Tx"}}
-        TaprootUTxO["Peg-in Taproot UTxO<br/>(key: Y<sub>67</sub> | leaf: depositor hash+timelock)"]
+        TaprootUTxO["Peg-in Taproot UTxO<br/>(key: Y<sub>51</sub> | leaves: Y<sub>fed</sub>+timelock, depositor hash+timelock)"]
         OpReturn["OP_RETURN<br/>BFR || depositor_pubkey_hash"]
 
-        OldTreasury["Old Treasury UTxO<br/>(key: Y<sub>67</sub> | leaves: Y<sub>51</sub>, Y<sub>fed</sub>+timelock)"]
-        TreasuryMovTx{{"Treasury Movement Tx<br/>(67%: full | 51%/fed: peg-out only)"}}
+        OldTreasury["Old Treasury UTxO<br/>(key: Y<sub>51</sub> | leaves: Y<sub>67</sub>, Y<sub>fed</sub>+timelock)"]
+        TreasuryMovTx{{"Treasury Movement Tx"}}
         NewTreasury["New Treasury UTxO<br/>(next epoch)"]
         PegOutPayment["Peg-out Payment UTxO<br/>(to withdrawer)"]
 
@@ -16,7 +16,7 @@ graph LR
         PegInTx --> TaprootUTxO
         PegInTx --> OpReturn
 
-        TaprootUTxO -. "swept by Y<sub>67</sub> only<br/>(rolls over if 51%/fed)" .-> TreasuryMovTx
+        TaprootUTxO -. "swept by SPOs<br/>or federation" .-> TreasuryMovTx
         OldTreasury --> TreasuryMovTx
         TreasuryMovTx --> NewTreasury
         TreasuryMovTx --> PegOutPayment
@@ -45,7 +45,7 @@ graph LR
     TreasuryMovAK -. "watchtower relays<br/>signed tx to Bitcoin" .-> TreasuryMovTx
 
     %% SPOs construct Treasury Movement
-    PegInAK -. "SPOs read peg-ins<br/>(67% path only)" .-> TreasuryMovAK
+    PegInAK -. "SPOs read peg-ins" .-> TreasuryMovAK
     PegOutAK -. "SPOs read<br/>peg-out requests" .-> TreasuryMovAK
     SPORegistry -. "FROST roster" .-> TreasuryMovAK
     TreasuryAK -. "Treasury keys" .-> TreasuryMovAK

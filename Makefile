@@ -3,8 +3,7 @@
 # Usage:
 #   make diagrams          build all .mmd → .png
 #   make diagram-FOO       build documentation/diagrams/FOO.mmd only
-#   make pdfs              build all markdown → PDF
-#   make pdf-technical     build technical_documentation.pdf only
+#   make whitepaper              build whitepaperV1.pdf
 #   make docs              build everything (diagrams first, then PDFs)
 #   make clean             remove generated images and PDFs
 
@@ -18,8 +17,7 @@ DOC_DIR    := documentation
 MMD_SRCS   := $(wildcard $(DIAG_DIR)/*.mmd)
 MMD_PNGS   := $(patsubst $(DIAG_DIR)/%.mmd,$(IMG_DIR)/%.png,$(MMD_SRCS))
 
-MD_SRCS    := $(wildcard $(DOC_DIR)/*.md)
-PDFS       := $(patsubst $(DOC_DIR)/%.md,$(DOC_DIR)/%.pdf,$(MD_SRCS))
+WHITEPAPER := $(DOC_DIR)/whitepaperV1.pdf
 
 PANDOC_FLAGS := --pdf-engine=xelatex \
   --from=markdown+tex_math_single_backslash \
@@ -36,32 +34,29 @@ PANDOC_FLAGS := --pdf-engine=xelatex \
 
 # ── Phony targets ──────────────────────────────────────────────
 
-.PHONY: docs diagrams pdfs clean
+.PHONY: docs diagrams whitepaper clean
 
-docs: diagrams pdfs
+docs: diagrams whitepaper
 
 diagrams: $(MMD_PNGS)
 
-pdfs: $(PDFS)
+whitepaper: $(WHITEPAPER)
 
 clean:
-	rm -f $(MMD_PNGS) $(PDFS)
+	rm -f $(MMD_PNGS) $(WHITEPAPER)
 
 # ── Pattern rules ──────────────────────────────────────────────
 
 $(IMG_DIR)/%.png: $(DIAG_DIR)/%.mmd | $(IMG_DIR)
 	$(MMDC) -i $< -o $@ -b white -s 4
 
-$(DOC_DIR)/%.pdf: $(DOC_DIR)/%.md $(MMD_PNGS) | $(IMG_DIR)
+$(WHITEPAPER): $(DOC_DIR)/technical_documentation.md $(MMD_PNGS) | $(IMG_DIR)
 	$(PANDOC) $(PANDOC_FLAGS) -o $@ $<
 
 $(IMG_DIR):
 	mkdir -p $@
 
-# ── Convenience aliases (make diagram-utxo_flow, make pdf-technical_documentation) ─
+# ── Convenience aliases (make diagram-utxo_flow) ─
 
 diagram-%: $(IMG_DIR)/%.png
-	@true
-
-pdf-%: $(DOC_DIR)/%.pdf
 	@true

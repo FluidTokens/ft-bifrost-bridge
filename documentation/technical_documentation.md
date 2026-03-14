@@ -50,11 +50,11 @@ Bifrost logic is fully encapsulated in the following solutions:
 * Cardano smart contracts:
   * **spos_registry.ak**: SPOs that participate in Bifrost need to register here for the next upcoming epoch. The registry is an on-chain linked list ordered by SPOs edcs key and each node also contains the SPO secp key that will be used to sign source blockchain transactions.
   * **Binocular**: The watchtowers (anyone) post the best chain of blocks here, other watchtowers eventually challenge it by posting a better version and the winner gets rewarded by the end of the availability window.
-  * **peg_in.ak**: watchtowers (or anyone) create PegInRequest UTxOs here by minting a PegInRequest NFT and providing a Binocular inclusion proof of the Bitcoin deposit transaction. The datum contains the raw Bitcoin peg-in transaction bytes. SPOs do not have direct access to Bitcoin chain state, so PegInRequest UTxOs are their trusted source of Bitcoin deposit data for constructing Treasury Movement transactions.
+  * **peg_in.ak**: watchtowers (or anyone) create PegInRequest UTxOs here by minting a PegInRequest NFT and providing a Binocular inclusion proof of the Bitcoin deposit transaction. The datum contains the raw Bitcoin peg-in transaction bytes. SPOs do not have direct access to Bitcoin chain state, so PegInRequest UTxOs serve as their trusted source of Bitcoin deposit data for constructing Treasury Movement transactions.
   * **peg_out.ak**: when a withdrawer wants to unlock the bridged assets on the proper source blockchain, he locks his bridged assets at this smart contract. The datum contains the source blockchain destination address where assets should be sent. SPOs read these UTxOs to include peg-out payments in the Treasury Movement transaction.
   * **treasury.ak**: stores the current Treasury FROST group public keys $Y_{67}$ and $Y_{51}$ and a Merkle Patricia Trie of completed peg-ins as a reference UTxO. The keys correspond to two FROST groups with thresholds ensuring any signing subset controls ≥67% and ≥51% of stake respectively. After each pair of DKGs, the current roster posts the new group public keys here, authenticated by a FROST group signature from the current roster. Depositors and validators read these to derive the current Treasury address. The completed peg-ins trie is updated each time fBTC is minted, preventing double minting. For the first epoch, the initial Treasury public keys are set during protocol bootstrap.
   * **treasury_movement.ak**: SPOs post signed source blockchain Treasury Movement transactions here. The datum contains the serialized signed transaction, the epoch number, and references to the PegInRequest and PegOut UTxOs it covers. Watchtowers monitor this contract and relay the signed transactions to the source blockchain.
-  * **bridged_asset.ak**: minting and burning of bridged assets (e.g. fBTC). The depositor mints fBTC by spending the PegInRequest UTxO and providing: a Binocular inclusion proof of the confirmed Treasury Movement transaction, a reference to the corresponding `treasury_movement.ak` UTxO (to verify the confirmed transaction matches what SPOs signed and posted), a non-inclusion proof against the completed peg-ins Merkle Patricia Trie in `treasury.ak` (preventing double minting), their Bitcoin x-only public key, and a Schnorr signature proving ownership. The validator verifies the Binocular-confirmed txid matches the `treasury_movement.ak` datum (proving the transaction was signed by the FROST group), parses the raw TM transaction to verify the depositor's peg-in txid+vout appears as an input (proving the Treasury Movement actually swept the deposit), parses the raw peg-in transaction from the PegInRequest datum to extract the depositor_pubkey_hash from the OP_RETURN and the deposit amount, verifies HASH160(pubkey) matches the depositor_pubkey_hash, checks the signature via `verifySchnorrSecp256k1Signature`, verifies the peg-in is not already in the completed trie, and mints the correct amount of fBTC to whatever Cardano address the depositor specifies in the transaction outputs. The minting transaction also inserts the peg-in into the completed peg-ins trie in the Treasury UTxO. Anyone can burn fBTC for a peg-out by spending the PegOut UTxO and providing a Binocular inclusion proof of the Treasury Movement transaction that fulfilled the peg-out.
+  * **bridged_asset.ak**: minting and burning of bridged assets (e.g. fBTC). The depositor mints fBTC by spending the PegInRequest UTxO and providing: a Binocular inclusion proof of the confirmed Treasury Movement transaction, a reference to the corresponding `treasury_movement.ak` UTxO (to verify the confirmed transaction matches what SPOs signed and posted), a non-inclusion proof against the completed peg-ins Merkle Patricia Trie in `treasury.ak` (preventing double minting), their Bitcoin x-only public key, and a Schnorr signature proving ownership. The validator verifies the Binocular-confirmed txid matches the `treasury_movement.ak` datum (proving the confirmed transaction matches what was posted by the protocol's signing cascade), parses the raw TM transaction to verify the depositor's peg-in txid+vout appears as an input (proving the Treasury Movement actually swept the deposit), parses the raw peg-in transaction from the PegInRequest datum to extract the depositor_pubkey_hash from the OP_RETURN and the deposit amount, verifies HASH160(pubkey) matches the depositor_pubkey_hash, checks the signature via `verifySchnorrSecp256k1Signature`, verifies the peg-in is not already in the completed trie, and mints the correct amount of fBTC to whatever Cardano address the depositor specifies in the transaction outputs. The minting transaction also inserts the peg-in into the completed peg-ins trie in the Treasury UTxO. Anyone can burn fBTC for a peg-out by spending the PegOut UTxO and providing a Binocular inclusion proof of the Treasury Movement transaction that fulfilled the peg-out.
 
 ## Components relationships
 
@@ -70,20 +70,17 @@ SPOs, who register with their delegated stake to join the next epoch in spos_reg
 
 At the end of each epoch, the registered SPOs (that normally also include the old group) verify each other's delegated stake to ensure honesty and participate in a DKG ceremony to generate their new shared multisignature address.
 
-The old SPOs group then constructs a Treasury Movement transaction on the source blockchain. The contents and signing key depend on the available quorum:
-
-**With 67% quorum ($Y_{67}$, normal operation)** — the transaction:
+The old SPOs group then constructs a Treasury Movement transaction on the source blockchain. All quorum levels construct the same **full** Treasury Movement transaction:
 
 * Spends the current treasury UTxO, sending remaining funds to the new SPOs Treasury address.
-* Collects (spends) all confirmed peg-in UTxOs, consolidating them into the treasury (only $Y_{67}$ can sweep peg-in UTxOs — enforced by their Taproot construction).
+* Collects (spends) all confirmed peg-in UTxOs, consolidating them into the treasury.
 * Sends the correct amounts from the treasury to the source blockchain addresses that have correctly requested a peg-out.
 
-**With 51% quorum ($Y_{51}$, degraded operation)** — if SPOs cannot collect enough partial signatures for a 67% FROST threshold, they construct a peg-out-only transaction:
+The signing cascade tries higher quorum levels first for stronger security:
 
-* Spends the current treasury UTxO, sending remaining funds to the new Treasury address.
-* Sends peg-out fulfillments. Does **not** sweep any peg-in UTxOs (peg-ins roll over to the next epoch).
-
-**With federation key ($Y_{federation}$, emergency)** — if neither 67% nor 51% quorum is reached within the timeout, the federation signs a peg-out-only transaction (same structure as the 51% case).
+1. **67% quorum ($Y_{67}$, aspirational)**: SPOs sign via the $Y_{67}$ script leaf in the Treasury Taproot tree. This proves the strongest security threshold on Bitcoin.
+2. **51% quorum ($Y_{51}$, main line)**: SPOs sign via the $Y_{51}$ key path — the cheapest spending path. This is the primary operating mode.
+3. **Federation ($Y_{federation}$, emergency)**: if neither quorum is reached within the timeout, the federation signs via the $Y_{federation}$ script leaf with timelock.
 
 If the resulting transaction would be too large, SPOs may split it into multiple transactions.
 
@@ -91,7 +88,7 @@ The SPOs sign this transaction using FROST group signing and post the serialized
 
 Once the Treasury Movement transaction is confirmed on the source blockchain, the bridging operations can be completed on Cardano:
 
-* For peg-ins: the depositor spends the PegInRequest UTxO and provides a Binocular inclusion proof of the confirmed Treasury Movement transaction and a reference to the corresponding `treasury_movement.ak` UTxO — the validator verifies the confirmed txid matches the posted datum, proving the transaction was signed by the FROST group (not, e.g., a depositor timeout reclaim). The validator parses the raw TM transaction to verify the depositor's peg-in txid+vout appears as an input (proving the TM actually swept this deposit), and parses the raw peg-in transaction from the PegInRequest datum to extract the depositor_pubkey_hash and deposit amount. The depositor additionally provides a non-inclusion proof against the completed peg-ins Merkle Patricia Trie in the Treasury UTxO, their Bitcoin x-only public key, and a Schnorr signature proving ownership. This mints the corresponding fBTC to a Cardano address of the depositor's choice and inserts the peg-in into the completed peg-ins trie to prevent double minting.
+* For peg-ins: the depositor spends the PegInRequest UTxO and provides a Binocular inclusion proof of the confirmed Treasury Movement transaction and a reference to the corresponding `treasury_movement.ak` UTxO — the validator verifies the confirmed txid matches the posted datum, proving the confirmed transaction matches what was posted by the protocol's signing cascade (not, e.g., a depositor timeout reclaim). The validator parses the raw TM transaction to verify the depositor's peg-in txid+vout appears as an input (proving the TM actually swept this deposit), and parses the raw peg-in transaction from the PegInRequest datum to extract the depositor_pubkey_hash and deposit amount. The depositor additionally provides a non-inclusion proof against the completed peg-ins Merkle Patricia Trie in the Treasury UTxO, their Bitcoin x-only public key, and a Schnorr signature proving ownership. This mints the corresponding fBTC to a Cardano address of the depositor's choice and inserts the peg-in into the completed peg-ins trie to prevent double minting.
 * For peg-outs: anyone spends the PegOut UTxO and provides a Binocular inclusion proof of the Treasury Movement transaction that fulfilled the peg-out, burning the locked fBTC and retrieving the min_utxo ADA.
 
 Peg-out completion is fully permissionless. Peg-in completion requires the depositor's action (Schnorr signature), which gives the depositor full control over the Cardano destination address.
@@ -107,19 +104,19 @@ A user who wants to move his BTC from Bitcoin to Cardano is called a depositor.
 These are the steps to execute a correct peg-in:
 
 * Check the status of Bifrost: if the bridge is correctly operational and we are not too near the end of the current Cardano epoch, the peg-in can be done.
-* Retrieve the current Treasury key $Y_{67}$ from `treasury.ak` on Cardano (published there after each DKG).
-* On Bitcoin, send the amount of BTC to peg-in to a Taproot address derived from $Y_{67}$ and the depositor's timeout refund script (see **Taproot address construction** below). The address has two spending paths: the $Y_{67}$ key path (for SPO sweep — only a 67% weighted-majority can take custody of new BTC) and a script path allowing the depositor to reclaim after ~1 month. The transaction must include an OP_RETURN output containing: `"BFR" || depositor_pubkey_hash (20 bytes)` (23 bytes total). The `depositor_pubkey_hash` is HASH160 of the depositor's Bitcoin x-only public key and is needed by SPOs to reconstruct the Taproot address and compute the tweak for key-path signing.
+* Retrieve the current Treasury key $Y_{51}$ from `treasury.ak` on Cardano (published there after each DKG).
+* On Bitcoin, send the amount of BTC to peg-in to a Taproot address derived from $Y_{51}$, the federation fallback script, and the depositor's timeout refund script (see **Taproot address construction** below). The address has three spending paths: the $Y_{51}$ key path (for SPO sweep — main line), a $Y_{federation}$ script leaf (for federation emergency sweep after timeout), and a script leaf allowing the depositor to reclaim after ~30 days. The transaction must include an OP_RETURN output containing: `"BFR" || depositor_pubkey_hash (20 bytes)` (23 bytes total). The `depositor_pubkey_hash` is HASH160 of the depositor's Bitcoin x-only public key and is needed by SPOs to reconstruct the Taproot address and compute the tweak for key-path signing.
 * Wait for watchtowers to detect the Bitcoin transaction, post the corresponding Bitcoin block to the Binocular Oracle, and create a PegInRequest UTxO on Cardano (peg_in.ak) by minting a PegInRequest NFT and providing a transaction inclusion proof.
 * Wait for the SPOs to include this peg-in in the Treasury Movement transaction at the next epoch boundary. The SPOs sign this transaction with FROST and post it to Cardano (treasury_movement.ak). Watchtowers then relay the signed transaction to Bitcoin.
-* Once the Treasury Movement transaction is confirmed on Bitcoin, the depositor completes the peg-in on Cardano by spending the PegInRequest UTxO and providing: a Binocular inclusion proof of the confirmed Treasury Movement transaction, a reference to the corresponding `treasury_movement.ak` UTxO (the validator verifies the confirmed txid matches the posted datum, proving SPOs signed this transaction), a non-inclusion proof against the completed peg-ins Merkle Patricia Trie in the Treasury UTxO (preventing double minting), their Bitcoin x-only public key, and a Schnorr signature proving ownership. The validator parses the raw TM transaction to verify the depositor's peg-in txid+vout appears as an input (confirming the Treasury Movement actually swept this deposit), and parses the raw peg-in transaction from the PegInRequest datum to extract the depositor_pubkey_hash and deposit amount (this is the only point where the peg-in transaction is parsed on-chain). This mints the correct amount of fBTC to whatever Cardano address the depositor chooses and inserts the peg-in into the completed peg-ins trie in the Treasury UTxO.
-* If the peg-in was not included in the Treasury Movement transaction (e.g., it arrived too late in the epoch, or only 51%/federation quorum was available — which processes peg-outs only), it rolls over to the next epoch. If the Treasury key has rotated and the peg-in can no longer be swept, the depositor uses the 1-month timeout spending path to reclaim their BTC and can retry with the new Treasury address.
+* Once the Treasury Movement transaction is confirmed on Bitcoin, the depositor completes the peg-in on Cardano by spending the PegInRequest UTxO and providing: a Binocular inclusion proof of the confirmed Treasury Movement transaction, a reference to the corresponding `treasury_movement.ak` UTxO (the validator verifies the confirmed txid matches the posted datum, proving the confirmed transaction matches what was posted by the protocol's signing cascade), a non-inclusion proof against the completed peg-ins Merkle Patricia Trie in the Treasury UTxO (preventing double minting), their Bitcoin x-only public key, and a Schnorr signature proving ownership. The validator parses the raw TM transaction to verify the depositor's peg-in txid+vout appears as an input (confirming the Treasury Movement actually swept this deposit), and parses the raw peg-in transaction from the PegInRequest datum to extract the depositor_pubkey_hash and deposit amount (this is the only point where the peg-in transaction is parsed on-chain). This mints the correct amount of fBTC to whatever Cardano address the depositor chooses and inserts the peg-in into the completed peg-ins trie in the Treasury UTxO.
+* If the peg-in was not included in the Treasury Movement transaction (e.g., it arrived too late in the epoch), it rolls over to the next epoch. If the Treasury key has rotated and the peg-in can no longer be swept, the depositor uses the ~30-day timeout spending path to reclaim their BTC and can retry with the new Treasury address.
 * **PegInRequest closure**: A PegInRequest UTxO can be closed (NFT burned, min_utxo ADA reclaimed by the creator) under two conditions:
-  * **After timeout reclaim**: the creator provides a Binocular inclusion proof of a confirmed Bitcoin transaction that spends the peg-in txid+vout via the **script path** (timeout reclaim). The on-chain validator parses the Bitcoin transaction witness to verify it is a script-path spend (control block + script present), not a key-path spend (which would be a Treasury Movement sweep). This ensures closure cannot grief a depositor whose funds were legitimately swept.
+  * **After depositor timeout reclaim**: the creator provides a Binocular inclusion proof of a confirmed Bitcoin transaction that spends the peg-in txid+vout via the **depositor refund script leaf** (not the federation leaf, not the key path). The on-chain validator parses the Bitcoin transaction witness to verify it is a script-path spend using the depositor refund script specifically, not a key-path spend (which would be an SPO sweep) or a federation script-path spend (which would also be a legitimate sweep). This ensures closure cannot grief a depositor whose funds were legitimately swept by either SPOs or the federation.
   * **Duplicate PegInRequest**: the creator provides a **trie inclusion proof** showing the peg-in is already in the completed peg-ins Merkle Patricia Trie in the Treasury UTxO. This means fBTC was already minted via another PegInRequest for the same deposit, so this one is redundant.
 
 ### Taproot address construction
 
-The Treasury address and peg-in addresses use different Taproot trees following BIP341 [4], reflecting the protocol's **tiered security model**: taking custody of new BTC (peg-in sweep) requires a 67% weighted-majority, while returning BTC to users (peg-out fulfillment) and moving the treasury can be done with a 51% majority or federation fallback.
+The Treasury address and peg-in addresses use different Taproot trees following BIP341 [4]. Both use $Y_{51}$ as the key-path internal key, making the 51% FROST threshold the primary ("main line") operating mode. The 67% threshold appears as a script leaf in the Treasury tree for aspirational stronger security, and the federation appears as a timelock-gated fallback in both trees.
 
 #### Keys
 
@@ -128,17 +125,19 @@ The Treasury address and peg-in addresses use different Taproot trees following 
 
 #### Treasury Taproot tree
 
-The Treasury address (holding consolidated funds) uses $Y_{67}$ as the key-path internal key, with fallbacks for degraded and emergency operation:
+The Treasury address (holding consolidated funds) uses $Y_{51}$ as the key-path internal key, with an aspirational stronger path and an emergency fallback:
 
 | Path | Key | Condition | Use case |
 |------|-----|-----------|----------|
-| Key path | $Y_{67}$ | Immediate | Normal operation: peg-ins + peg-outs + treasury move |
-| Script leaf 1 | $Y_{51}$ | Immediate | Degraded: peg-outs + treasury move only (no peg-in sweeps) |
-| Script leaf 2 | $Y_{federation}$ | After timeout | Emergency: peg-outs + treasury move only (no peg-in sweeps) |
+| Key path | $Y_{51}$ | Immediate | Normal operation (main line): full TM |
+| Script leaf 1 | $Y_{67}$ | Immediate | Aspirational: full TM with strongest security proof |
+| Script leaf 2 | $Y_{federation}$ | After timeout | Emergency fallback: full TM |
 
-Script leaf 1 ($Y_{51}$ fallback):
+When 67% quorum is available, SPOs prefer $Y_{67}$ (script leaf 1) to prove the stronger security threshold on-chain on Bitcoin, even though it costs slightly more than the key path. When 67% is not available, they fall back to $Y_{51}$ key path (main line, cheapest).
+
+Script leaf 1 ($Y_{67}$ aspirational):
 ```
-<Y_51> OP_CHECKSIG
+<Y_67> OP_CHECKSIG
 ```
 
 Script leaf 2 (federation rescue):
@@ -150,72 +149,85 @@ Merkle tree (2 leaves):
 ```
      root
     /    \
-  Y_51  Y_federation
+  Y_67  Y_federation
 ```
 
-Treasury output key: $Q_{treasury} = Y_{67} + \text{tagged\_hash}(\text{"TapTweak"}, Y_{67} \| \text{merkle\_root}) · G$
+Treasury output key: $Q_{treasury} = Y_{51} + \text{tagged\_hash}(\text{"TapTweak"}, Y_{51} \| \text{merkle\_root}) · G$
 
 This address changes each epoch after DKG, since $Y_{67}$ and $Y_{51}$ are regenerated.
 
-In normal operation (67% quorum), SPOs spend the treasury via key path — a single 64-byte Schnorr signature with no script reveal. In degraded operation (51% quorum) or emergency (federation), the script path is used, revealing the script and control block.
+When 67% quorum is available, SPOs spend the treasury via the $Y_{67}$ script leaf — proving the stronger security threshold on Bitcoin at a slightly higher cost. When only 51% quorum is available, SPOs use the $Y_{51}$ key path — a single 64-byte Schnorr signature with no script reveal, the cheapest spending path. In emergency (federation), the $Y_{federation}$ script path with timelock is used.
 
 #### Peg-in Taproot tree
 
-The peg-in address is intentionally simpler: **only $Y_{67}$ can sweep peg-in UTxOs**. This is enforced by Bitcoin consensus — $Y_{51}$ and $Y_{federation}$ are not present in the peg-in Taproot tree and literally cannot spend these UTxOs.
+The peg-in address uses $Y_{51}$ as the key-path internal key (for SPO sweep — main line), with a federation emergency sweep leaf and a depositor refund leaf:
 
 | Path | Key | Condition | Use case |
 |------|-----|-----------|----------|
-| Key path | $Y_{67}$ | Immediate | SPO sweep (67% weighted-majority only) |
-| Script leaf | Depositor | After ~30 days (4320 blocks) | Depositor self-refund |
+| Key path | $Y_{51}$ | Immediate | SPO sweep (main line) |
+| Script leaf 1 | $Y_{federation}$ | After timeout | Federation emergency sweep |
+| Script leaf 2 | Depositor | After ~30 days (4320 blocks) | Depositor self-refund |
 
-Script leaf (depositor refund, P2PKH-style):
+Script leaf 1 (federation emergency sweep):
+```
+<timeout_federation> OP_CHECKSEQUENCEVERIFY OP_DROP <Y_federation> OP_CHECKSIG
+```
+
+Script leaf 2 (depositor refund, P2PKH-style):
 ```
 OP_DUP OP_HASH160 <depositor_pubkey_hash> OP_EQUALVERIFY OP_CHECKSIGVERIFY <4320> OP_CHECKSEQUENCEVERIFY
 ```
 
 `depositor_pubkey_hash` is HASH160 of the depositor's Bitcoin x-only public key (20 bytes). 4320 blocks ≈ 30 days. At spend time, the depositor provides their full x-only pubkey in the witness; the script verifies the hash matches before checking the signature.
 
+Merkle tree (2 leaves):
+```
+      root
+     /    \
+  Y_fed   depositor_refund
+```
+
 The peg-in output key $Q$ is:
 
-$Q = Y_{67} + \text{tagged\_hash}(\text{"TapTweak"}, Y_{67} \| \text{leaf\_hash}) · G$
+$Q = Y_{51} + \text{tagged\_hash}(\text{"TapTweak"}, Y_{51} \| \text{merkle\_root}) · G$
 
 Where:
 
-- $Y_{67}$ is the internal key (67% FROST group x-only public key, from `treasury.ak`).
-- The script tree contains a single leaf (depositor refund), so merkle_root = leaf_hash.
+- $Y_{51}$ is the internal key (51% FROST group x-only public key, from `treasury.ak`).
+- The script tree contains two leaves (federation sweep and depositor refund), so merkle_root is the hash of both leaf hashes.
 - $\text{leaf\_hash} = \text{tagged\_hash}(\text{"TapLeaf"}, \text{0xc0} \| \text{compact\_size}(\text{script\_len}) \| \text{script})$
 - $\text{tagged\_hash}(\text{tag}, \text{msg}) = \text{SHA256}(\text{SHA256}(\text{tag}) \| \text{SHA256}(\text{tag}) \| \text{msg})$
 - $G$ is the secp256k1 generator point.
 
 The resulting Bitcoin address is `bc1p<bech32m(Q)>`.
 
-**To reconstruct $Q$**, all components are available: $Y_{67}$ from `treasury.ak` and the depositor's pubkey hash from the OP_RETURN (propagated via the PegInRequest datum). The script is fully determined by the 20-byte hash — no secret information is needed.
+**To reconstruct $Q$**, all components are available: $Y_{51}$ and $Y_{federation}$ from `treasury.ak` and the depositor's pubkey hash from the OP_RETURN (propagated via the PegInRequest datum). Both scripts are fully determined by these parameters — no secret information is needed.
 
 #### Spending paths and Treasury Movement variants
 
-The contents of the Treasury Movement transaction depend on which signing threshold is reached:
+All quorum levels construct **full** Treasury Movement transactions (sweeping peg-in UTxOs, fulfilling peg-outs, and moving the treasury). The signing cascade tries higher quorums first:
 
-**Key path on both Treasury and peg-in inputs (67% quorum — normal operation):**
+**Script path on Treasury, key path on peg-in inputs (67% quorum — aspirational):**
 
-SPOs collect all confirmed PegInRequest and PegOut UTxOs from Cardano and construct a full Treasury Movement transaction. The 67% roster controls $Y_{67}$, so SPOs spend the treasury UTxO and all peg-in UTxOs via key path — a single 64-byte FROST Schnorr signature per input, no scripts revealed on Bitcoin. To sign, SPOs compute the tweaked private key: $d = y_{67} + \text{tagged\_hash}(\text{"TapTweak"}, Y_{67} \| \text{leaf\_hash})$, where $y_{67}$ is the FROST group private key (held as shares). For peg-in inputs, computing leaf_hash requires the depositor's pubkey hash — propagated to SPOs via the PegInRequest datum.
+SPOs collect all confirmed PegInRequest and PegOut UTxOs from Cardano and construct a full Treasury Movement transaction. They spend the treasury UTxO via the $Y_{67}$ script leaf (revealing the script and control block) to prove the stronger 67% security threshold on Bitcoin. Peg-in UTxOs are spent via key path ($Y_{51}$) — a single 64-byte FROST Schnorr signature per peg-in input. To sign peg-in inputs, SPOs compute the tweaked private key: $d = y_{51} + \text{tagged\_hash}(\text{"TapTweak"}, Y_{51} \| \text{merkle\_root})$, where $y_{51}$ is the FROST group private key (held as shares). Computing the merkle_root requires the depositor's pubkey hash (for the refund leaf) and $Y_{federation}$ (for the federation leaf) — both available from the PegInRequest datum and protocol parameters.
 
-**Script path on Treasury, no peg-in inputs (51% quorum — degraded operation):**
+**Key path on Treasury, key path on peg-in inputs (51% quorum — main line):**
 
-If SPOs cannot collect enough partial signatures for the 67% threshold, they construct a peg-out-only Treasury Movement transaction. The 51% roster spends the treasury UTxO via the $Y_{51}$ script leaf (revealing the script and control block). Peg-in UTxOs are not spent — they roll over to the next epoch. This ensures peg-out availability even when the 67% quorum is temporarily unavailable.
+If SPOs cannot collect enough partial signatures for the 67% threshold, they sign via the $Y_{51}$ key path on all inputs — the cheapest spending path. The same full Treasury Movement transaction (peg-ins + peg-outs + treasury move) is constructed.
 
-**Script path on Treasury, no peg-in inputs (federation — emergency):**
+**Script path on Treasury, script path on peg-in inputs (federation — emergency):**
 
-If neither 67% nor 51% quorum is reached within the timeout, the federation signs a peg-out-only Treasury Movement transaction using $Y_{federation}$ (script path with CSV timelock). Same structure as the 51% case.
+If neither 67% nor 51% quorum is reached within the timeout, the federation signs the same full Treasury Movement transaction using $Y_{federation}$ (script path with CSV timelock on all inputs).
 
 **Script path on peg-in only (depositor refund):**
 
-After ~30 days (4320 blocks), the depositor reveals the timeout script and control block to reclaim their BTC. This protects depositors if the bridge fails to process their peg-in (e.g., 67% quorum unavailable for multiple epochs, or Treasury key rotated before sweep).
+After ~30 days (4320 blocks), the depositor reveals the depositor refund script and control block to reclaim their BTC. This protects depositors if the bridge fails to process their peg-in (e.g., Treasury key rotated before sweep).
 
 #### Taproot address verification
 
-Plutus V3 does not expose secp256k1 point arithmetic builtins (only `verifySchnorrSecp256k1Signature` and `verifyEcdsaSecp256k1Signature`), so `peg_in.ak` **cannot** reconstruct $Q$ from $Y_{67}$ and the depositor's script on-chain.
+Plutus V3 does not expose secp256k1 point arithmetic builtins (only `verifySchnorrSecp256k1Signature` and `verifyEcdsaSecp256k1Signature`), so `peg_in.ak` **cannot** reconstruct $Q$ from $Y_{51}$, $Y_{federation}$, and the depositor's script on-chain.
 
-Instead, Taproot address correctness is verified **off-chain by SPOs**: before including a peg-in in the Treasury Movement transaction, each SPO independently reconstructs the expected peg-in Taproot address from $Y_{67}$ and the depositor's pubkey hash (read from the PegInRequest datum), and verifies it matches the Bitcoin transaction output. SPOs will not sign a Treasury Movement transaction that spends UTxOs they cannot actually spend via key path.
+Instead, Taproot address correctness is verified **off-chain by SPOs**: before including a peg-in in the Treasury Movement transaction, each SPO independently reconstructs the expected peg-in Taproot address from $Y_{51}$, $Y_{federation}$, and the depositor's pubkey hash (read from the PegInRequest datum), and verifies it matches the Bitcoin transaction output. SPOs will not sign a Treasury Movement transaction that spends UTxOs they cannot actually spend.
 
 This design is safe because:
 
@@ -232,7 +244,7 @@ These are the steps to execute a correct peg-out:
 * Check the status of Bifrost: if the bridge is correctly operational and we are not too near the end of the current Cardano epoch, the peg-out can be done.
 * On Cardano, lock the correct amount of fBTC plus MIN_ADA at the peg_out.ak spend script, minting a unique NFT. The datum contains the Bitcoin destination address where BTC should be sent.
 * Wait for the SPOs to include this peg-out in the Treasury Movement transaction at the next epoch boundary. The SPOs sign this transaction with FROST and post it to Cardano (treasury_movement.ak). Watchtowers then relay the signed transaction to Bitcoin. At this point, the withdrawer has received BTC at their specified Bitcoin address.
-* Once the Treasury Movement transaction is confirmed on Bitcoin (at least 6 Bitcoin blocks), anyone can complete the peg-out on Cardano by providing a Binocular inclusion proof of the Treasury Movement transaction. This burns the locked fBTC and the peg-out NFT, returning the MIN_ADA to the withdrawer.
+* Once the Treasury Movement transaction is confirmed on Bitcoin (100 Bitcoin blocks for Binocular confirmation), anyone can complete the peg-out on Cardano by providing a Binocular inclusion proof of the Treasury Movement transaction. This burns the locked fBTC and the peg-out NFT, returning the MIN_ADA to the withdrawer.
 * If for unexpected reasons the Treasury Movement transaction did not include the peg-out payment, the withdrawer can use a Binocular exclusion proof to unlock their fBTC and try again in the next epoch.
 
 ## Guaranteeing censor-resistant peg-ins and peg-outs
@@ -247,6 +259,16 @@ Therefore, the potential additional trust assumptions in Bifrost are the Cardano
 * Even if the user becomes a Cardano SPO, he would be just a small part of the total weight-based set of SPOs. Luckily, the strong majority of the SPOs are always incentivized in behaving correctly and on time, like they do when they participate in block-production consensus on Cardano. In fact, the security of Bifrost directly impacts their revenue model: more assets moved with Bifrost imply more Cardano transactions and an increase of the ADA price caused by the bigger demand to execute these transactions. Cardano SPOs want the bridge to work well because their revenue stream strongly depends on it.
 * Watchtowers are an "always open" set of nodes that challenge each other to post on Cardano the best chain of blocks from the source blockchains (ex. from Bitcoin), and also detect and post peg-in requests on Cardano. While the watchtowers earn rewards for doing this job, they could potentially collude and stop posting blocks or peg-in requests, halting the bridge for an unbounded timeframe. In this case the user who wants to peg-in or peg-out can spin up a watchtower himself and post the source blockchain blocks starting from the latest confirmed ones, and create their own PegInRequest UTxOs on Cardano. Because every user is able to become a watchtower at any time, there will be a safe challenge among them to post the correct chain of blocks, resuming the Bifrost operations even in case of collusion. The completion of peg-outs (burning fBTC) is fully permissionless: anyone can submit the required Binocular inclusion proofs to finalize. For peg-ins, the depositor completes the minting themselves by providing a Binocular inclusion proof and a Schnorr signature with their Bitcoin key, choosing their Cardano destination address at mint time. No third party can censor or redirect a depositor's fBTC.
 
+## Rollout Phases
+
+Bifrost supports a phased rollout from federated to fully decentralized operation:
+
+**Phase 1 — Federation Launch**: The bridge launches with the federation as the only signing entity. SPOs begin registering. The federation key is the $Y_{federation}$ used in the Taproot fallback path. During this phase, all Treasury Movement transactions are signed via the federation script path with timelock.
+
+**Phase 2 — 51% SPO Participation**: Once sufficient SPOs have registered and completed DKG, the 51% FROST threshold becomes operational. SPOs sign via key path ($Y_{51}$), and the federation becomes an emergency-only fallback. This is the "main line" operating mode — the protocol's primary steady-state.
+
+**Phase 3 — 67% SPO Participation (aspirational)**: As more SPOs join, the bridge achieves the aspirational 67% participation level. This doesn't change the signing key (still $Y_{51}$ key path available) but provides stronger security: any signing subset now controls at least 67% of delegated stake, making attacks significantly more expensive. When 67% quorum is available, SPOs prefer to sign via the $Y_{67}$ script leaf to prove the stronger security threshold on-chain on Bitcoin.
+
 ## Flow of Bitcoin over epochs, ceremonies
 
 ![Epoch lifecycle Gantt diagram](images/epoch_lifecycle.png)
@@ -259,8 +281,8 @@ The diagram above shows two consecutive Cardano epochs with roster handoff from 
 4. **Previous-epoch peg-in completion** — peg-ins from the prior epoch's Treasury Movement complete as Bitcoin confirmations arrive (17–40 hours after epoch start).
 5. **Peg deadline + Pegs Snapshot** — at the Cardano stability window (3k/f), all bridging requests are frozen for inclusion in the Treasury Movement.
 6. **Update Y** — the current roster publishes the new roster's group public keys to `treasury.ak`.
-7. **Build Treasury Movement Tx** — the current roster constructs the Bitcoin transaction that moves the treasury to the new Taproot address and fulfils peg-out payments.
-8. **FROST signing cascade** — the current roster attempts threshold signing with overlapping quorum levels: 67% signing starts first, 51% fallback begins ~24 hours later, and the federation last-resort begins ~24 hours after that. The first to succeed wins. With 67% quorum the transaction sweeps peg-ins and fulfils peg-outs; with 51% or federation it is peg-out only.
+7. **Build Treasury Movement Tx** — the current roster constructs the Bitcoin transaction that sweeps peg-in UTxOs, fulfils peg-out payments, and moves the treasury to the new Taproot address.
+8. **FROST signing cascade** — the current roster attempts threshold signing with overlapping quorum levels: 67% signing starts first, 51% fallback begins ~24 hours later, and the federation last-resort begins ~24 hours after that. The first to succeed wins. All quorum levels construct the same full Treasury Movement transaction (peg-ins + peg-outs + treasury move).
 9. **TM submission deadline** — the signed transaction must be posted to `treasury_movement.ak` before the epoch ends.
 10. **New peg requests** — after the pegs snapshot, new requests accumulate for the next epoch's batch.
 
@@ -274,7 +296,7 @@ The epoch lifecycle above shows generous time windows for the signing cascade (6
 - **FROST 67% signing**: ~1 minute per Treasury Movement transaction.
 - **Multiple TM batches**: the roster processes peg requests in multiple batches throughout the epoch, each cycling through build → sign → broadcast → Bitcoin confirmation.
 
-The bottleneck is Bitcoin confirmation: each Treasury Movement requires ~100 Bitcoin blocks (~16.7 hours) plus the ~200-minute Binocular challenge period, totaling ~20 hours. With a 5-day Cardano epoch, 4–5 TM batches fit sequentially, each handling its own set of peg-in and peg-out requests. The final TM of the epoch moves the treasury to the new roster's Taproot address.
+The bottleneck is Bitcoin confirmation: each Treasury Movement requires ~100 Bitcoin blocks (~16.7 hours) for Binocular to promote the containing block to `confirmed` state. With a 5-day Cardano epoch, 4–5 TM batches fit sequentially, each handling its own set of peg-in sweeps and peg-out fulfillments. The final TM of the epoch moves the treasury to the new roster's Taproot address.
 
 ## Flow of SPOs on Cardano
 
@@ -358,7 +380,7 @@ All registered SPOs are tracked using an **on-chain ordered linked-list**. Each 
 
 The membership script uses `verifySchnorrSecp256k1Signature` for both conditions.
 
-The on-chain linked-list implementation uses the `aiken_design_patterns/linked_list/ordered` module [8].
+The on-chain linked-list implementation uses the `aiken_design_patterns/linked_list/ordered` module [5].
 
 #### 4. Registration Message and Signature
 
@@ -457,7 +479,7 @@ The protocol supports **temporary banning** of SPOs who misbehave during DKG or 
 
 #### 1. Overview
 
-The FROST Distributed Key Generation (DKG) process runs **entirely off-chain** using SPOs' `bifrost_url` endpoints. Two separate DKGs are run each epoch, producing group public keys $Y_{67}$ and $Y_{51}$ with thresholds ensuring any signing subset controls ≥67% and ≥51% of delegated stake respectively. Each DKG also produces individual signing shares $s_i$ for each participant. Upon successful completion, the **current roster** constructs and signs a Treasury Movement transaction that moves the treasury to the new Taproot address derived from both group keys (see **Taproot address construction**), and posts the signed transaction to Cardano at `treasury_movement.ak` for watchtowers to relay to the source blockchain. No DKG result is posted on Cardano.
+The FROST Distributed Key Generation (DKG) process runs **entirely off-chain** using SPOs' `bifrost_url` endpoints. Two separate DKGs are run each epoch, producing group public keys $Y_{67}$ and $Y_{51}$ with thresholds ensuring any signing subset controls ≥67% and ≥51% of delegated stake respectively. Each DKG also produces individual signing shares $s_i$ for each participant. Upon successful completion, the **current roster** constructs and signs a Treasury Movement transaction that moves the treasury to the new Taproot address derived from $Y_{51}$, $Y_{67}$, and $Y_{federation}$ (see **Taproot address construction**), and posts the signed transaction to Cardano at `treasury_movement.ak` for watchtowers to relay to the source blockchain. No DKG result is posted on Cardano.
 
 **Prerequisite**: SPOs must complete SPO Registration (see previous section) before participating in DKG.
 
@@ -620,7 +642,7 @@ All participants arrive at the same group public key $Y$.
 
 The above steps are run **twice** — once with a threshold $t_{67}$ (producing $Y_{67}$) and once with $t_{51}$ (producing $Y_{51}$). The two DKGs can run concurrently with the same candidate set.
 
-4. Derives the Bitcoin Treasury Taproot address from $Y_{67}$, $Y_{51}$, and $Y_{federation}$ (see **Taproot address construction**).
+4. Derives the Bitcoin Treasury Taproot address from $Y_{51}$, $Y_{67}$, and $Y_{federation}$ (see **Taproot address construction**).
 
 5. The **current roster** publishes the new group public keys $Y_{67}$ and $Y_{51}$ on Cardano at `treasury.ak`, authenticated by a FROST group signature from the current roster. This makes the new Treasury address publicly verifiable on-chain, allowing depositors to look up the correct Treasury keys and derive the Treasury and peg-in Taproot addresses.
 
@@ -642,17 +664,17 @@ After the ban transaction is confirmed on Cardano:
 
 Upon successful DKG completion and publication of the new Treasury public keys $Y_{67}$ and $Y_{51}$ to `treasury.ak`:
 
-1. The **new roster** derives the Bitcoin Treasury Taproot address from $Y_{67}$, $Y_{51}$, and $Y_{federation}$ (see **Taproot address construction**).
+1. The **new roster** derives the Bitcoin Treasury Taproot address from $Y_{51}$, $Y_{67}$, and $Y_{federation}$ (see **Taproot address construction**).
 2. The **current roster** reads all confirmed PegInRequest UTxOs and pending PegOut UTxOs from Cardano.
-3. The **current roster** attempts to construct and sign the Treasury Movement transaction using the tiered signing process (see **Spending paths and Treasury Movement variants**):
-   - First, attempt to collect 67% partial signatures ($Y_{67}$) for a full Treasury Movement (peg-ins + peg-outs + treasury move to new address).
-   - If 67% quorum is not reached, attempt to collect 51% partial signatures ($Y_{51}$) for a peg-out-only Treasury Movement (no peg-in sweeps, treasury move to new address).
-   - If neither quorum is reached within the timeout, the federation signs a peg-out-only Treasury Movement using $Y_{federation}$.
+3. The **current roster** attempts to construct and sign a full Treasury Movement transaction (peg-ins + peg-outs + treasury move to new address) using the tiered signing process (see **Spending paths and Treasury Movement variants**):
+   - First, attempt to collect 67% partial signatures ($Y_{67}$) — proves the stronger security threshold on Bitcoin (script path on treasury).
+   - If 67% quorum is not reached, attempt to collect 51% partial signatures ($Y_{51}$) — main line, cheapest (key path on all inputs).
+   - If neither quorum is reached within the timeout, the federation signs using $Y_{federation}$ (script path with timelock).
    - If the resulting transaction would be too large, it is split into multiple transactions.
 4. The signed transaction is posted to Cardano at `treasury_movement.ak`.
 5. Watchtowers pick up the signed transaction from Cardano and broadcast it to the Bitcoin network.
 
-Once the Treasury Movement transaction is confirmed on Bitcoin, the epoch transition is complete. The new roster now controls the treasury. Anyone can then complete pending peg-outs on Cardano using Binocular inclusion proofs. If the Treasury Movement included peg-in sweeps (67% case), pending peg-ins can also be completed. Otherwise, un-swept peg-ins roll over to the next epoch.
+Once the Treasury Movement transaction is confirmed on Bitcoin, the epoch transition is complete. The new roster now controls the treasury. Anyone can then complete pending peg-outs on Cardano using Binocular inclusion proofs. Pending peg-ins can also be completed — all quorum levels sweep peg-in UTxOs.
 
 #### 11. Security Properties
 
@@ -718,7 +740,7 @@ Beyond maintaining general Bitcoin state, watchtowers perform specialized duties
 **Peg-in Detection and Posting**
 
 * Monitor the Bitcoin network for peg-in transactions by scanning for OP_RETURN outputs with the `"BFR"` prefix.
-* Each peg-in transaction sends BTC to a unique Taproot address ($Y_{67}$ key path spend OR depositor timeout script path refund; see **Taproot address construction**) and includes an OP_RETURN output: `"BFR" || depositor_pubkey_hash (20 bytes)` (23 bytes total). The depositor_pubkey_hash is HASH160 of the depositor's Bitcoin x-only public key and is needed by SPOs to reconstruct the Taproot tweak for key-path signing. Only $Y_{67}$ (67% weighted-majority) can sweep peg-in UTxOs — $Y_{51}$ and $Y_{federation}$ are not in the peg-in Taproot tree. Because each peg-in goes to a unique Taproot address (derived from the depositor's pubkey hash), watchtowers cannot track peg-ins by address alone — the OP_RETURN metadata is what makes them identifiable.
+* Each peg-in transaction sends BTC to a unique Taproot address ($Y_{51}$ key path for SPO sweep, $Y_{federation}$ script leaf for federation emergency sweep, or depositor timeout script leaf for self-refund; see **Taproot address construction**) and includes an OP_RETURN output: `"BFR" || depositor_pubkey_hash (20 bytes)` (23 bytes total). The depositor_pubkey_hash is HASH160 of the depositor's Bitcoin x-only public key and is needed by SPOs to reconstruct the Taproot tweak for key-path signing. Because each peg-in goes to a unique Taproot address (derived from the depositor's pubkey hash), watchtowers cannot track peg-ins by address alone — the OP_RETURN metadata is what makes them identifiable.
 * Once a peg-in transaction reaches the required confirmation threshold (100 Bitcoin blocks plus 200 minutes of Binocular challenge period), watchtowers create a PegInRequest UTxO on Cardano (peg_in.ak) by:
   * Minting a PegInRequest NFT.
   * Providing a transaction inclusion proof consisting of: the raw Bitcoin transaction data, a Merkle proof linking the transaction to the block's Merkle root, and an inclusion proof of the confirmed block in the Binocular Oracle.
@@ -810,10 +832,4 @@ Bifrost's watchtower design relies on a minimal trust assumption: only one hones
 
 [4] Wuille, P. et al. "BIP341: Taproot: SegWit version 1 spending rules." Bitcoin Improvement Proposal, 2020. <https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki>
 
-[5] Pearson, Luke et. al., *Plonkup: Reconciling Plonk with plookup* (2022).
-
-[6] *zkFold Symbolic* (github repository): https://github.com/zkFold/symbolic/tree/main/symbolic-base/src/ZkFold/Protocol/Plonkup
-
-[7] *zkFold-Cardano* (github repository): https://github.com/zkFold/zkfold-cardano/tree/main/zkfold-cardano/src/ZkFold/Cardano
-
-[8] *Bifrost On-Chain Validators* (Aiken): https://github.com/FluidTokens/ft-bifrost-bridge/tree/main/onchain/validators
+[5] *Bifrost On-Chain Validators* (Aiken): https://github.com/FluidTokens/ft-bifrost-bridge/tree/main/onchain/validators

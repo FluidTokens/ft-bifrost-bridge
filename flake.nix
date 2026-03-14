@@ -35,6 +35,18 @@
             texliveFull
             pandoc
           ];
+          shellHook = ''
+            echo ""
+            echo "Bifrost Bridge dev shell"
+            echo ""
+            echo "  Documentation (make):"
+            echo "    make docs                       — build everything (diagrams + PDFs)"
+            echo "    make diagrams                   — build all .mmd → .png"
+            echo "    make whitepaper                 — build whitepaperV1.pdf"
+            echo "    make diagram-<name>             — build single diagram (e.g. diagram-utxo_flow)"
+            echo "    make clean                      — remove generated images and PDFs"
+            echo ""
+          '';
         };
       })
     );
