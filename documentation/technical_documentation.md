@@ -708,7 +708,38 @@ Each SPO $P_i$ in the subset participating in signing performs these steps.
 
 ## SPOs communication
 
-TODO
+SPO programs communicate peer-to-peer over HTTP. Each SPO runs a lightweight HTTP server at the `bifrost_url` registered in the on-chain linked-list. Since every SPO's URL is publicly readable on Cardano, no separate discovery mechanism is needed — each SPO enumerates the registry to obtain the full set of peer endpoints.
+
+### Pull model
+
+Communication follows a pull model: each SPO publishes its own data at well-known URL paths on its HTTP server, and polls other SPOs' endpoints to fetch theirs. There is no coordinator, no push notifications, and no message ordering dependency.
+
+URL path conventions:
+
+* **DKG Round 1**: `<bifrost_url>/dkg/<epoch>/<threshold>/round1/<pool_id>.json`
+* **DKG Round 2**: `<bifrost_url>/dkg/<epoch>/<threshold>/round2/<pool_id>.json`
+* **FROST signing**: `<bifrost_url>/sign/<epoch>/<tm_batch>/round1/<pool_id>.json` (nonce commitments), `.../round2/<pool_id>.json` (partial signatures)
+
+Each SPO writes its own payload locally, then polls all other SPOs' endpoints with retries until it has collected all required payloads or a timeout is reached.
+
+### Authentication
+
+Every payload published by an SPO is signed with their `bifrost_id_sk` (Secp256k1 Schnorr signature). The payload format wraps the protocol-specific data:
+
+```json
+{
+  "pool_id": "<hex, 28 bytes>",
+  "epoch": <number>,
+  "data": { ... },
+  "signature": "<hex, 64 bytes>"
+}
+```
+
+The receiving SPO verifies the signature against the sender's `bifrost_id_pk` (read from the on-chain registry) before processing the payload. This prevents impersonation — an attacker who compromises a `bifrost_url` DNS record or HTTP server cannot produce valid payloads without the corresponding `bifrost_id_sk`.
+
+### Failure handling
+
+If an SPO's endpoint is unreachable or fails to produce a valid payload within the timeout, it is excluded from the current protocol round (DKG or signing). The protocol continues with the remaining participants, provided enough remain to meet the threshold. Persistent unavailability reduces the effective roster size but does not halt the protocol.
 
 ## Watchtowers
 
