@@ -745,13 +745,28 @@ With `SIGHASH_ALL` (default for Taproot), each signature commits to all inputs a
 
 All SPOs agree on input ordering deterministically (treasury input first, then peg-in inputs ordered by txid+vout lexicographically), so nonce commitments and partial signatures are published as arrays indexed by input position.
 
+The roster may process **multiple TM transactions** within an epoch, each cycling through build → sign → broadcast → Bitcoin confirmation (see **Realistic epoch timeline**). Each SPO independently constructs the same TM transaction deterministically and publishes it at:
+
+```
+<bifrost_url>/sign/<epoch>/tm.json
+```
+
+```json
+{
+  "raw_tx": "<hex>",
+  "txid": "<hex, 32 bytes>"
+}
+```
+
+The `txid` (Bitcoin transaction hash, computed from the unsigned transaction's non-witness data) uniquely identifies the TM being signed and is used as the key in FROST signing URLs. Other SPOs fetch this endpoint to verify they agree on the transaction before signing.
+
 #### Preprocess
 
 Each SPO $P_i$ in the roster performs this stage prior to signing.
 1. For each input $j = 0..k$, samples random single-use nonces $(d_{ij}, e_{ij})$.
 2. Derives commitment shares $(D_{ij}, E_{ij})$ for each input.
 3. Stores $((d_{ij}, D_{ij}), (e_{ij}, E_{ij}))$ for later use in signing operations.
-4. Publishes nonce commitments at `<bifrost_url>/sign/<epoch>/<tm_batch>/round1/<pool_id>.json`.
+4. Publishes nonce commitments at `<bifrost_url>/sign/<epoch>/<txid>/round1/<pool_id>.json`.
 
 **Payload structure**:
 
@@ -771,7 +786,7 @@ Where:
 **Canonical byte layout**:
 
 ```
-"bifrost-sign-r1" || epoch (8B BE) || tm_batch (8B BE) || pool_id (28B)
+"bifrost-sign-r1" || epoch (8B BE) || txid (32B) || pool_id (28B)
   || D_{i,0} (33B) || E_{i,0} (33B) || D_{i,1} (33B) || E_{i,1} (33B) || ...
 ```
 
@@ -780,13 +795,13 @@ Nonce pairs are concatenated in input-index order. JSON is for transport; the si
 ### Signing mechanism
 
 Each SPO $P_i$ in the subset participating in signing performs these steps **for each input** $j = 0..k$:
-1. Fetches nonce commitments from peers' HTTP endpoints (`<bifrost_url>/sign/<epoch>/<tm_batch>/round1/<pool_id>.json`) to assemble the list $B_j$ of triads $(i, D_{i,j}, E_{i,j})$ corresponding to SPOs in the subset.
+1. Fetches nonce commitments from peers' HTTP endpoints (`<bifrost_url>/sign/<epoch>/<txid>/round1/<pool_id>.json`) to assemble the list $B_j$ of triads $(i, D_{i,j}, E_{i,j})$ corresponding to SPOs in the subset.
 2. Computes the BIP341 sighash $m_j$ for input $j$ (which commits to all inputs and outputs via `SIGHASH_ALL`, but is unique per input due to the input index).
 3. Computes the set of binding values, the group commitment $R_j$ and the challenge for input $j$.
 4. Computes their response (signing share) $z_{i,j}$ using their long-lived secret share $s_i$ and the per-input tweaked key.
 
 After computing all $z_{i,j}$:
-5. Each $P_i$ publishes their partial signatures at `<bifrost_url>/sign/<epoch>/<tm_batch>/round2/<pool_id>.json`.
+5. Each $P_i$ publishes their partial signatures at `<bifrost_url>/sign/<epoch>/<txid>/round2/<pool_id>.json`.
 6. Each $P_i$ fetches partial signatures from peers and verifies the validity of each response $z_{i,j}$, identifying and reporting misbehaving participants. If a misbehaving participant exists, process is aborted; otherwise continue.
 7. Each $P_i$ can compute the group's response for each input (the sum of $z_{i,j}$'s), arriving to the same per-input signature $σ_j = (R_j, z_j)$, completing the fully signed transaction.
 
@@ -810,7 +825,7 @@ Where:
 **Canonical byte layout**:
 
 ```
-"bifrost-sign-r2" || epoch (8B BE) || tm_batch (8B BE) || pool_id (28B)
+"bifrost-sign-r2" || epoch (8B BE) || txid (32B) || pool_id (28B)
   || [sighash_j (32B) || z_{i,j} (32B)] × (k+1)
 ```
 
@@ -828,7 +843,8 @@ URL path conventions (`<threshold>` is `67` or `51` — two DKGs run concurrentl
 
 * **DKG Round 1**: `<bifrost_url>/dkg/<epoch>/<threshold>/round1/<pool_id>.json`
 * **DKG Round 2**: `<bifrost_url>/dkg/<epoch>/<threshold>/round2/<pool_id>.json`
-* **FROST signing**: `<bifrost_url>/sign/<epoch>/<tm_batch>/round1/<pool_id>.json` (nonce commitments), `.../round2/<pool_id>.json` (partial signatures)
+* **TM proposal**: `<bifrost_url>/sign/<epoch>/tm.json` (current TM transaction and txid)
+* **FROST signing**: `<bifrost_url>/sign/<epoch>/<txid>/round1/<pool_id>.json` (nonce commitments), `.../round2/<pool_id>.json` (partial signatures)
 
 Each SPO writes its own payload locally, then polls all other SPOs' endpoints with retries until it has collected all required payloads or a timeout is reached.
 
