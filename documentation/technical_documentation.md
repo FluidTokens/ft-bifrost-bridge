@@ -545,21 +545,34 @@ Each SPO $P_i$ performs the following steps per FROST specification [2]:
 Each $P_i$ publishes their Round 1 data at:
 
 ```
-<bifrost_url>/dkg/<epoch>/round1/<pool_id>.json
+<bifrost_url>/dkg/<epoch>/<threshold>/round1/<pool_id>.json
 ```
+
+Where `<threshold>` is `67` or `51` (the two DKGs run concurrently).
 
 **Payload structure**:
 
 ```json
 {
   "commitment": ["<hex, 33 bytes>", ...],
-  "sigma_i": "<hex, 64 bytes>"
+  "sigma_i": "<hex, 64 bytes>",
+  "signature": "<hex, 64 bytes>"
 }
 ```
 
 Where:
 - `commitment` is an array of $t$ compressed Secp256k1 points (33 bytes each).
 - `sigma_i` is the Schnorr proof of knowledge (challenge || response, 64 bytes).
+- `signature` is a BIP340 Schnorr signature over `SHA256(canonical_bytes)` using `bifrost_id_sk`.
+
+**Canonical byte layout** (for authentication and on-chain misbehavior proofs):
+
+```
+"bifrost-dkg-r1" || epoch (8B BE) || threshold (8B BE, 67 or 51) || pool_id (28B)
+  || φ_{i0} (33B) || ... || φ_{i(t-1)} (33B) || σ_i (64B)
+```
+
+JSON is for transport; the signature covers `SHA256(canonical_bytes)`.
 
 ##### 6.2 Round 1 Verification
 
@@ -591,8 +604,10 @@ The share is a 32-byte Secp256k1 scalar, encrypted with the derived key.
 Each $P_i$ publishes their Round 2 data at:
 
 ```
-<bifrost_url>/dkg/<epoch>/round2/<pool_id>.json
+<bifrost_url>/dkg/<epoch>/<threshold>/round2/<pool_id>.json
 ```
+
+Where `<threshold>` is `67` or `51` (the two DKGs run concurrently).
 
 **Payload structure**:
 
@@ -604,7 +619,8 @@ Each $P_i$ publishes their Round 2 data at:
       "ephemeral_pk": "<hex, 33 bytes>",
       "ciphertext": "<hex, 32 bytes>"
     }
-  ]
+  ],
+  "signature": "<hex, 64 bytes>"
 }
 ```
 
@@ -613,6 +629,16 @@ Where:
 - `ephemeral_pk` is the compressed Secp256k1 ephemeral public key $E_i$.
 - `ciphertext` is the XOR-encrypted share.
 - The `shares` array contains $n-1$ entries (one per other participant).
+- `signature` is a BIP340 Schnorr signature over `SHA256(canonical_bytes)` using `bifrost_id_sk`.
+
+**Canonical byte layout** (for authentication and on-chain misbehavior proofs):
+
+```
+"bifrost-dkg-r2" || epoch (8B BE) || threshold (8B BE, 67 or 51) || pool_id (28B)
+  || [recipient_pool_id (28B) || ephemeral_pk (33B) || ciphertext (32B)] × (n-1)
+```
+
+Shares are ordered by `recipient_pool_id` (lexicographic) for determinism. JSON is for transport; the signature covers `SHA256(canonical_bytes)`.
 
 ##### 7.4 Round 2 Decryption and Verification
 
@@ -650,7 +676,26 @@ The above steps are run **twice** — once with a threshold $t_{67}$ (producing 
 
 If any participant $P_m$ misbehaves (invalid proof of knowledge in Round 1, or invalid share in Round 2), the current roster **bans** them (Section 7.2) with an exponential timeout and restarts DKG.
 
-##### 9.1 DKG Restart
+##### 9.1 On-chain misbehavior proofs
+
+Misbehavior is proven on-chain via **Plonk ZK proofs**. The sign-the-hash scheme (see **Authentication**) enables this: the accused SPO's signed `message_hash` binds them to specific protocol data, and a ZK circuit proves that data is cryptographically invalid — all without revealing the full payload on-chain.
+
+**Misbehavior types and what the ZK circuit proves:**
+
+- **DKG Round 1 — invalid proof of knowledge**: the circuit verifies that $σ_i$ is not a valid Schnorr proof for $φ_{i0}$.
+- **DKG Round 2 — share inconsistent with commitment**: the circuit verifies that $f_i(l) · G ≠ \sum l^j · φ_{ij}$, i.e., the decrypted share does not match the Round 1 commitment polynomial.
+- **FROST signing — invalid partial signature**: the circuit verifies that $z_i$ is inconsistent with the nonce commitment and group parameters.
+
+**Proof structure (all types):**
+
+1. **Accuser submits** to a Cardano validator: message hash (32B) + SPO signature (64B) + Plonk proof (~1–2 KB) + public inputs.
+2. **Validator verifies signature** via `verifySchnorrSecp256k1Signature(bifrost_id_pk, message_hash, signature)` — this proves the accused SPO authored the data that hashes to `message_hash`.
+3. **Validator verifies the Plonk proof** — this proves the signed data is cryptographically invalid.
+4. **The ZK circuit** (off-chain prover) takes the full canonical-bytes payload as private input and proves: (a) it hashes to the public `message_hash`, and (b) the data contains the specific invalidity (e.g., failed proof-of-knowledge check, inconsistent share, or invalid partial signature).
+
+**Size**: ~2 KB total on-chain data (message hash + signature + Plonk proof + public inputs), which fits comfortably in a 16 KB Cardano transaction. The Plonk verifier cost is constant regardless of circuit complexity, since the verification algorithm is the same for all circuit sizes.
+
+##### 9.2 DKG Restart
 
 After the ban transaction is confirmed on Cardano:
 
@@ -689,22 +734,87 @@ Once the Treasury Movement transaction is confirmed on Bitcoin, the epoch transi
 
 In what follows we summarize the *preprocess* and signing stages according to the FROST documentation [2], closely following their notation, and emphasizing special considerations relevant to SPO-based FROST groups.
 
+#### Per-input signing
+
+A Treasury Movement transaction has multiple inputs — one treasury UTxO plus $k$ peg-in UTxOs — and **each input requires a separate FROST signing round**. This is because:
+
+- **Different sighash per input**: BIP341 sighash commits to the input index, so each input has a distinct 32-byte message to sign.
+- **Different tweaked key per input**: each input has a different Taproot tree (the treasury tree differs from peg-in trees, and each peg-in tree differs because `depositor_pubkey_hash` varies), producing a different tweak and therefore a different effective signing key.
+
+With `SIGHASH_ALL` (default for Taproot), each signature commits to all inputs and all outputs, but a per-input signature is still required. For a TM transaction with $k+1$ inputs, SPOs run $k+1$ parallel FROST signing rounds.
+
+All SPOs agree on input ordering deterministically (treasury input first, then peg-in inputs ordered by txid+vout lexicographically), so nonce commitments and partial signatures are published as arrays indexed by input position.
+
 #### Preprocess
 
 Each SPO $P_i$ in the roster performs this stage prior to signing.
-1. Samples random single-use nonces $(d_{ij}, e_{ij})$.
-2. Derives commitment shares $(D_{ij}, E_{ij})$.
+1. For each input $j = 0..k$, samples random single-use nonces $(d_{ij}, e_{ij})$.
+2. Derives commitment shares $(D_{ij}, E_{ij})$ for each input.
 3. Stores $((d_{ij}, D_{ij}), (e_{ij}, E_{ij}))$ for later use in signing operations.
-4. With $L_i$ the list of $(D_{ij}, E_{ij})$, publishes $(i, L_i)$ as datum attached to UTxO with participation token.
+4. Publishes nonce commitments at `<bifrost_url>/sign/<epoch>/<tm_batch>/round1/<pool_id>.json`.
+
+**Payload structure**:
+
+```json
+{
+  "nonce_commitments": [
+    { "D": "<hex, 33 bytes>", "E": "<hex, 33 bytes>" }
+  ],
+  "signature": "<hex, 64 bytes>"
+}
+```
+
+Where:
+- `nonce_commitments` is an array of $(D_{ij}, E_{ij})$ pairs (compressed Secp256k1 points), one per input, ordered by input index.
+- `signature` is a BIP340 Schnorr signature over `SHA256(canonical_bytes)` using `bifrost_id_sk`.
+
+**Canonical byte layout**:
+
+```
+"bifrost-sign-r1" || epoch (8B BE) || tm_batch (8B BE) || pool_id (28B)
+  || D_{i,0} (33B) || E_{i,0} (33B) || D_{i,1} (33B) || E_{i,1} (33B) || ...
+```
+
+Nonce pairs are concatenated in input-index order. JSON is for transport; the signature covers `SHA256(canonical_bytes)`.
 
 ### Signing mechanism
 
-Each SPO $P_i$ in the subset participating in signing performs these steps.
-1. Receives message $m$ to be signed and queries from blockchain the list $B$ of triads $(i, D_i, E_i)$ corresponding to SPOs in the subset.
-2. Each $P_i$ then computes the set of binding values, the group commitment $R$ and the challenge.
-3. Each $P_i$ computes their response (signing share) $z_i$ using their long-lived secret share $s_i$.
-4. Each $P_i$ verifies the validity of each response $z_i$, identifying and reporting misbehaving participants. If a misbehaving participant exists, process is aborted; otherwise continue.
-5. Each $P_i$ can compute the group's response (the sum of $z_i$'s), arriving to the same signature $σ = (R, z)$, which they can publish along with message $m$.
+Each SPO $P_i$ in the subset participating in signing performs these steps **for each input** $j = 0..k$:
+1. Fetches nonce commitments from peers' HTTP endpoints (`<bifrost_url>/sign/<epoch>/<tm_batch>/round1/<pool_id>.json`) to assemble the list $B_j$ of triads $(i, D_{i,j}, E_{i,j})$ corresponding to SPOs in the subset.
+2. Computes the BIP341 sighash $m_j$ for input $j$ (which commits to all inputs and outputs via `SIGHASH_ALL`, but is unique per input due to the input index).
+3. Computes the set of binding values, the group commitment $R_j$ and the challenge for input $j$.
+4. Computes their response (signing share) $z_{i,j}$ using their long-lived secret share $s_i$ and the per-input tweaked key.
+
+After computing all $z_{i,j}$:
+5. Each $P_i$ publishes their partial signatures at `<bifrost_url>/sign/<epoch>/<tm_batch>/round2/<pool_id>.json`.
+6. Each $P_i$ fetches partial signatures from peers and verifies the validity of each response $z_{i,j}$, identifying and reporting misbehaving participants. If a misbehaving participant exists, process is aborted; otherwise continue.
+7. Each $P_i$ can compute the group's response for each input (the sum of $z_{i,j}$'s), arriving to the same per-input signature $σ_j = (R_j, z_j)$, completing the fully signed transaction.
+
+**Round 2 payload structure**:
+
+```json
+{
+  "partial_signatures": [
+    { "sighash": "<hex, 32 bytes>", "z_i": "<hex, 32 bytes>" }
+  ],
+  "signature": "<hex, 64 bytes>"
+}
+```
+
+Where:
+- `partial_signatures` is an array ordered by input index, one entry per TM transaction input.
+- `sighash` is the BIP341 sighash for this input.
+- `z_i` is the partial signature for this input (32-byte scalar).
+- `signature` is a BIP340 Schnorr signature over `SHA256(canonical_bytes)` using `bifrost_id_sk`.
+
+**Canonical byte layout**:
+
+```
+"bifrost-sign-r2" || epoch (8B BE) || tm_batch (8B BE) || pool_id (28B)
+  || [sighash_j (32B) || z_{i,j} (32B)] × (k+1)
+```
+
+Entries are concatenated in input-index order. JSON is for transport; the signature covers `SHA256(canonical_bytes)`.
 
 ## SPOs communication
 
@@ -714,7 +824,7 @@ SPO programs communicate peer-to-peer over HTTP. Each SPO runs a lightweight HTT
 
 Communication follows a pull model: each SPO publishes its own data at well-known URL paths on its HTTP server, and polls other SPOs' endpoints to fetch theirs. There is no coordinator, no push notifications, and no message ordering dependency.
 
-URL path conventions:
+URL path conventions (`<threshold>` is `67` or `51` — two DKGs run concurrently):
 
 * **DKG Round 1**: `<bifrost_url>/dkg/<epoch>/<threshold>/round1/<pool_id>.json`
 * **DKG Round 2**: `<bifrost_url>/dkg/<epoch>/<threshold>/round2/<pool_id>.json`
@@ -724,18 +834,13 @@ Each SPO writes its own payload locally, then polls all other SPOs' endpoints wi
 
 ### Authentication
 
-Every payload published by an SPO is signed with their `bifrost_id_sk` (Secp256k1 Schnorr signature). The payload format wraps the protocol-specific data:
+Every payload published by an SPO is authenticated with a **sign-the-hash** scheme: each message type defines a deterministic **canonical byte layout** (a fixed concatenation of the message fields), and the SPO signs `SHA256(canonical_bytes)` with `bifrost_id_sk` using BIP340 Schnorr [3].
 
-```json
-{
-  "pool_id": "<hex, 28 bytes>",
-  "epoch": <number>,
-  "data": { ... },
-  "signature": "<hex, 64 bytes>"
-}
-```
+**JSON is transport only.** JSON carries the structured fields plus the 64-byte signature. The receiver reconstructs the canonical bytes from the JSON fields, computes `SHA256(canonical_bytes)`, and verifies the signature via `bifrost_id_pk` (read from the on-chain registry).
 
-The receiving SPO verifies the signature against the sender's `bifrost_id_pk` (read from the on-chain registry) before processing the payload. This prevents impersonation — an attacker who compromises a `bifrost_url` DNS record or HTTP server cannot produce valid payloads without the corresponding `bifrost_id_sk`.
+**Why sign-the-hash instead of signing JSON?** The signature must be verifiable both off-chain (SPO-to-SPO) and on-chain (misbehavior proofs via Cardano validators). Cardano validators cannot parse JSON but can verify `verifySchnorrSecp256k1Signature(bifrost_id_pk, message_hash, signature)` where `message_hash = SHA256(canonical_bytes)`. The canonical byte layout for each message type is defined in the DKG and signing sections below.
+
+This prevents impersonation — an attacker who compromises a `bifrost_url` DNS record or HTTP server cannot produce valid payloads without the corresponding `bifrost_id_sk`.
 
 ### Failure handling
 
