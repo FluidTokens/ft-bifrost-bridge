@@ -775,9 +775,11 @@ All SPOs independently construct the same Treasury Movement (TM) transaction fro
 
 **Amounts and fees.**
 
-- Protocol fee: a fixed per-peg-out fee (protocol parameter) deducted from each peg-out output. This covers the Bitcoin transaction fee and protocol operating costs.
-- Each peg-out output: amount from the PegOut UTxO datum minus the protocol fee.
-- Treasury change: sum of all input values − sum of peg-out output values.
+- Fee rate: `fee_rate_sat_per_vb` is a protocol parameter stored in the Config UTxO on Cardano, updated by governance.
+- Bitcoin miner fee: `fee = tx_vsize × fee_rate_sat_per_vb` (integer division, rounded up). The transaction vsize is deterministic since all SPOs build the same transaction.
+- Per-peg-out protocol fee: a fixed fee (protocol parameter) deducted from each peg-out output, covering the miner fee share and protocol operating costs.
+- Each peg-out output: amount from the PegOut UTxO datum minus the per-peg-out protocol fee.
+- Treasury change: sum of all input values − sum of peg-out output values − Bitcoin miner fee.
 
 **Witness (empty at construction time).**
 
