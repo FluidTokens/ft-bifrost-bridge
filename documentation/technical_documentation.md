@@ -745,7 +745,49 @@ With `SIGHASH_ALL` (default for Taproot), each signature commits to all inputs a
 
 All SPOs agree on input ordering deterministically (treasury input first, then peg-in inputs ordered by txid+vout lexicographically), so nonce commitments and partial signatures are published as arrays indexed by input position.
 
-The roster may process **multiple TM transactions** within an epoch, each cycling through build → sign → broadcast → Bitcoin confirmation (see **Realistic epoch timeline**). Each SPO independently constructs the same TM transaction deterministically and publishes it at:
+#### Deterministic TM construction
+
+All SPOs independently construct the same Treasury Movement (TM) transaction from shared state, with no coordinator. If any field differs between SPOs, signing will fail (different `txid` → mismatched nonce commitments). The rules below fully determine every byte of the unsigned transaction.
+
+**Shared state reference.** Every SPO reads the same Cardano confirmed state:
+
+- Confirmed **PegInRequest** UTxOs — each contains the raw Bitcoin peg-in transaction from which the SPO extracts the Bitcoin txid+vout being swept.
+- Pending **PegOut** UTxOs — each specifies a destination Bitcoin address (as `scriptPubKey` bytes) and an amount.
+- The current **treasury Bitcoin UTxO** (txid+vout), known from the previous TM's change output or from protocol bootstrap.
+
+**Transaction version and locktime.**
+
+- Version: **2** (required for `OP_CHECKSEQUENCEVERIFY` in Taproot scripts).
+- Locktime: **0**.
+
+**Inputs (deterministic ordering).**
+
+- Input 0: the current treasury UTxO (txid+vout from shared state).
+- Inputs 1..$k$: peg-in UTxOs, ordered lexicographically by (txid ‖ vout). Comparison is byte-by-byte, left-to-right; txid is 32 bytes, vout is encoded as 4 bytes little-endian.
+- Sequence number for every input: `0xFFFFFFFD` (enables RBF and satisfies `OP_CHECKSEQUENCEVERIFY`).
+
+**Outputs (deterministic ordering).**
+
+- Outputs 0..$m−1$: peg-out payments, ordered lexicographically by raw `scriptPubKey` bytes. Each output pays the requested amount minus the protocol fee (see below).
+- Output $m$ (last): treasury change — remaining balance sent to the Treasury Taproot address.
+  - For intermediate TMs within the epoch: the current roster's Treasury address.
+  - For the **final TM of the epoch**: the new roster's Treasury address (derived from the new DKG group key).
+
+**Amounts and fees.**
+
+- Protocol fee: a fixed per-peg-out fee (protocol parameter) deducted from each peg-out output. This covers the Bitcoin transaction fee and protocol operating costs.
+- Each peg-out output: amount from the PegOut UTxO datum minus the protocol fee.
+- Treasury change: sum of all input values − sum of peg-out output values.
+
+**Witness (empty at construction time).**
+
+The transaction is constructed unsigned — every input carries an empty witness. The `txid` is computed from the non-witness serialization (per BIP141). Witnesses are populated after FROST signing completes.
+
+**Multiple TMs per epoch.**
+
+The roster may process **multiple TM transactions** within an epoch, each cycling through build → sign → broadcast → Bitcoin confirmation (see **Realistic epoch timeline**). Peg-ins and peg-outs are processed FIFO — each TM includes the oldest pending requests first, so earlier depositors and withdrawers are served before later ones. Each TM's treasury input is the previous TM's treasury change output. The final TM of the epoch sends the treasury change to the new roster's Taproot address.
+
+Each SPO publishes its constructed TM at:
 
 ```
 <bifrost_url>/sign/<epoch>/tm.json
