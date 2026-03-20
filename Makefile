@@ -19,6 +19,8 @@ MMD_PNGS   := $(patsubst $(DIAG_DIR)/%.mmd,$(IMG_DIR)/%.png,$(MMD_SRCS))
 
 WHITEPAPER := $(DOC_DIR)/whitepaperV1.pdf
 
+GIT_HASH   := $(shell git rev-parse --short HEAD)
+
 PANDOC_FLAGS := --pdf-engine=xelatex \
   --from=markdown+tex_math_single_backslash \
   --resource-path=$(DOC_DIR) \
@@ -30,7 +32,8 @@ PANDOC_FLAGS := --pdf-engine=xelatex \
   -V toccolor=blue \
   -V mainfont="DejaVu Serif" \
   -V monofont="DejaVu Sans Mono" \
-  -V fontsize=11pt
+  -V fontsize=11pt \
+  -V header-includes='\usepackage{fancyhdr}\pagestyle{fancy}\fancyfoot[C]{\thepage}\fancyfoot[R]{\footnotesize $(GIT_HASH)}'
 
 # ── Phony targets ──────────────────────────────────────────────
 
