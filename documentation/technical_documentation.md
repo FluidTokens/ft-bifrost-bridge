@@ -859,6 +859,33 @@ Where:
 
 Entries are concatenated in input-index order. JSON is for transport; the signature covers `SHA256(canonical_bytes)`.
 
+### Cardano submission
+
+After FROST signing completes, a single SPO must submit the result on Cardano — posting the signed TM to `treasury_movement.ak` and updating keys in the Treasury UTxO after DKG. A deterministic leader rotation with timeout cascade avoids redundant submissions and wasted fees.
+
+**Leader selection.** The roster is sorted by `pool_id` (lexicographic). For a given task (TM submission or key update), the primary leader is:
+
+$$\text{leader\_index} = \text{epoch} \mod \text{roster\_size}$$
+
+The SPO at that index is the primary submitter.
+
+**Timeout cascade.** If the primary leader does not submit within $T$ slots (protocol parameter, e.g. 60 slots ≈ 1 minute), the next SPO in roster order becomes eligible. After another $T$ slots the next one, and so on (wrapping around). Concretely, SPO at roster index $i$ becomes eligible at slot:
+
+$$\text{eligible\_slot}_i = \text{signing\_complete\_slot} + ((i - \text{leader\_index}) \mod \text{roster\_size}) \times T$$
+
+where `signing_complete_slot` is the slot at which FROST signing finished (deterministic: the slot when the last required round-2 payload became available). Each SPO monitors the chain — if a predecessor has already submitted, it does nothing.
+
+**Example.** A roster of 5 SPOs (sorted by pool_id: $A, B, C, D, E$) in epoch 7 with $T = 60$ slots. Leader index = $7 \mod 5 = 2$, so $C$ is the primary submitter. If signing completes at slot 1000:
+
+- Slot 1000: $C$ submits.
+- Slot 1060: if $C$ hasn't submitted, $D$ becomes eligible.
+- Slot 1120: if neither $C$ nor $D$ submitted, $E$ becomes eligible.
+- Slot 1180: $A$ (wraps around), then slot 1240: $B$.
+
+**Applies to both:**
+- **TM submission**: posting the signed Bitcoin transaction to `treasury_movement.ak`.
+- **Key publication**: posting new DKG group keys $Y_{67}$ and $Y_{51}$ to `treasury.ak` after DKG completes.
+
 ## SPOs communication
 
 SPO programs communicate peer-to-peer over HTTP. Each SPO runs a lightweight HTTP server at the `bifrost_url` registered in the on-chain linked-list. Since every SPO's URL is publicly readable on Cardano, no separate discovery mechanism is needed — each SPO enumerates the registry to obtain the full set of peer endpoints.
