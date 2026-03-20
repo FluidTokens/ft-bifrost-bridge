@@ -310,7 +310,7 @@ We describe each in detail.
 
 #### 1. Overview
 
-Before participating in Bifrost, each SPO must complete a **one-time registration** that binds their Cardano pool identity to a long-term Bifrost identity key, and post a **security deposit**. This registration uses the SPO's cold key exactly once, after which all protocol operations use the Bifrost identity key. This design keeps cold keys offline except for initial registration and revocation.
+Before participating in Bifrost, each SPO must complete a **one-time registration** that binds their Cardano pool identity to a long-term Bifrost identity key. This registration uses the SPO's cold key exactly once, after which all protocol operations use the Bifrost identity key. This design keeps cold keys offline except for initial registration and revocation.
 
 #### 2. Keys
 
@@ -402,7 +402,6 @@ The minting policy verifies:
 4. Output datum matches the signed message content.
 5. **Linked-list ordering**: verifies the new node is correctly positioned between its neighbors (the new key is greater than the anchor's key and less than the anchor's previous `next` key), preventing duplicate registration.
 6. **Linked-list state transition**: verifies the anchor node's `next` pointer is correctly updated to reference the new node.
-7. **Security deposit**: verifies the Membership UTxO contains sufficient ADA.
 
 #### 7. Revocation
 
@@ -423,7 +422,7 @@ Where:
 **Transaction**:
 1. **Redeemer**: contains `cold_vkey`, `cold_sig`, `removed_node_input_index`, and `anchor_node_input_index`.
 2. **Validity interval**: must fall within the epoch boundary window.
-3. Spends the Membership UTxO (returning the security deposit to the SPO).
+3. Spends the Membership UTxO.
 4. Burns the Bifrost Membership Token.
 5. Removes the node from the linked-list by updating the anchor node's `next` pointer to skip the removed node.
 
@@ -433,13 +432,12 @@ Where:
 3. **Validity interval**: transaction validity falls within the epoch boundary window.
 4. Exactly one token burned with `TokenName = pool_id`.
 5. **Linked-list removal**: verifies the anchor node's `next` pointer is correctly updated to skip the removed node, maintaining list ordering.
-6. Security deposit returned to SPO.
 
 After exit, the SPO may re-register with a new Bifrost identity.
 
 ##### 7.2 Banning (Exponential Timeout)
 
-The protocol supports **temporary banning** of SPOs who misbehave during DKG or signing rounds. A banned SPO retains their Membership Token and deposit but is excluded from participating in roster formation for a time-limited period.
+The protocol supports **temporary banning** of SPOs who misbehave during DKG or signing rounds. A banned SPO retains their Membership Token but is excluded from participating in roster formation for a time-limited period.
 
 **Exponential timeout**: Each successive ban doubles the exclusion duration. For example, a first ban may last 1 epoch, a second ban 2 epochs, a fourth 4 epochs, and so on. This escalating penalty discourages repeated misbehavior while allowing recovery from occasional failures.
 
@@ -454,7 +452,6 @@ The protocol supports **temporary banning** of SPOs who misbehave during DKG or 
 - **Cold key minimization**: The cold key is used only twice—once for registration, once for revocation (if needed). All other protocol operations use `bifrost_id_sk`.
 - **Air-gapped signing**: Both registration and revocation messages can be constructed offline and signed on an air-gapped machine.
 - **Sybil resistance**: One membership token per `pool_id` enforced by minting policy.
-- **Economic security**: Security deposits create financial accountability for misbehavior.
 - **No expiration**: Membership tokens remain valid indefinitely until explicitly revoked.
 
 
