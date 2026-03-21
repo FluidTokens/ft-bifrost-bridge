@@ -62,9 +62,9 @@ Bifrost logic is fully encapsulated in the following solutions:
 
 Watchtowers, who run the watchtower program, challenge each other to be the first to post the best source blockchain chain of valid blocks in the Binocular Oracle smart contract. The winner for each chain is rewarded with some ADA, proportionally for each valid block posted.
 
-Depositors, who want to peg-in, send their source blockchain assets to a unique Taproot address with an OP_RETURN metadata marker identifying the transaction as a Bifrost peg-in. Watchtowers detect these transactions on the source blockchain, and once confirmed, create PegInRequest UTxOs on Cardano (peg_in.ak) by minting an NFT and providing an inclusion proof.
+Depositors, who want to peg-in, send their source blockchain assets to a unique Taproot address with an OP_RETURN metadata marker identifying the transaction as a Bifrost peg-in. They then create PegInRequest UTxOs on Cardano (peg_in.ak) by minting an NFT and providing an inclusion proof. The PegInRequest UTxO creation could be potentially delegated to automated services but fundamentally the depositors have full control of this process.
 
-Withdrawers, who want to peg-out, lock their bridged assets (e.g. fBTC) along with a freshly minted NFT at peg_out.ak, specifying their source blockchain destination address in the datum.
+Withdrawers, who want to peg-out, lock their bridged assets (e.g. fBTC) at peg_out.ak, specifying their source blockchain destination address in the datum.
 
 SPOs, who register with their delegated stake to join the next epoch in spos_registry.ak, own both a unique edcs key and a secp key. The registration is accepted only if the SPO has a delegated stake bigger than a minimum threshold.
 
