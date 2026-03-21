@@ -298,22 +298,6 @@ The epoch lifecycle above shows generous time windows for the signing cascade (6
 
 The bottleneck is Bitcoin confirmation: each Treasury Movement requires ~100 Bitcoin blocks (~16.7 hours) for Binocular to promote the containing block to `confirmed` state. With a 5-day Cardano epoch, 4–5 TM batches fit sequentially, each handling its own set of peg-in sweeps and peg-out fulfillments. The final TM of the epoch moves the treasury to the new roster's Taproot address.
 
-## Flow of SPOs on Cardano
-
-todo
-
-## How to join Bifrost as SPO
-
-todo
-
-## Why Mithril is not necessary
-
-todo
-
-## Why Frost
-
-todo
-
 ## SPO Program
 
 It's the program that Cardano SPOs must run and it allows signature aggregation. Being based on the FROST protocol requires:
