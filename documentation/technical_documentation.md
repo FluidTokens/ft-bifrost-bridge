@@ -152,7 +152,7 @@ Merkle tree (2 leaves):
   Y_67  Y_federation
 ```
 
-Treasury output key: $$Q_{treasury} = Y_{51} + \text{tagged\_hash}(\text{"TapTweak"}, Y_{51} \| \text{merkle\_root}) · G$$
+Treasury output key: $Q_{treasury} = Y_{51} + \text{tagged\_hash}(\text{"TapTweak"}, Y_{51} \| \text{merkle\_root}) · G$
 
 This address changes each epoch after DKG, since $Y_{67}$ and $Y_{51}$ are regenerated.
 
@@ -862,13 +862,13 @@ After FROST signing completes, a single SPO must submit the result on Cardano �
 
 **Leader selection.** The roster is sorted by `pool_id` (lexicographic). The primary leader is selected using the previous TM's Bitcoin txid as entropy (unpredictable before the previous TM is mined, available to all SPOs and verifiable on-chain via the Treasury Info reference input):
 
-$$\text{leader\_index} = \text{hash}(\text{"bifrost-leader"} \| \text{prev\_tm\_txid} \| \text{tm\_sequence}) \mod \text{roster\_size}$$
+`leader_index = hash("bifrost-leader" || prev_tm_txid || tm_sequence) mod roster_size`
 
 where `prev_tm_txid` is read from the Treasury Info UTxO and `tm_sequence` is the sequence number of the current TM within the epoch (0-indexed). For key publication after DKG, `tm_sequence` is replaced by the literal `"dkg"`.
 
 **Timeout cascade.** If the primary leader does not submit within $T$ slots (protocol parameter, e.g. 60 slots ≈ 1 minute), the next SPO in roster order becomes eligible. After another $T$ slots the next one, and so on (wrapping around). Concretely, SPO at roster index $i$ becomes eligible at slot:
 
-$$\text{eligible\_slot}_i = \text{signing\_complete\_slot} + ((i - \text{leader\_index}) \mod \text{roster\_size}) \times T$$
+`eligible_slot[i] = signing_complete_slot + ((i - leader_index) mod roster_size) × T`
 
 where `signing_complete_slot` is the slot at which FROST signing finished (deterministic: the slot when the last required round-2 payload became available). Each SPO monitors the chain — if a predecessor has already submitted, it does nothing.
 
