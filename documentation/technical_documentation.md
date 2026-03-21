@@ -152,7 +152,7 @@ Merkle tree (2 leaves):
   Y_67  Y_federation
 ```
 
-Treasury output key: $Q_{treasury} = Y_{51} + \text{tagged\_hash}(\text{"TapTweak"}, Y_{51} \| \text{merkle\_root}) · G$
+Treasury output key: $$Q_{treasury} = Y_{51} + \text{tagged\_hash}(\text{"TapTweak"}, Y_{51} \| \text{merkle\_root}) · G$$
 
 This address changes each epoch after DKG, since $Y_{67}$ and $Y_{51}$ are regenerated.
 
@@ -856,15 +856,15 @@ Where:
 
 Entries are concatenated in input-index order. JSON is for transport; the signature covers `SHA256(canonical_bytes)`.
 
-### Cardano submission
+### Cardano submission and leader reward
 
-After FROST signing completes, a single SPO must submit the result on Cardano — posting the signed TM to `treasury_movement.ak` and updating keys in the Treasury UTxO after DKG. A deterministic leader rotation with timeout cascade avoids redundant submissions and wasted fees.
+After FROST signing completes, a single SPO must submit the result on Cardano — posting the signed TM to `treasury_movement.ak` and updating keys in the Treasury UTxO after DKG. The submitting SPO (the **leader**) is rewarded for this service. A deterministic leader election with timeout cascade ensures fairness, unpredictability, and liveness.
 
-**Leader selection.** The roster is sorted by `pool_id` (lexicographic). For a given task (TM submission or key update), the primary leader is:
+**Leader selection.** The roster is sorted by `pool_id` (lexicographic). The primary leader is selected using the previous TM's Bitcoin txid as entropy (unpredictable before the previous TM is mined, available to all SPOs and verifiable on-chain via the Treasury Info reference input):
 
-$$\text{leader\_index} = \text{epoch} \mod \text{roster\_size}$$
+$$\text{leader\_index} = \text{hash}(\text{"bifrost-leader"} \| \text{prev\_tm\_txid} \| \text{tm\_sequence}) \mod \text{roster\_size}$$
 
-The SPO at that index is the primary submitter.
+where `prev_tm_txid` is read from the Treasury Info UTxO and `tm_sequence` is the sequence number of the current TM within the epoch (0-indexed). For key publication after DKG, `tm_sequence` is replaced by the literal `"dkg"`.
 
 **Timeout cascade.** If the primary leader does not submit within $T$ slots (protocol parameter, e.g. 60 slots ≈ 1 minute), the next SPO in roster order becomes eligible. After another $T$ slots the next one, and so on (wrapping around). Concretely, SPO at roster index $i$ becomes eligible at slot:
 
@@ -872,12 +872,23 @@ $$\text{eligible\_slot}_i = \text{signing\_complete\_slot} + ((i - \text{leader\
 
 where `signing_complete_slot` is the slot at which FROST signing finished (deterministic: the slot when the last required round-2 payload became available). Each SPO monitors the chain — if a predecessor has already submitted, it does nothing.
 
-**Example.** A roster of 5 SPOs (sorted by pool_id: $A, B, C, D, E$) in epoch 7 with $T = 60$ slots. Leader index = $7 \mod 5 = 2$, so $C$ is the primary submitter. If signing completes at slot 1000:
+**On-chain verification.** The `treasury_movement.ak` validator enforces leader legitimacy:
 
-- Slot 1000: $C$ submits.
-- Slot 1060: if $C$ hasn't submitted, $D$ becomes eligible.
-- Slot 1120: if neither $C$ nor $D$ submitted, $E$ becomes eligible.
-- Slot 1180: $A$ (wraps around), then slot 1240: $B$.
+1. Reads `prev_tm_txid` from the Treasury Info reference input.
+2. Computes `leader_index` using the formula above.
+3. Looks up the expected `pool_id` in the roster (via the on-chain linked-list).
+4. Verifies the submitter's `pool_id` matches, or — if the transaction validity interval start exceeds the leader's eligibility window — allows the next eligible SPO per the timeout cascade.
+5. Records the leader's `pool_id` in the `treasury_movement.ak` output datum.
+
+**Leader reward.** When a depositor mints fBTC (spending a PegInRequest UTxO and referencing the `treasury_movement.ak` UTxO), the `bridged_asset.ak` minting policy enforces that one output pays a reward (protocol parameter) to the leader identified in the `treasury_movement.ak` datum. This distributes the cost of Cardano transaction fees across all minting transactions that benefit from the TM, and incentivizes timely submission.
+
+**Example.** A roster of 5 SPOs (sorted by pool_id: $A, B, C, D, E$). The previous TM's Bitcoin txid hashes to leader index 3, so $D$ is the primary submitter. With $T = 60$ slots and signing completing at slot 1000:
+
+- Slot 1000: $D$ submits, posts TM to `treasury_movement.ak` with `leader = D`.
+- Slot 1060: if $D$ hasn't submitted, $E$ becomes eligible.
+- Slot 1120: $A$, then slot 1180: $B$, then slot 1240: $C$.
+
+Later, when depositors mint fBTC referencing this TM, each minting transaction includes an output paying the reward to $D$.
 
 **Applies to both:**
 - **TM submission**: posting the signed Bitcoin transaction to `treasury_movement.ak`.
