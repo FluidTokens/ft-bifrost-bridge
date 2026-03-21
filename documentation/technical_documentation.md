@@ -152,7 +152,7 @@ Merkle tree (2 leaves):
   Y_67  Y_federation
 ```
 
-Treasury output key: $Q_{treasury} = Y_{51} + \text{tagged\_hash}(\text{"TapTweak"}, Y_{51} \| \text{merkle\_root}) · G$
+Treasury output key: `Q_treasury = Y_51 + tagged_hash("TapTweak", Y_51 || merkle_root) · G`
 
 This address changes each epoch after DKG, since $Y_{67}$ and $Y_{51}$ are regenerated.
 
@@ -189,14 +189,14 @@ Merkle tree (2 leaves):
 
 The peg-in output key $Q$ is:
 
-$Q = Y_{51} + \text{tagged\_hash}(\text{"TapTweak"}, Y_{51} \| \text{merkle\_root}) · G$
+`Q = Y_51 + tagged_hash("TapTweak", Y_51 || merkle_root) · G`
 
 Where:
 
 - $Y_{51}$ is the internal key (51% FROST group x-only public key, from `treasury.ak`).
 - The script tree contains two leaves (federation sweep and depositor refund), so merkle_root is the hash of both leaf hashes.
-- $\text{leaf\_hash} = \text{tagged\_hash}(\text{"TapLeaf"}, \text{0xc0} \| \text{compact\_size}(\text{script\_len}) \| \text{script})$
-- $\text{tagged\_hash}(\text{tag}, \text{msg}) = \text{SHA256}(\text{SHA256}(\text{tag}) \| \text{SHA256}(\text{tag}) \| \text{msg})$
+- `leaf_hash = tagged_hash("TapLeaf", 0xc0 || compact_size(script_len) || script)`
+- `tagged_hash(tag, msg) = SHA256(SHA256(tag) || SHA256(tag) || msg)`
 - $G$ is the secp256k1 generator point.
 
 The resulting Bitcoin address is `bc1p<bech32m(Q)>`.
@@ -209,7 +209,7 @@ All quorum levels construct **full** Treasury Movement transactions (sweeping pe
 
 **Script path on Treasury, key path on peg-in inputs (67% quorum — aspirational):**
 
-SPOs collect all confirmed PegInRequest and PegOut UTxOs from Cardano and construct a full Treasury Movement transaction. They spend the treasury UTxO via the $Y_{67}$ script leaf (revealing the script and control block) to prove the stronger 67% security threshold on Bitcoin. Peg-in UTxOs are spent via key path ($Y_{51}$) — a single 64-byte FROST Schnorr signature per peg-in input. To sign peg-in inputs, SPOs compute the tweaked private key: $d = y_{51} + \text{tagged\_hash}(\text{"TapTweak"}, Y_{51} \| \text{merkle\_root})$, where $y_{51}$ is the FROST group private key (held as shares). Computing the merkle_root requires the depositor's pubkey hash (for the refund leaf) and $Y_{federation}$ (for the federation leaf) — both available from the PegInRequest datum and protocol parameters.
+SPOs collect all confirmed PegInRequest and PegOut UTxOs from Cardano and construct a full Treasury Movement transaction. They spend the treasury UTxO via the $Y_{67}$ script leaf (revealing the script and control block) to prove the stronger 67% security threshold on Bitcoin. Peg-in UTxOs are spent via key path ($Y_{51}$) — a single 64-byte FROST Schnorr signature per peg-in input. To sign peg-in inputs, SPOs compute the tweaked private key: `d = y_51 + tagged_hash("TapTweak", Y_51 || merkle_root)`, where $y_{51}$ is the FROST group private key (held as shares). Computing the merkle_root requires the depositor's pubkey hash (for the refund leaf) and $Y_{federation}$ (for the federation leaf) — both available from the PegInRequest datum and protocol parameters.
 
 **Key path on Treasury, key path on peg-in inputs (51% quorum — main line):**
 
