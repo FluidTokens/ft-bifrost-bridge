@@ -1,5 +1,6 @@
 use aiken/collection/list
 use aiken/crypto.{VerificationKeyHash}
+use cardano/assets.{PolicyId}
 use cardano/script_context.{ScriptContext}
 use cardano/transaction.{OutputReference, Transaction}
 
@@ -12,12 +13,7 @@ pub type Redeemer {
 }
 
 validator bridged_btc {
-  spend(
-    _datum: Option<Datum>,
-    _redeemer: Redeemer,
-    _own_ref: OutputReference,
-    _self: Transaction,
-  ) {
+  mint(redeemer: Redeemer, policy_id: PolicyId, self: Transaction) {
     True
   }
 

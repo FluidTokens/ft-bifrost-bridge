@@ -1,5 +1,6 @@
 use aiken/collection/list
 use aiken/crypto.{VerificationKeyHash}
+use cardano/assets.{PolicyId}
 use cardano/script_context.{ScriptContext}
 use cardano/transaction.{OutputReference, Transaction}
 
@@ -12,6 +13,10 @@ pub type Redeemer {
 }
 
 validator spo_registry {
+  mint(redeemer: Redeemer, policy_id: PolicyId, self: Transaction) {
+    True
+  }
+
   spend(
     _datum: Option<Datum>,
     _redeemer: Redeemer,

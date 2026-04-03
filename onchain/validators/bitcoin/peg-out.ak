@@ -1,5 +1,6 @@
 use aiken/collection/list
 use aiken/crypto.{VerificationKeyHash}
+use cardano/assets.{PolicyId}
 use cardano/script_context.{ScriptContext}
 use cardano/transaction.{OutputReference, Transaction}
 
