@@ -11,7 +11,7 @@ pub type Redeemer {
   msg: ByteArray,
 }
 
-validator hello_world {
+validator treasury_movement {
   spend(
     _datum: Option<Datum>,
     _redeemer: Redeemer,

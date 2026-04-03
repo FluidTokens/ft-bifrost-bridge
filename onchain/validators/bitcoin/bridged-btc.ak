@@ -11,7 +11,7 @@ pub type Redeemer {
   msg: ByteArray,
 }
 
-validator hello_world {
+validator bridged_btc {
   spend(
     _datum: Option<Datum>,
     _redeemer: Redeemer,
