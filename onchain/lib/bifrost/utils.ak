@@ -92,3 +92,34 @@ pub fn get_treasury_info_as_data_list(
     constants.treasury_info_nft_asset_name,
   )
 }
+
+/// Returns `True` if `predicate(index, element)` holds for every element of the list.
+/// Returns `False` as soon as any predicate fails.
+pub fn indexed_all(self: List<a>, predicate: fn(Int, a) -> Bool) -> Bool {
+  list.indexed_foldr(
+    self,
+    True,
+    fn(index, element, acc) { predicate(index, element) && acc },
+  )
+}
+
+/// Variant of `indexed_all` that also threads a state through the predicate.
+/// Processes the list from right to left.
+/// Returns `True` iff every predicate call returns `True`.
+/// Does not short-circuit: the predicate is still called for all elements.
+pub fn indexed_all_with_state(
+  self: List<a>,
+  state: s,
+  predicate: fn(Int, a, s) -> (Bool, s),
+) -> Bool {
+  let (finalResult, _finalState) =
+    list.indexed_foldr(
+      self,
+      (True, state),
+      fn(index, element, (acc, state)) {
+        let (result, newState) = predicate(index, element, state)
+        (result && acc, newState)
+      },
+    )
+  finalResult
+}

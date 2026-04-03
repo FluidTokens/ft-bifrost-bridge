@@ -1,25 +1,84 @@
+use aiken/collection/dict
 use aiken/collection/list
 use aiken/crypto.{VerificationKeyHash}
-use cardano/assets.{PolicyId}
+use aiken/option
+use aiken/primitive/bytearray
+use bifrost/utils
+use cardano/address.{Address, Credential, Inline, Script, StakeCredential}
+use cardano/assets.{PolicyId, tokens}
 use cardano/script_context.{ScriptContext}
-use cardano/transaction.{OutputReference, Transaction}
+use cardano/transaction.{OutputReference, Transaction, find_input}
 
 pub type Datum {
   owner: VerificationKeyHash,
 }
 
-pub type Redeemer {
+pub type PegInWithdrawRedeemer {
   msg: ByteArray,
 }
 
+pub type PegInMintRedeemer {
+  inputRef: OutputReference,
+}
+
 validator peg_in {
-  mint(redeemer: Redeemer, policy_id: PolicyId, self: Transaction) {
+  mint(redeemer: PegInMintRedeemer, policy_id: PolicyId, self: Transaction) {
+    let inputRefHash = utils.hash_output_ref(redeemer.inputRef)
+    let isInputRefSpent =
+      option.is_some(find_input(self.inputs, redeemer.inputRef))
+
+    let mintedTokens =
+      list.filter(
+        dict.to_pairs(tokens(self.mint, policy_id)),
+        fn(Pair(_assetName, quantity)) { quantity > 0 },
+      )
+
+    let peg_in_outputs =
+      list.filter(
+        self.outputs,
+        fn(output) { output.address.payment_credential == Script(policy_id) },
+      )
+
+    let isEachMintedTokenAccountedFor =
+      utils.indexed_all(
+        mintedTokens,
+        fn(index, Pair(assetName, quantity)) {
+          let correctAssetName = and {
+              bytearray.at(assetName, 0) == index,
+              bytearray.drop(assetName, 1) == inputRefHash,
+            }
+
+          let output = utils.safe_list_at(peg_in_outputs, index)
+          let outputHasUniqueToken = and {
+              dict.size(assets.tokens(output.value, policy_id)) == 1,
+              assets.quantity_of(output.value, policy_id, assetName) == 1,
+            }
+          and {
+            quantity == 1,
+            correctAssetName,
+            outputHasUniqueToken,
+          }
+        },
+      )
+
+    and {
+      isInputRefSpent,
+      isEachMintedTokenAccountedFor,
+    }
+  }
+
+  withdraw(
+    redeemer: PegInWithdrawRedeemer,
+    _credential: Credential,
+    self: Transaction,
+  ) {
+    let spendScriptCredential = Script("TODO")
     True
   }
 
   spend(
     _datum: Option<Datum>,
-    _redeemer: Redeemer,
+    _redeemer: Data,
     _own_ref: OutputReference,
     _self: Transaction,
   ) {

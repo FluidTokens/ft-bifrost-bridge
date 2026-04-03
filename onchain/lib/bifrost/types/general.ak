@@ -8,6 +8,7 @@ pub type AuthorizationMethod {
   CardanoSpendScript { hash: ByteArray }
   CardanoWithdrawScript { hash: ByteArray }
   CardanoMintScript { hash: ByteArray }
+  CardanoTokenOwnership { policy_id: ByteArray, asset_name: ByteArray }
 }
 
 pub type Authorization {
@@ -15,10 +16,17 @@ pub type Authorization {
     hash: ByteArray,
     extra_signatories: List<VerificationKeyHash>,
   }
-  CardanoSpendScriptAuth { hash: ByteArray, transaction_inputs: List<Input> }
+  CardanoSpendScriptAuth { hash: ByteArray, inputs: List<Input> }
   CardanoWithdrawScriptAuth {
     hash: ByteArray,
     withdrawals: Pairs<Credential, Int>,
   }
-  CardanoMintScriptAuth { hash: ByteArray, transaction_mint: Value }
+  CardanoMintScriptAuth { hash: ByteArray, mint: Value }
+  CardanoTokenOwnershipAuth {
+    policy_id: ByteArray,
+    asset_name: ByteArray,
+    inputs: List<Input>,
+    ref_inputs: List<Input>,
+    withdrawals: Pairs<Credential, Int>,
+  }
 }

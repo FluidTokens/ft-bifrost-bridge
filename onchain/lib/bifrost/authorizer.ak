@@ -6,7 +6,8 @@ use aiken/crypto.{VerificationKeyHash}
 use bifrost/types/general.{
   Authorization, AuthorizationMethod, CardanoMintScript, CardanoMintScriptAuth,
   CardanoSignature, CardanoSignatureAuth, CardanoSpendScript,
-  CardanoSpendScriptAuth, CardanoWithdrawScript, CardanoWithdrawScriptAuth,
+  CardanoSpendScriptAuth, CardanoTokenOwnership, CardanoTokenOwnershipAuth,
+  CardanoWithdrawScript, CardanoWithdrawScriptAuth,
 }
 use cardano/address.{Address, Credential, Script, VerificationKey}
 use cardano/assets.{Lovelace, Value, quantity_of, tokens}
@@ -14,20 +15,27 @@ use cardano/transaction.{Input, Output}
 
 pub fn create_auth(
   method: AuthorizationMethod,
-  transaction_inputs: List<Input>,
+  inputs: List<Input>,
+  ref_inputs: List<Input>,
   withdrawals: Pairs<Credential, Lovelace>,
   extra_signatories: List<VerificationKeyHash>,
-  transaction_mint: Value,
+  mint: Value,
 ) {
   when method is {
     CardanoSignature { hash } ->
       CardanoSignatureAuth { hash, extra_signatories }
-    CardanoSpendScript { hash } ->
-      CardanoSpendScriptAuth { hash, transaction_inputs }
+    CardanoSpendScript { hash } -> CardanoSpendScriptAuth { hash, inputs }
     CardanoWithdrawScript { hash } ->
       CardanoWithdrawScriptAuth { hash, withdrawals }
-    CardanoMintScript { hash } ->
-      CardanoMintScriptAuth { hash, transaction_mint }
+    CardanoMintScript { hash } -> CardanoMintScriptAuth { hash, mint }
+    CardanoTokenOwnership { policy_id, asset_name } ->
+      CardanoTokenOwnershipAuth {
+        policy_id,
+        asset_name,
+        inputs,
+        ref_inputs,
+        withdrawals,
+      }
   }
 }
 
@@ -37,10 +45,10 @@ pub fn authorize_action(auth: Authorization) -> Bool {
     CardanoSignatureAuth { hash, extra_signatories } ->
       list.has(extra_signatories, hash)
     // If the authorization method is SpendScript, ensure the Utxo is present in the transaction inputs.
-    CardanoSpendScriptAuth { hash, transaction_inputs } -> {
+    CardanoSpendScriptAuth { hash, inputs } -> {
       let auth_cred = Script(hash)
       list.any(
-        transaction_inputs,
+        inputs,
         fn(input) {
           let Input { output, .. } = input
           let Output { address: out_address, .. } = output
@@ -56,15 +64,29 @@ pub fn authorize_action(auth: Authorization) -> Bool {
       pairs.has_key(withdrawals, credential)
     }
     // If the authorization method is MintScript, ensure the minted tokens meet the policy ID requirements and have a non-zero quantity.
-    CardanoMintScriptAuth { hash, transaction_mint } -> {
+    CardanoMintScriptAuth { hash, mint } -> {
       let fst_token_quantity =
-        transaction_mint
+        mint
           |> tokens(hash)
           |> to_pairs
           |> builtin.head_list
           |> builtin.snd_pair
       fst_token_quantity != 0
     }
+    CardanoTokenOwnershipAuth {
+      policy_id,
+      asset_name,
+      inputs,
+      ref_inputs,
+      withdrawals,
+    } ->
+      authorize_via_nft_ownership(
+        policy_id,
+        asset_name,
+        ref_inputs,
+        inputs,
+        withdrawals,
+      )
   }
 }
 
