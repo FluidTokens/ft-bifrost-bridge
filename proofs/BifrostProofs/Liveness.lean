@@ -17,7 +17,7 @@ def honestSPOMajority (s : ProtocolState) : Prop :=
   match s.currentRoster with
   | some roster =>
     let honestStake := totalStake (roster.members.filter (fun _spo => True))  -- abstract
-    honestStake * 10000 > roster.securityThreshold * totalStake roster.members
+    honestStake * 100 > 51 * totalStake roster.members
   | none => False
 
 /-- Eventually predicate: there exists a future trace reaching a state satisfying P -/

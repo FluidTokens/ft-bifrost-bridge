@@ -35,6 +35,7 @@
             texliveFull
             pandoc
             elan
+            z3
           ];
           shellHook = ''
             echo ""

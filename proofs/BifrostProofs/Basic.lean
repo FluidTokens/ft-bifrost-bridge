@@ -123,7 +123,6 @@ structure Roster where
   members           : List SPO
   threshold67       : Nat
   threshold51       : Nat
-  securityThreshold : Nat
   groupKey67        : PublicKey
   groupKey51        : PublicKey
   deriving Repr
