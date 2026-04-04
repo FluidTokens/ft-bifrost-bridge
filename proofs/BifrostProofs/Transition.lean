@@ -19,12 +19,6 @@ def eraseIdx {α : Type} (l : List α) (idx : Nat) : List α :=
     | x :: xs => if i == idx then xs else x :: go (i + 1) xs
   go 0 l
 
-/-- Check that an SPO is not currently banned -/
-def spoNotBanned (bans : List BanRecord) (poolId : ByteArray) (epoch : Nat) : Bool :=
-  match bans.find? (fun b => b.poolId == poolId) with
-  | none => true
-  | some b => epoch ≥ b.expiresAt
-
 /-- The transition function. Returns `none` for invalid actions. -/
 def step (s : ProtocolState) (a : ProtocolAction) : Option ProtocolState :=
   match a with
@@ -135,26 +129,6 @@ def step (s : ProtocolState) (a : ProtocolAction) : Option ProtocolState :=
       else none
     else none
 
-  -- SPO registration
-  | .SPORegister spo _coldSig =>
-    if !(s.spoRegistry.nodes.any (fun n => n.poolId == spo.poolId))
-       && spoNotBanned s.bans spo.poolId s.currentEpoch
-    then
-      some { s with
-        spoRegistry := { nodes := s.spoRegistry.nodes ++ [spo] }
-      }
-    else none
-
-  -- SPO deregistration
-  | .SPODeregister poolId _coldSig =>
-    if s.spoRegistry.nodes.any (fun n => n.poolId == poolId) then
-      some { s with
-        spoRegistry := {
-          nodes := s.spoRegistry.nodes.filter (fun n => !(n.poolId == poolId))
-        }
-      }
-    else none
-
   -- DKG completion
   | .DKG epoch result =>
     if epoch == s.currentEpoch + 1 then
@@ -209,25 +183,5 @@ def step (s : ProtocolState) (a : ProtocolAction) : Option ProtocolState :=
         }
       else none
     else none
-
-  -- Ban an SPO
-  | .BanSPO poolId =>
-    let existingBan := s.bans.find? (fun b => b.poolId == poolId)
-    let banCount := match existingBan with
-      | some b => b.banCount + 1
-      | none => 1
-    let duration := 2 ^ banCount
-    let newBan : BanRecord := {
-      poolId    := poolId
-      banCount  := banCount
-      expiresAt := s.currentEpoch + duration
-    }
-    let newBans := s.bans.filter (fun b => !(b.poolId == poolId)) ++ [newBan]
-    some { s with
-      bans := newBans
-      spoRegistry := {
-        nodes := s.spoRegistry.nodes.filter (fun n => !(n.poolId == poolId))
-      }
-    }
 
 end BifrostProofs

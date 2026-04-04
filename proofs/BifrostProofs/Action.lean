@@ -24,10 +24,6 @@ inductive ProtocolAction where
   | CancelPegOut       (poIdx : Nat)
   /-- A depositor reclaims BTC via the Taproot timeout script (~30 days) -/
   | DepositorRefund    (depositIdx : Nat)
-  /-- An SPO registers in the on-chain linked-list -/
-  | SPORegister        (spo : SPO) (coldSig : Ed25519Sig)
-  /-- An SPO deregisters from the linked-list -/
-  | SPODeregister      (poolId : ByteArray) (coldSig : Ed25519Sig)
   /-- DKG completes for a new epoch -/
   | DKG                (epoch : Nat) (result : DKGResult)
   /-- Epoch boundary event -/
@@ -38,8 +34,6 @@ inductive ProtocolAction where
   | ConfirmTM          (tmIdx : Nat) (proof : OracleProof)
   /-- Close a PegInRequest (depositor refunded or duplicate) -/
   | ClosePegInRequest  (reqIdx : Nat)
-  /-- Ban an SPO for misbehavior -/
-  | BanSPO             (poolId : ByteArray)
   deriving Repr
 
 end BifrostProofs

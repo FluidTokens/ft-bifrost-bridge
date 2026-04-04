@@ -104,18 +104,13 @@ structure DepositId where
 
 -- Protocol-specific types
 
-/-- An SPO in the Bifrost registry -/
+/-- An SPO in the Bifrost protocol -/
 structure SPO where
   poolId         : ByteArray
   bifrostIdPk    : PublicKey
   bifrostUrl     : String
   delegatedStake : Nat
   deriving BEq, Repr
-
-/-- SPO registry as sorted linked list -/
-structure SPORegistry where
-  nodes : List SPO
-  deriving Repr
 
 /-- Epoch keys produced by DKG -/
 structure EpochKeys where
@@ -216,31 +211,14 @@ inductive QuorumLevel where
   | federation : QuorumLevel
   deriving BEq, Repr
 
-/-- Ban record for an SPO -/
-structure BanRecord where
-  poolId    : ByteArray
-  banCount  : Nat
-  expiresAt : Nat
-  deriving BEq, Repr
-
 -- Helper functions
 
-def SPO.stake (spo : SPO) : Nat := spo.delegatedStake
-
 def totalStake (spos : List SPO) : Nat :=
-  spos.foldl (fun acc spo => acc + spo.stake) 0
+  spos.foldl (fun acc spo => acc + spo.delegatedStake) 0
 
 /-- Stake of the bottom k SPOs by delegation -/
 def bottomKStake (spos : List SPO) (k : Nat) : Nat :=
-  let sorted := spos.toArray.qsort (fun a b => a.stake < b.stake)
+  let sorted := spos.toArray.qsort (fun a b => a.delegatedStake < b.delegatedStake)
   totalStake (sorted.toList.take k)
-
-/-- Check if a list of SPOs is sorted by bifrostIdPk bytes -/
-def isSortedByKey : List SPO → Bool
-  | [] => true
-  | [_] => true
-  | a :: b :: rest =>
-    (Ord.compare a.bifrostIdPk.bytes b.bifrostIdPk.bytes == .lt)
-      && isSortedByKey (b :: rest)
 
 end BifrostProofs

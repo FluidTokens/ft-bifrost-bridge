@@ -60,13 +60,4 @@ theorem epoch_monotone (s s' : ProtocolState) (a : ProtocolAction)
     s'.currentEpoch ≥ s.currentEpoch := by
   sorry  -- case analysis: only EpochBoundary increments, everything else preserves
 
-/-- Ban duration is exponential. -/
-theorem ban_exponential (s s' : ProtocolState) (poolId : ByteArray)
-    (h : step s (.BanSPO poolId) = some s') :
-    ∃ (ban : BanRecord),
-      ban ∈ s'.bans
-      ∧ ban.poolId = poolId
-      ∧ ban.expiresAt = s.currentEpoch + 2 ^ ban.banCount := by
-  sorry
-
 end BifrostProofs

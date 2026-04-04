@@ -2,9 +2,9 @@
   BifrostProofs.Authorization
   Theorems A1–A6: Authorization and access control.
 
-  A4 and A5 (signature verification) are enforced by on-chain validators,
-  not by the state machine. They are axiomatized in Axioms.lean as
-  `schnorr_unforgeability` and `ed25519_unforgeability`.
+  A4 (depositor Schnorr signature verification) is enforced by on-chain validators,
+  not by the state machine. It is axiomatized in Axioms.lean as
+  `schnorr_unforgeability`.
 -/
 import BifrostProofs.Trace
 import BifrostProofs.Axioms
@@ -44,9 +44,8 @@ theorem cancel_requires_rotation (s s' : ProtocolState) (poIdx : Nat)
     s.currentTreasuryAddress ≠ po.treasuryAtCreation := by
   sorry
 
--- A4 (depositor Schnorr signature) and A5 (SPO cold key Ed25519 signature)
--- are enforced by on-chain validators, not by the state machine.
--- See Axioms.lean: `schnorr_unforgeability` and `ed25519_unforgeability`.
+-- A4 (depositor Schnorr signature) is enforced by on-chain validators,
+-- not by the state machine. See Axioms.lean: `schnorr_unforgeability`.
 
 /-- A6: Only DKG can change epoch keys.
 

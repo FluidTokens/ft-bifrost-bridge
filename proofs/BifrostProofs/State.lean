@@ -13,12 +13,10 @@ structure ProtocolState where
   pendingPegOuts  : List PegOutRequest
   completedPegIns : List DepositId       -- models the Merkle Patricia Trie
   circulatingFBTC : Nat
-  spoRegistry     : SPORegistry
   epochKeys       : EpochKeys
   currentEpoch    : Nat
   config          : BifrostConfig
   currentRoster   : Option Roster
-  bans            : List BanRecord
   -- Bitcoin side
   treasuryUTxO    : BitcoinUTxO
   bitcoinHeight   : Nat
@@ -60,12 +58,10 @@ def initialProtocolState (config : BifrostConfig) (bootstrapKeys : EpochKeys)
     pendingPegOuts  := []
     completedPegIns := []
     circulatingFBTC := 0
-    spoRegistry     := { nodes := [] }
     epochKeys       := bootstrapKeys
     currentEpoch    := 0
     config          := config
     currentRoster   := none
-    bans            := []
     treasuryUTxO    := genesisUtxo
     bitcoinHeight   := 0
     pendingDeposits := []

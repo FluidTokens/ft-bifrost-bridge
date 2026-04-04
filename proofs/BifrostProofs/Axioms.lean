@@ -58,17 +58,6 @@ axiom dkg_secrecy :
       roster.members.length > 1 →
       ¬ canComputeGroupPrivateKey adversary roster
 
-/-- Ed25519 signature verification (abstract) -/
-opaque verifyEd25519Signature (pk : ByteArray) (msg : ByteArray) (sig : Ed25519Sig) : Prop
-
-/-- Ed25519 unforgeability: valid signature implies signer knows the secret key. -/
-opaque signerOwnsKey_Ed25519 (pk : ByteArray) (msg : ByteArray) (sig : Ed25519Sig) : Prop
-
-axiom ed25519_unforgeability :
-    ∀ (pk msg : ByteArray) (sig : Ed25519Sig),
-      verifyEd25519Signature pk msg sig →
-      signerOwnsKey_Ed25519 pk msg sig
-
 /-- Schnorr/BIP340 unforgeability -/
 opaque signerOwnsKey_Schnorr (pk : PublicKey) : Prop
 
@@ -142,11 +131,6 @@ axiom pegout_cancel_requires_rotation :
       po ∈ s.pendingPegOuts →
       -- if cancel is valid ...
       s.currentTreasuryAddress ≠ po.treasuryAtCreation
-
-/-- Registry sorted: the SPO registry maintains sorted order after every transition. -/
-axiom registry_sorted :
-    ∀ (s : ProtocolState),
-      isSortedByKey s.spoRegistry.nodes = true
 
 -- ============================================================================
 -- 5.3 Bitcoin Axioms
