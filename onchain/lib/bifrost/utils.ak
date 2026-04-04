@@ -2,6 +2,7 @@ use aiken/builtin
 use aiken/collection/dict
 use aiken/collection/list
 use aiken/crypto
+use aiken/merkle_patricia_forestry as mpf
 use bifrost/constants
 use bifrost/types/bitcoin_oracle.{OracleState}
 use cardano/address.{Address, VerificationKey}
@@ -122,4 +123,26 @@ pub fn indexed_all_with_state(
       },
     )
   finalResult
+}
+
+//Expects the merkle root to be the first field of the InlineDatum
+pub fn get_mpf_from_output(output: Output) -> mpf.MerklePatriciaForestry {
+  expect InlineDatum(datum) = output.datum
+  datum
+    |> builtin.unconstr_fields
+    |> builtin.head_list
+    |> builtin.un_b_data
+    |> mpf.from_root
+}
+
+//Insert many successive elements in the merkle tree in one tx
+pub fn mpf_multiple_inserts(
+  initial_merkle_tree: mpf.MerklePatriciaForestry,
+  keys_values_and_inclusion_proofs: List<(ByteArray, ByteArray, mpf.Proof)>,
+) -> mpf.MerklePatriciaForestry {
+  list.foldr(
+    keys_values_and_inclusion_proofs,
+    initial_merkle_tree,
+    fn((key, value, proof), result) { mpf.insert(result, key, value, proof) },
+  )
 }

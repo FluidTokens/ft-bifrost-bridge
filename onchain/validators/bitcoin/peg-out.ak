@@ -10,7 +10,10 @@ use cardano/script_context.{ScriptContext}
 use cardano/transaction.{InlineDatum, Output, OutputReference, Transaction}
 
 pub type PegOutDatum {
-  ownerAuth: AuthorizationMethod,
+  //Auth that can then spend this utxo
+  owner_auth: AuthorizationMethod,
+  //The address that will receive the pegged-out tokens on the source chain
+  source_chain_destination_address: Data,
 }
 
 pub type ActionType {
@@ -30,15 +33,27 @@ pub type ActionType {
 }
 
 pub type PegOutWithdrawRedeemer {
-  block_merkle_tree_ref_input_index: Int,
+  //The source chain (eg. Bitcoin) blocks mpf root is contained in the datum of this reference input
+  source_chain_merkle_tree_ref_input_index: Int,
+  //Key of the block header that contains the PegOut tx. It is equal to hash(block header)
+  block_header_key: ByteArray,
+  //Value of the block header that contains the PegOut tx. It is equal to hash(block header)
+  block_header_value: ByteArray,
+  //Proof that the passed block header belongs to the source chain
+  block_header_in_source_chain_inclusion_proof: mpf.Proof,
+  //Block header mpf root is contained in the datum of this reference input
+  block_header_merkle_tree_ref_input_index: Int,
+  //Type of action with the relative additional data
   actionType: ActionType,
 }
 
 validator peg_out(
   bridged_token_policy_id: PolicyId,
   bridged_token_asset_name: AssetName,
-  block_merkle_tree_policy_id: PolicyId,
-  block_merkle_tree_asset_name: AssetName,
+  source_chain_merkle_tree_policy_id: PolicyId,
+  source_chain_merkle_tree_asset_name: AssetName,
+  block_header_merkle_tree_policy_id: PolicyId,
+  block_header_merkle_tree_asset_name: AssetName,
   completed_peg_outs_merkle_tree_policy_id: PolicyId,
   completed_peg_outs_merkle_tree_asset_name: AssetName,
 ) {
@@ -47,19 +62,29 @@ validator peg_out(
     credential: Credential,
     self: Transaction,
   ) {
-    let block_merkle_tree_ref_input =
+    let source_chain_merkle_tree_ref_input =
       utils.safe_list_at(
         self.reference_inputs,
-        redeemer.block_merkle_tree_ref_input_index,
+        redeemer.source_chain_merkle_tree_ref_input_index,
       )
+    //Source chain merkle tree ref input must have the unique NFT
     expect
       quantity_of(
-        block_merkle_tree_ref_input.output.value,
-        block_merkle_tree_policy_id,
-        block_merkle_tree_asset_name,
+        source_chain_merkle_tree_ref_input.output.value,
+        source_chain_merkle_tree_policy_id,
+        source_chain_merkle_tree_asset_name,
       ) == 1
-    let block_merkle_tree =
-      get_mpf_from_output(block_merkle_tree_ref_input.output)
+    let source_chain_merkle_tree =
+      utils.get_mpf_from_output(source_chain_merkle_tree_ref_input.output)
+    //Block header must belong to the official source chain
+    expect
+      mpf.has(
+        source_chain_merkle_tree,
+        redeemer.block_header_key,
+        redeemer.block_header_value,
+        redeemer.block_header_in_source_chain_inclusion_proof,
+      )
+
     let peg_out_inputs =
       list.filter(
         self.inputs,
@@ -71,12 +96,28 @@ validator peg_out(
         utils.indexed_all(
           peg_out_inputs,
           fn(index, input) {
+            let block_header_merkle_tree_ref_input =
+              utils.safe_list_at(
+                self.reference_inputs,
+                redeemer.block_header_merkle_tree_ref_input_index,
+              )
+            //Block header merkle tree ref input must have the unique NFT
+            expect
+              quantity_of(
+                block_header_merkle_tree_ref_input.output.value,
+                block_header_merkle_tree_policy_id,
+                block_header_merkle_tree_asset_name,
+              ) == 1
+            let block_header_merkle_tree =
+              utils.get_mpf_from_output(
+                block_header_merkle_tree_ref_input.output,
+              )
             expect InlineDatum(input_datum) = input.output.datum
             expect datum: PegOutDatum = input_datum
             let user_authorized =
               authorize_action(
                 create_auth(
-                  datum.ownerAuth,
+                  datum.owner_auth,
                   self.inputs,
                   self.reference_inputs,
                   self.withdrawals,
@@ -86,7 +127,7 @@ validator peg_out(
               )
             let peg_out_exclusion_proven =
               mpf.miss(
-                block_merkle_tree,
+                block_header_merkle_tree,
                 peg_out_key,
                 peg_out_in_treasury_exclusion_proof,
               )
@@ -105,6 +146,20 @@ validator peg_out(
         peg_out_in_completed_peg_outs_exclusion_proof,
         added_peg_out_to_completed_peg_outs_inclusion_proof,
       } -> {
+        let block_header_merkle_tree_ref_input =
+          utils.safe_list_at(
+            self.reference_inputs,
+            redeemer.block_header_merkle_tree_ref_input_index,
+          )
+        //Block header merkle tree ref input must have the unique NFT
+        expect
+          quantity_of(
+            block_header_merkle_tree_ref_input.output.value,
+            block_header_merkle_tree_policy_id,
+            block_header_merkle_tree_asset_name,
+          ) == 1
+        let block_header_merkle_tree =
+          utils.get_mpf_from_output(block_header_merkle_tree_ref_input.output)
         let completed_peg_outs_input =
           utils.safe_list_at(self.inputs, completed_peg_outs_input_index)
         expect
@@ -114,7 +169,7 @@ validator peg_out(
             completed_peg_outs_merkle_tree_asset_name,
           ) == 1
         let input_completed_peg_out_merkle_tree =
-          get_mpf_from_output(completed_peg_outs_input.output)
+          utils.get_mpf_from_output(completed_peg_outs_input.output)
         let completed_peg_outs_output =
           utils.safe_list_at(self.outputs, completed_peg_outs_output_index)
         expect
@@ -124,7 +179,7 @@ validator peg_out(
             completed_peg_outs_merkle_tree_asset_name,
           ) == 1
         let output_completed_peg_out_merkle_tree =
-          get_mpf_from_output(completed_peg_outs_output)
+          utils.get_mpf_from_output(completed_peg_outs_output)
         let bridged_token_spent_amount =
           list.foldr(
             peg_out_inputs,
@@ -154,7 +209,7 @@ validator peg_out(
               let user_authorized =
                 authorize_action(
                   create_auth(
-                    datum.ownerAuth,
+                    datum.owner_auth,
                     self.inputs,
                     self.reference_inputs,
                     self.withdrawals,
@@ -164,7 +219,7 @@ validator peg_out(
                 )
               let peg_out_inclusion_proven =
                 mpf.has(
-                  block_merkle_tree,
+                  block_header_merkle_tree,
                   peg_out_key,
                   peg_out_value,
                   peg_out_in_treasury_inclusion_proof,
@@ -198,7 +253,7 @@ validator peg_out(
   }
 
   spend(
-    datumOpt: Option<Data>,
+    _datumOpt: Option<Data>,
     _redeemer: Data,
     own_ref: OutputReference,
     self: Transaction,
@@ -220,9 +275,4 @@ validator peg_out(
   else(_ctx: ScriptContext) {
     False
   }
-}
-
-pub fn get_mpf_from_output(output: Output) {
-  //TODO
-  mpf.empty
 }
