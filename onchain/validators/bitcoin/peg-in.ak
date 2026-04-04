@@ -1,6 +1,7 @@
 use aiken/collection/dict
 use aiken/collection/list
 use aiken/crypto.{VerificationKeyHash}
+use aiken/merkle_patricia_forestry as mpf
 use aiken/option
 use aiken/primitive/bytearray
 use bifrost/utils
