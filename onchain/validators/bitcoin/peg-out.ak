@@ -18,8 +18,7 @@ pub type PegOutDatum {
 
 pub type ActionType {
   Cancel {
-    peg_out_key: ByteArray,
-    peg_out_in_treasury_exclusion_proof: mpf.Proof,
+    peg_out_keys_and_treasury_exclusion_proofs: List<(ByteArray, mpf.Proof)>,
   }
   CompletePegOut {
     completed_peg_outs_input_index: Int,
@@ -91,11 +90,16 @@ validator peg_out(
         fn(input) { input.output.address.payment_credential == credential },
       )
     when redeemer.actionType is {
-      Cancel { peg_out_key, peg_out_in_treasury_exclusion_proof } ->
+      Cancel { peg_out_keys_and_treasury_exclusion_proofs } ->
         //Every PegOut must be properly authorized and excluded from the Treasury Movement tx
         utils.indexed_all(
           peg_out_inputs,
           fn(index, input) {
+            let (peg_out_key, peg_out_in_treasury_exclusion_proof) =
+              utils.safe_list_at(
+                peg_out_keys_and_treasury_exclusion_proofs,
+                index,
+              )
             let block_header_merkle_tree_ref_input =
               utils.safe_list_at(
                 self.reference_inputs,
