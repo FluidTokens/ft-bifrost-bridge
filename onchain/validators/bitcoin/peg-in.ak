@@ -245,6 +245,12 @@ validator peg_in_validator(
             input_completed_peg_in_merkle_tree,
             peg_in_tx_hashes_as_key_and_value_and_added_peg_ins_to_completed_peg_ins_inclusion_proofs,
           ) == output_completed_peg_in_merkle_tree
+        //The completed_peg_in_txs must not change in value
+        let same_completed_peg_in_txs_value =
+          completed_peg_in_txs_input.output.value == completed_peg_in_txs_output.value
+        //The completed_peg_in_txs must not change address
+        let same_completed_peg_in_txs_address =
+          completed_peg_in_txs_input.output.address == completed_peg_in_txs_output.address
         and {
           utils.indexed_all(
             peg_in_inputs,
@@ -348,6 +354,7 @@ validator peg_in_validator(
                   peg_in_in_completed_peg_ins_exclusion_proof,
                 )
 
+              //TODO THIS SHOWS THE OUTPUT HAS ENOUGH TOKENS, NOT THAT THEY ARE PROPERLY MINTED
               //The corresponding output must have the correct amount on minted bridged tokens
               let bridged_token_minted =
                 quantity_of(
@@ -368,6 +375,8 @@ validator peg_in_validator(
           ),
           peg_in_inputs_and_proofs_have_same_length,
           added_completed_peg_ins_to_merkle_tree,
+          same_completed_peg_in_txs_value,
+          same_completed_peg_in_txs_address,
         }
       }
     }
@@ -386,7 +395,7 @@ validator peg_in_validator(
       self.withdrawals,
       fn(withdrawal) {
         when withdrawal is {
-          Pair(Script(scriptHash), _amnt) -> scriptHash == own_script_hash
+          Pair(Script(script_hash), _amnt) -> script_hash == own_script_hash
           _ -> False
         }
       },

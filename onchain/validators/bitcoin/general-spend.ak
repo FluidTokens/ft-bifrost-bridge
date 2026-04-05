@@ -33,7 +33,8 @@ validator general_spend(
         self.withdrawals,
         fn(withdrawal) {
           when withdrawal is {
-            Pair(Script(scriptHash), _amnt) -> scriptHash == withdrawScriptHash
+            Pair(Script(script_hash), _amnt) ->
+              script_hash == withdrawScriptHash
             _ -> False
           }
         },

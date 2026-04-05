@@ -18,11 +18,9 @@ pub type MintRedeemer {
   input_ref: OutputReference,
 }
 
-pub type SpendRedeemer {
-  SpendRedeemer
-}
-
 validator completed_peg_ins_merkle_tree_validator(
+  //TODO Circular dependency
+  peg_in_withdraw_script_hash: ByteArray,
   one_shot_input_ref: OutputReference,
 ) {
   mint(redeemer: MintRedeemer, policy_id: PolicyId, self: Transaction) {
@@ -77,12 +75,21 @@ validator completed_peg_ins_merkle_tree_validator(
   }
 
   spend(
-    _datum: Option<CompletedPegInsMerkleTreeDatum>,
-    _redeemer: SpendRedeemer,
-    _own_ref: OutputReference,
-    _self: Transaction,
+    _datumOpt: Option<Data>,
+    _redeemer: Data,
+    own_ref: OutputReference,
+    self: Transaction,
   ) {
-    True
+    list.any(
+      self.withdrawals,
+      fn(withdrawal) {
+        when withdrawal is {
+          Pair(Script(script_hash), _amnt) ->
+            script_hash == peg_in_withdraw_script_hash
+          _ -> False
+        }
+      },
+    )
   }
 
   else(_ctx: ScriptContext) {
