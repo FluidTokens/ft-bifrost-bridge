@@ -110,7 +110,7 @@ structure SPO where
   bifrostIdPk    : PublicKey
   bifrostUrl     : String
   delegatedStake : Nat
-  deriving BEq, Repr
+  deriving BEq, Repr, DecidableEq
 
 /-- Epoch keys produced by DKG -/
 structure EpochKeys where
@@ -212,12 +212,15 @@ inductive QuorumLevel where
 
 -- Helper functions
 
-def totalStake (spos : List SPO) : Nat :=
-  spos.foldl (fun acc spo => acc + spo.delegatedStake) 0
+def totalStake : List SPO → Nat
+  | [] => 0
+  | spo :: rest => spo.delegatedStake + totalStake rest
+
+/-- Comparison for sorting SPOs by delegated stake ascending -/
+def spoStakeLe (a b : SPO) : Bool := decide (a.delegatedStake ≤ b.delegatedStake)
 
 /-- Stake of the bottom k SPOs by delegation -/
 def bottomKStake (spos : List SPO) (k : Nat) : Nat :=
-  let sorted := spos.toArray.qsort (fun a b => a.delegatedStake < b.delegatedStake)
-  totalStake (sorted.toList.take k)
+  totalStake ((spos.mergeSort spoStakeLe).take k)
 
 end BifrostProofs
