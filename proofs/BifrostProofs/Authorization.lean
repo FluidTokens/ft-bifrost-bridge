@@ -33,15 +33,14 @@ theorem mint_requires_pegin (s s' : ProtocolState) (a : ProtocolAction)
       ∨ (∃ (poIdx : Nat), a = .CancelPegOut poIdx) := by
   sorry
 
-/-- A3: Peg-out cancel requires treasury rotation.
+/-- A3: Peg-out cancel requires treasury rotation or timeout.
 
-    Follows from the `decide (s.currentTreasuryAddress ≠ po.treasuryAtCreation)`
-    guard in `step`. -/
-theorem cancel_requires_rotation (s s' : ProtocolState) (poIdx : Nat)
+    Follows from the `decide (... ≠ ... ∨ ... ≥ ...)` guard in `step`. -/
+theorem cancel_requires_rotation_or_timeout (s s' : ProtocolState) (poIdx : Nat)
     (h : step s (.CancelPegOut poIdx) = some s')
     (hidx : poIdx < s.pendingPegOuts.length) :
     let po := s.pendingPegOuts.get ⟨poIdx, hidx⟩
-    s.currentTreasuryAddress ≠ po.treasuryAtCreation := by
+    treasuryRotated s po ∨ pegoutTimedOut s po := by
   sorry
 
 -- A4 (depositor Schnorr signature) is enforced by on-chain validators,

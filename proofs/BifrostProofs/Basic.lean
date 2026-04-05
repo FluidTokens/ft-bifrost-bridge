@@ -156,10 +156,11 @@ structure PegInRequest where
 
 /-- Peg-out request UTxO on Cardano -/
 structure PegOutRequest where
-  id                 : Nat
-  amount             : Nat
-  destAddress        : ByteArray
-  treasuryAtCreation : TreasuryAddress
+  id                     : Nat
+  amount                 : Nat
+  destAddress            : ByteArray
+  treasuryAtCreation     : TreasuryAddress
+  createdAtBitcoinHeight : Nat
   deriving BEq, Repr
 
 /-- A deposit on Bitcoin (before PegInRequest creation) -/
@@ -195,6 +196,7 @@ structure BifrostConfig where
   pegOutFee       : Nat
   minDeposit      : Nat
   leaderTimeout   : Nat
+  pegOutTimeout   : Nat
   deriving Repr
 
 /-- Oracle state (abstract) -/

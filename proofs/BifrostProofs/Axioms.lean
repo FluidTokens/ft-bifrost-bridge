@@ -125,12 +125,13 @@ axiom trie_insertion_on_mint :
       -- ... then the deposit is in the completed trie
       req.depositId ∈ s'.completedPegIns
 
-/-- Peg-out cancel authorization: cancel is only valid when treasury has rotated. -/
-axiom pegout_cancel_requires_rotation :
+/-- Peg-out cancel authorization: cancel is only valid when treasury has rotated
+    or the peg-out timeout has expired. -/
+axiom pegout_cancel_requires_rotation_or_timeout :
     ∀ (s : ProtocolState) (po : PegOutRequest),
       po ∈ s.pendingPegOuts →
       -- if cancel is valid ...
-      s.currentTreasuryAddress ≠ po.treasuryAtCreation
+      treasuryRotated s po ∨ pegoutTimedOut s po
 
 -- ============================================================================
 -- 5.3 Bitcoin Axioms

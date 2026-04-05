@@ -26,7 +26,7 @@ theorem failsafe_depositor_recovery (s : ProtocolState) (depositIdx : Nat)
 theorem failsafe_withdrawer_recovery (s : ProtocolState) (poIdx : Nat)
     (hidx : poIdx < s.pendingPegOuts.length) :
     let po := s.pendingPegOuts.get ⟨poIdx, hidx⟩
-    s.currentTreasuryAddress ≠ po.treasuryAtCreation →
+    treasuryRotated s po →
     ∃ s', step s (.CancelPegOut poIdx) = some s' := by
   sorry
 
@@ -65,6 +65,55 @@ theorem pegin_closable_if_duplicate (s : ProtocolState) (reqIdx : Nat)
     let req := s.pegInRequests.get ⟨reqIdx, hidx⟩
     req.depositId ∈ s.completedPegIns →
     ∃ s', step s (.ClosePegInRequest reqIdx) = some s' := by
+  sorry
+
+/-- F6: Withdrawer can cancel peg-out after timeout, unconditionally.
+
+    The peg-out validator allows cancellation when the oracle's confirmed
+    height exceeds the peg-out's creation height by `pegOutTimeout`.
+    This path requires no SPO cooperation — only oracle liveness. -/
+theorem failsafe_withdrawer_timeout (s : ProtocolState) (poIdx : Nat)
+    (hidx : poIdx < s.pendingPegOuts.length) :
+    let po := s.pendingPegOuts.get ⟨poIdx, hidx⟩
+    pegoutTimedOut s po →
+    ∃ s', step s (.CancelPegOut poIdx) = some s' := by
+  sorry
+
+-- ============================================================================
+-- Total signing failure analysis
+-- ============================================================================
+
+/-- Total signing failure: no quorum (67%, 51%, or federation) can sign.
+    This models the worst-case scenario where all SPOs are permanently offline
+    or have lost their key shares. -/
+def totalSigningFailure (s : ProtocolState) : Prop :=
+  ∀ (tm : TMTransaction) (q : QuorumLevel),
+    step s (.TreasuryMovement tm q) = none
+
+/-- Under total signing failure, the only permanently locked value is the
+    treasury UTXO balance. All user funds are recoverable:
+    - Deposits: refundable via Taproot CSV after 4320 blocks (F1)
+    - Peg-out requests: cancellable via timeout (F6)
+
+    The treasury UTXO itself requires a valid signature to spend, so with
+    no signing quorum it remains locked on Bitcoin forever. -/
+theorem total_failure_loss_bound (s : ProtocolState)
+    (hfail : totalSigningFailure s) :
+    -- Every pending deposit is eventually refundable (Taproot CSV)
+    (∀ (i : Nat) (hi : i < s.pendingDeposits.length),
+      let d := s.pendingDeposits.get ⟨i, hi⟩
+      ∀ s', s'.bitcoinHeight ≥ d.confirmationHeight + 4320 →
+        ¬ (s'.completedPegIns.any (· == d.depositId)) →
+        s'.pendingDeposits[i]? = some d →
+        i < s'.pendingDeposits.length →
+        ∃ s'', step s' (.DepositorRefund i) = some s'')
+    ∧
+    -- Every pending peg-out is eventually cancellable (timeout)
+    (∀ (j : Nat) (hj : j < s.pendingPegOuts.length),
+      let po := s.pendingPegOuts.get ⟨j, hj⟩
+      ∀ s', pegoutTimedOut s' po →
+        j < s'.pendingPegOuts.length →
+        ∃ s'', step s' (.CancelPegOut j) = some s'') := by
   sorry
 
 end BifrostProofs

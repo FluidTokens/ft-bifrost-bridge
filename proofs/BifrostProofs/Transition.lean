@@ -86,10 +86,11 @@ def step (s : ProtocolState) (a : ProtocolAction) : Option ProtocolState :=
     if amount > 0 && amount ≤ s.circulatingFBTC then
       let poId := s.pendingPegOuts.length
       let po : PegOutRequest := {
-        id                 := poId
-        amount             := amount
-        destAddress        := destAddress
-        treasuryAtCreation := s.currentTreasuryAddress
+        id                     := poId
+        amount                 := amount
+        destAddress            := destAddress
+        treasuryAtCreation     := s.currentTreasuryAddress
+        createdAtBitcoinHeight := s.oracleState.confirmedHeight
       }
       some { s with
         pendingPegOuts  := s.pendingPegOuts ++ [po]
@@ -106,11 +107,12 @@ def step (s : ProtocolState) (a : ProtocolAction) : Option ProtocolState :=
       }
     else none
 
-  -- Withdrawer cancels peg-out (treasury rotated)
+  -- Withdrawer cancels peg-out (treasury rotated OR timeout expired)
   | .CancelPegOut poIdx =>
     if h : poIdx < s.pendingPegOuts.length then
       let po := s.pendingPegOuts.get ⟨poIdx, h⟩
-      if decide (s.currentTreasuryAddress ≠ po.treasuryAtCreation) then
+      if decide (s.currentTreasuryAddress ≠ po.treasuryAtCreation
+                 ∨ s.oracleState.confirmedHeight ≥ po.createdAtBitcoinHeight + s.config.pegOutTimeout) then
         some { s with
           pendingPegOuts  := eraseIdx s.pendingPegOuts poIdx
           circulatingFBTC := s.circulatingFBTC + po.amount

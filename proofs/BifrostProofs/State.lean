@@ -51,6 +51,10 @@ def pegoutFulfilled (s : ProtocolState) (po : PegOutRequest) : Prop :=
 def treasuryRotated (s : ProtocolState) (po : PegOutRequest) : Prop :=
   s.currentTreasuryAddress ≠ po.treasuryAtCreation
 
+/-- Whether a peg-out has timed out (oracle height exceeds creation height + timeout) -/
+def pegoutTimedOut (s : ProtocolState) (po : PegOutRequest) : Prop :=
+  s.oracleState.confirmedHeight ≥ po.createdAtBitcoinHeight + s.config.pegOutTimeout
+
 /-- The initial state of the protocol at bootstrap -/
 def initialProtocolState (config : BifrostConfig) (bootstrapKeys : EpochKeys)
     (genesisUtxo : BitcoinUTxO) : ProtocolState :=
