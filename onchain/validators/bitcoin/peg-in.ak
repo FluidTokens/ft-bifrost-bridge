@@ -258,6 +258,7 @@ validator peg_in_validator(
                 peg_in_in_completed_peg_ins_exclusion_proof,
               } = utils.safe_list_at(per_input_complete_peg_in_info, index)
 
+              let corresponding_output = utils.safe_list_at(self.outputs, index)
               expect InlineDatum(input_datum) = input.output.datum
               expect datum: PegInDatum = input_datum
 
@@ -339,6 +340,7 @@ validator peg_in_validator(
                   redeemer_treasury_movement_raw_tx == treasury_movement_raw_tx,
                 }
 
+              //The PegIn must not yet be in the completed_peg_in merkle tree
               let completed_peg_in_exclusion_proven =
                 mpf.miss(
                   input_completed_peg_in_merkle_tree,
@@ -346,8 +348,13 @@ validator peg_in_validator(
                   peg_in_in_completed_peg_ins_exclusion_proof,
                 )
 
-              //TODO
-              let bridged_token_minted = True
+              //The corresponding output must have the correct amount on minted bridged tokens
+              let bridged_token_minted =
+                quantity_of(
+                  corresponding_output.value,
+                  bridged_token_policy_id,
+                  bridged_token_asset_name,
+                ) == builtin.un_i_data(datum.peg_in_amount)
 
               and {
                 user_authorized,
