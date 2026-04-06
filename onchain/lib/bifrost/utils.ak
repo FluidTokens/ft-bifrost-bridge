@@ -4,7 +4,7 @@ use aiken/collection/list
 use aiken/crypto
 use aiken/merkle_patricia_forestry as mpf
 use bifrost/constants
-use bifrost/types/bitcoin_oracle.{OracleState}
+use bifrost/types/watchtower.{OracleState}
 use cardano/address.{Address, VerificationKey}
 use cardano/assets.{AssetName, PolicyId, Value, quantity_of, tokens}
 use cardano/transaction.{InlineDatum, Input, Output, OutputReference}
@@ -123,6 +123,21 @@ pub fn indexed_all_with_state(
       },
     )
   finalResult
+}
+
+pub fn indexed_all_with_state_with_return_value(
+  self: List<a>,
+  state: s,
+  predicate: fn(Int, a, s) -> (Bool, s),
+) -> (Bool, s) {
+  list.indexed_foldr(
+    self,
+    (True, state),
+    fn(index, element, (acc, state)) {
+      let (result, newState) = predicate(index, element, state)
+      (result && acc, newState)
+    },
+  )
 }
 
 //Expects the merkle root to be the first field of the InlineDatum

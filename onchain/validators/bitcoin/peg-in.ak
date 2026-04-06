@@ -21,17 +21,23 @@ use cardano/transaction.{
 }
 
 validator peg_in_validator(
-  bridged_token_policy_id: PolicyId,
-  bridged_token_asset_name: AssetName,
-  source_chain_merkle_tree_policy_id: PolicyId,
-  source_chain_merkle_tree_asset_name: AssetName,
-  block_header_merkle_tree_policy_id: PolicyId,
-  block_header_merkle_tree_asset_name: AssetName,
-  completed_peg_ins_merkle_tree_policy_id: PolicyId,
-  completed_peg_ins_merkle_tree_asset_name: AssetName,
-  legit_treasury_movement_and_peg_in_spent_verifier_script_hash: ByteArray,
+  configNFTPolicyId: ByteArray,
+  configNFTAssetName: ByteArray,
 ) {
   mint(redeemer: PegInMintRedeemer, policy_id: PolicyId, self: Transaction) {
+    let config =
+      utils.get_config_as_data_list(
+        utils.safe_list_at(
+          self.reference_inputs,
+          redeemer.config_ref_input_index,
+        ),
+        configNFTPolicyId,
+        configNFTAssetName,
+      )
+    let block_header_merkle_tree_policy_id =
+      builtin.un_b_data(utils.safe_list_at(config, 4))
+    let block_header_merkle_tree_asset_name =
+      builtin.un_b_data(utils.safe_list_at(config, 5))
     let input_ref_hash = utils.hash_output_ref(redeemer.input_ref)
     let is_input_ref_spent =
       option.is_some(find_input(self.inputs, redeemer.input_ref))
@@ -54,6 +60,9 @@ validator peg_in_validator(
         fn(index, Pair(asset_name, quantity)) {
           let peg_in_request =
             utils.safe_list_at(redeemer.new_peg_in_requests, index)
+          //The PegIn amount must be always > 0
+          let peg_in_amount_positive =
+            builtin.un_i_data(peg_in_request.peg_in_amount) > 0
           let output = utils.safe_list_at(peg_in_outputs, index)
           //AssetName must be the contact of index+input_ref_hash
           let correct_asset_name = and {
@@ -120,6 +129,7 @@ validator peg_in_validator(
               peg_in_request.peg_in_request_tx_in_block_header_inclusion_proof,
             )
           and {
+            peg_in_amount_positive,
             quantity == 1,
             correct_asset_name,
             output_has_unique_token,
@@ -141,12 +151,39 @@ validator peg_in_validator(
     credential: Credential,
     self: Transaction,
   ) {
+    let config =
+      utils.get_config_as_data_list(
+        utils.safe_list_at(
+          self.reference_inputs,
+          redeemer.config_ref_input_index,
+        ),
+        configNFTPolicyId,
+        configNFTAssetName,
+      )
+    let bridged_token_policy_id =
+      builtin.un_b_data(utils.safe_list_at(config, 0))
+    let bridged_token_asset_name =
+      builtin.un_b_data(utils.safe_list_at(config, 1))
+    let source_chain_merkle_tree_policy_id =
+      builtin.un_b_data(utils.safe_list_at(config, 2))
+    let source_chain_merkle_tree_asset_name =
+      builtin.un_b_data(utils.safe_list_at(config, 3))
+    let block_header_merkle_tree_policy_id =
+      builtin.un_b_data(utils.safe_list_at(config, 4))
+    let block_header_merkle_tree_asset_name =
+      builtin.un_b_data(utils.safe_list_at(config, 5))
+    let completed_peg_ins_merkle_tree_policy_id =
+      builtin.un_b_data(utils.safe_list_at(config, 6))
+    let completed_peg_ins_merkle_tree_asset_name =
+      builtin.un_b_data(utils.safe_list_at(config, 7))
+    let legit_treasury_movement_and_peg_in_spent_verifier_script_hash =
+      builtin.un_b_data(utils.safe_list_at(config, 12))
     let peg_in_inputs =
       list.filter(
         self.inputs,
         fn(input) { input.output.address.payment_credential == credential },
       )
-    when redeemer.actionType is {
+    when redeemer.action_type is {
       Cancel { burnt_peg_in_nft_asset_names } -> {
         expect Script(peg_in_policy_id) = credential
         utils.indexed_all(
@@ -213,10 +250,24 @@ validator peg_in_validator(
           utils.get_mpf_from_output(source_chain_merkle_tree_ref_input.output)
         let completed_peg_in_txs_input =
           utils.safe_list_at(self.inputs, completed_peg_in_txs_input_index)
+        //Complete PegIns merkle tree input must have the unique NFT
+        expect
+          quantity_of(
+            completed_peg_in_txs_input.output.value,
+            completed_peg_ins_merkle_tree_policy_id,
+            completed_peg_ins_merkle_tree_asset_name,
+          ) == 1
         let input_completed_peg_in_merkle_tree =
           utils.get_mpf_from_output(completed_peg_in_txs_input.output)
         let completed_peg_in_txs_output =
           utils.safe_list_at(self.outputs, completed_peg_in_txs_output_index)
+        //Complete PegIns merkle tree output must have the unique NFT
+        expect
+          quantity_of(
+            completed_peg_in_txs_output.value,
+            completed_peg_ins_merkle_tree_policy_id,
+            completed_peg_ins_merkle_tree_asset_name,
+          ) == 1
         let output_completed_peg_in_merkle_tree =
           utils.get_mpf_from_output(completed_peg_in_txs_output)
         //Number of proofs == number of PegIns to complete
@@ -251,10 +302,11 @@ validator peg_in_validator(
         //The completed_peg_in_txs must not change address
         let same_completed_peg_in_txs_address =
           completed_peg_in_txs_input.output.address == completed_peg_in_txs_output.address
-        and {
-          utils.indexed_all(
+        let (all_peg_in_inputs_ok, total_bridged_tokens_to_mint) =
+          utils.indexed_all_with_state_with_return_value(
             peg_in_inputs,
-            fn(index, input) {
+            0,
+            fn(index, input, bridged_tokens_to_mint) -> (Bool, Int) {
               let InputCompletePegIn {
                 block_header,
                 block_header_merkle_tree_ref_input_index,
@@ -323,28 +375,29 @@ validator peg_in_validator(
                 )
               //Prove that the Treasury Movement is legit and spends this PegIn
               //delegating it to a specific withdraw script
-              let tmtilaspisvsh_redeemer <-
+              //Ensuring the redeemer data is the same we have here means
+              //the result is trustable. The tx fails if the withdraw script
+              //doesn't validate.
+              let treasury_movement_tx_is_legit_and_spends_peg_in_utxo =
                 stake_validator.validate_withdraw(
                   legit_treasury_movement_and_peg_in_spent_verifier_script_hash,
                   self.redeemers,
                   tmtilaspisvsh_withdraw_redeemer_index,
+                  fn(redeemer) {
+                    expect [
+                      redeemer_source_chain_treasury_utxo_id,
+                      redeemer_source_chain_raw_peg_in_tx,
+                      redeemer_peg_in_amount, redeemer_treasury_movement_raw_tx,
+                      ..
+                    ] = builtin.un_list_data(redeemer)
+                    and {
+                      redeemer_source_chain_treasury_utxo_id == datum.source_chain_treasury_utxo_id,
+                      redeemer_source_chain_raw_peg_in_tx == datum.source_chain_raw_peg_in_tx,
+                      redeemer_peg_in_amount == datum.peg_in_amount,
+                      redeemer_treasury_movement_raw_tx == treasury_movement_raw_tx,
+                    }
+                  },
                 )
-              expect [
-                redeemer_source_chain_treasury_utxo_id,
-                redeemer_source_chain_raw_peg_in_tx, redeemer_peg_in_amount,
-                redeemer_treasury_movement_raw_tx,
-                ..
-              ] = builtin.un_list_data(tmtilaspisvsh_redeemer)
-
-              //Ensuring the redeemer data is the same we have here means
-              //the result is trustable. The tx fails if the withdraw script
-              //doesn't validate.
-              let treasury_movement_tx_is_legit_and_spends_peg_in_utxo = and {
-                  redeemer_source_chain_treasury_utxo_id == datum.source_chain_treasury_utxo_id,
-                  redeemer_source_chain_raw_peg_in_tx == datum.source_chain_raw_peg_in_tx,
-                  redeemer_peg_in_amount == datum.peg_in_amount,
-                  redeemer_treasury_movement_raw_tx == treasury_movement_raw_tx,
-                }
 
               //The PegIn must not yet be in the completed_peg_in merkle tree
               let completed_peg_in_exclusion_proven =
@@ -354,25 +407,25 @@ validator peg_in_validator(
                   peg_in_in_completed_peg_ins_exclusion_proof,
                 )
 
-              //TODO THIS SHOWS THE OUTPUT HAS ENOUGH TOKENS, NOT THAT THEY ARE PROPERLY MINTED
-              //The corresponding output must have the correct amount on minted bridged tokens
-              let bridged_token_minted =
-                quantity_of(
-                  corresponding_output.value,
-                  bridged_token_policy_id,
-                  bridged_token_asset_name,
-                ) == builtin.un_i_data(datum.peg_in_amount)
-
-              and {
-                user_authorized,
-                block_header_included_in_source_chain,
-                treasury_movement_tx_included_in_block_header,
-                treasury_movement_tx_is_legit_and_spends_peg_in_utxo,
-                completed_peg_in_exclusion_proven,
-                bridged_token_minted,
-              }
+              (and {
+                  user_authorized,
+                  block_header_included_in_source_chain,
+                  treasury_movement_tx_included_in_block_header,
+                  treasury_movement_tx_is_legit_and_spends_peg_in_utxo,
+                  completed_peg_in_exclusion_proven,
+                }, bridged_tokens_to_mint + builtin.un_i_data(
+                  datum.peg_in_amount,
+                ))
             },
-          ),
+          )
+        let bridged_tokens_minted =
+          quantity_of(
+            self.mint,
+            bridged_token_policy_id,
+            bridged_token_asset_name,
+          ) == total_bridged_tokens_to_mint
+        and {
+          all_peg_in_inputs_ok,
           peg_in_inputs_and_proofs_have_same_length,
           added_completed_peg_ins_to_merkle_tree,
           same_completed_peg_in_txs_value,

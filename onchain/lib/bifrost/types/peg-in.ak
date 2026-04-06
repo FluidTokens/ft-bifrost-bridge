@@ -49,6 +49,7 @@ pub type PegInRequest {
 pub type PegInMintRedeemer {
   //Input spent during the minting (= creation of the PegInRequests)
   input_ref: OutputReference,
+  config_ref_input_index: Int,
   //The source chain (eg. Bitcoin) blocks mpf root is contained in the datum of this reference input
   source_chain_merkle_tree_ref_input_index: Int,
   //One or more PegInRequests that must be created on Cardano
@@ -87,8 +88,9 @@ pub type ActionType {
 }
 
 pub type PegInWithdrawRedeemer {
+  config_ref_input_index: Int,
   //The source chain (eg. Bitcoin) blocks mpf root is contained in the datum of this reference input
   source_chain_merkle_tree_ref_input_index: Int,
   //Type of action with the relative additional data
-  actionType: ActionType,
+  action_type: ActionType,
 }

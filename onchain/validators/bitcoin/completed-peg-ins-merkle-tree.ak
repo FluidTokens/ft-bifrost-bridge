@@ -1,13 +1,15 @@
+use aiken/builtin
 use aiken/collection/dict
 use aiken/collection/list
 use aiken/crypto.{VerificationKeyHash}
 use aiken/option
+use bifrost/types/peg_in.{CompletePegIn, PegInWithdrawRedeemer}
 use bifrost/utils
 use cardano/address.{Address, Credential, Inline, Script, StakeCredential}
 use cardano/assets.{PolicyId, flatten, quantity_of, tokens, without_lovelace}
 use cardano/script_context.{ScriptContext}
 use cardano/transaction.{
-  InlineDatum, Output, OutputReference, Transaction, find_input,
+  InlineDatum, Output, OutputReference, Transaction, Withdraw, find_input,
 }
 
 pub type CompletedPegInsMerkleTreeDatum {
@@ -18,9 +20,14 @@ pub type MintRedeemer {
   input_ref: OutputReference,
 }
 
+pub type SpendRedeemer {
+  config_ref_input_index: Int,
+  peg_in_withdraw_redeemer_index: Int,
+}
+
 validator completed_peg_ins_merkle_tree_validator(
-  //TODO Circular dependency
-  peg_in_withdraw_script_hash: ByteArray,
+  configNFTPolicyId: ByteArray,
+  configNFTAssetName: ByteArray,
   one_shot_input_ref: OutputReference,
 ) {
   mint(redeemer: MintRedeemer, policy_id: PolicyId, self: Transaction) {
@@ -76,20 +83,48 @@ validator completed_peg_ins_merkle_tree_validator(
 
   spend(
     _datumOpt: Option<Data>,
-    _redeemer: Data,
+    redeemer: SpendRedeemer,
     own_ref: OutputReference,
     self: Transaction,
   ) {
-    list.any(
-      self.withdrawals,
-      fn(withdrawal) {
-        when withdrawal is {
-          Pair(Script(script_hash), _amnt) ->
-            script_hash == peg_in_withdraw_script_hash
-          _ -> False
-        }
+    let config =
+      utils.get_config_as_data_list(
+        utils.safe_list_at(
+          self.reference_inputs,
+          redeemer.config_ref_input_index,
+        ),
+        configNFTPolicyId,
+        configNFTAssetName,
+      )
+    let peg_in_withdraw_script_hash =
+      builtin.un_b_data(utils.safe_list_at(config, 10))
+    let peg_in_withdraw_redeemer =
+      utils.safe_list_at(
+        self.redeemers,
+        redeemer.peg_in_withdraw_redeemer_index,
+      )
+    expect
+      peg_in_withdraw_redeemer.1st == Withdraw(
+        Script(peg_in_withdraw_script_hash),
+      )
+    expect peg_in_redeemer: PegInWithdrawRedeemer = peg_in_withdraw_redeemer.2nd
+
+    and {
+      when peg_in_redeemer.action_type is {
+        CompletePegIn { .. } -> True
+        _ -> False
       },
-    )
+      list.any(
+        self.withdrawals,
+        fn(withdrawal) {
+          when withdrawal is {
+            Pair(Script(script_hash), _amnt) ->
+              script_hash == peg_in_withdraw_script_hash
+            _ -> False
+          }
+        },
+      ),
+    }
   }
 
   else(_ctx: ScriptContext) {

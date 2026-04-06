@@ -72,8 +72,9 @@ pub type ActionType {
 }
 
 pub type PegOutWithdrawRedeemer {
+  config_ref_input_index: Int,
   //The source chain (eg. Bitcoin) blocks mpf root is contained in the datum of this reference input
   source_chain_merkle_tree_ref_input_index: Int,
   //Type of action with the relative additional data
-  actionType: ActionType,
+  action_type: ActionType,
 }
