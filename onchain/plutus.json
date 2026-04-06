@@ -251,29 +251,100 @@
       "hash": "6df919022cb6777ec157b0e7f6a6cd5bfb40c2433972b2f1abd1963f"
     },
     {
-      "title": "bitcoin/config.bridged_btc.spend",
-      "datum": {
-        "title": "_datum",
+      "title": "bitcoin/config.config.mint",
+      "redeemer": {
+        "title": "_redeemer",
         "schema": {
-          "$ref": "#/definitions/bitcoin~1config~1Datum"
+          "$ref": "#/definitions/cardano~1transaction~1Redeemer"
+        }
+      },
+      "parameters": [
+        {
+          "title": "tx0",
+          "schema": {
+            "$ref": "#/definitions/ByteArray"
+          }
+        },
+        {
+          "title": "index0",
+          "schema": {
+            "$ref": "#/definitions/Int"
+          }
+        },
+        {
+          "title": "config_asset_name",
+          "schema": {
+            "$ref": "#/definitions/ByteArray"
+          }
+        }
+      ],
+      "compiledCode": "5902d201010022229800aba2aba1aba0aab9faab9eaab9dab9a9bae0049bad0039bae0024888888888966002646465300130083754003370e90004dc3a4005300c0039806001244444b30013004005899912cc004c018c03cdd519199119801001000912cc004006298103d87a80008992cc004cdd7980b980a1baa001004898029980b000a5eb8226600600660300048090c0580050141bac30143011375400a6002660246ea4034cc048dd400625eb82264b30013375e602860226ea8c050c044dd500099ba548008cc04cdd4801a5eb8226644b30013008329800800cc966002601460286ea8006297adef6c6089bab3018301537540028098cc008dd59801980a1baa008006a400080088896600200510018994c004012603600732337006eb4c06000800cdd7180b000a0083019002405d132598009804cc004dd59801980a1baa008803403d00144c02660026eacc05cc060c050dd5002401a01e800a2941012111192cc004c030c058dd5000c5200089bad301a3017375400280a8c9660026018602c6ea80062980103d87a8000899198008009bab301b3018375400444b30010018a6103d87a8000899192cc004cdc8803000c56600266e3c018006260186603a603600497ae08a60103d87a80004065133004004301f00340646eb8c064004c07000501a202a330040030028a5040444602a602c602c602c602c00244646600200200644b30010018a60103d87a8000899192cc004cdc8802800c56600266e3c0140062601066032602e00497ae08a60103d87a80004055133004004301b00340546eb8c054004c0600050164528201e3259800a518cc0040066eb0c050c054c054c044dd5002d2000400516403c444b300130090018980b001466002007301700299b800014800500320228b201c375c6022601c6ea8018dd2a40011598009801802c4c8cc892818090009809180980098071baa0068b20184030300b300c001300b00130063754017149a26cac80201",
+      "hash": "68d27ae07bfee2ae3f531a9827ac5d7e1298ae0feb3de6b5f069cbc9"
+    },
+    {
+      "title": "bitcoin/config.config.spend",
+      "datum": {
+        "title": "datum_opt",
+        "schema": {
+          "$ref": "#/definitions/bifrost~1types~1config~1ConfigDatum"
         }
       },
       "redeemer": {
         "title": "_redeemer",
         "schema": {
-          "$ref": "#/definitions/bitcoin~1config~1Redeemer"
+          "$ref": "#/definitions/cardano~1transaction~1Redeemer"
         }
       },
-      "compiledCode": "588601010029800aba2aba1aab9faab9eaab9dab9a48888896600264653001300700198039804000cc01c0092225980099b8748008c01cdd500144c8cc896600266e1d2000300a375400d132325980098080014528c5900e1bae300e001300b375400d16402460160026016601800260106ea800a29410060c01c004c00cdd5003c52689b2b20021",
-      "hash": "5e72f591a5579cfe98d788c71eb77c1b76c674276e372e9e2b730c13"
+      "parameters": [
+        {
+          "title": "tx0",
+          "schema": {
+            "$ref": "#/definitions/ByteArray"
+          }
+        },
+        {
+          "title": "index0",
+          "schema": {
+            "$ref": "#/definitions/Int"
+          }
+        },
+        {
+          "title": "config_asset_name",
+          "schema": {
+            "$ref": "#/definitions/ByteArray"
+          }
+        }
+      ],
+      "compiledCode": "5902d201010022229800aba2aba1aba0aab9faab9eaab9dab9a9bae0049bad0039bae0024888888888966002646465300130083754003370e90004dc3a4005300c0039806001244444b30013004005899912cc004c018c03cdd519199119801001000912cc004006298103d87a80008992cc004cdd7980b980a1baa001004898029980b000a5eb8226600600660300048090c0580050141bac30143011375400a6002660246ea4034cc048dd400625eb82264b30013375e602860226ea8c050c044dd500099ba548008cc04cdd4801a5eb8226644b30013008329800800cc966002601460286ea8006297adef6c6089bab3018301537540028098cc008dd59801980a1baa008006a400080088896600200510018994c004012603600732337006eb4c06000800cdd7180b000a0083019002405d132598009804cc004dd59801980a1baa008803403d00144c02660026eacc05cc060c050dd5002401a01e800a2941012111192cc004c030c058dd5000c5200089bad301a3017375400280a8c9660026018602c6ea80062980103d87a8000899198008009bab301b3018375400444b30010018a6103d87a8000899192cc004cdc8803000c56600266e3c018006260186603a603600497ae08a60103d87a80004065133004004301f00340646eb8c064004c07000501a202a330040030028a5040444602a602c602c602c602c00244646600200200644b30010018a60103d87a8000899192cc004cdc8802800c56600266e3c0140062601066032602e00497ae08a60103d87a80004055133004004301b00340546eb8c054004c0600050164528201e3259800a518cc0040066eb0c050c054c054c044dd5002d2000400516403c444b300130090018980b001466002007301700299b800014800500320228b201c375c6022601c6ea8018dd2a40011598009801802c4c8cc892818090009809180980098071baa0068b20184030300b300c001300b00130063754017149a26cac80201",
+      "hash": "68d27ae07bfee2ae3f531a9827ac5d7e1298ae0feb3de6b5f069cbc9"
     },
     {
-      "title": "bitcoin/config.bridged_btc.else",
+      "title": "bitcoin/config.config.else",
       "redeemer": {
         "schema": {}
       },
-      "compiledCode": "588601010029800aba2aba1aab9faab9eaab9dab9a48888896600264653001300700198039804000cc01c0092225980099b8748008c01cdd500144c8cc896600266e1d2000300a375400d132325980098080014528c5900e1bae300e001300b375400d16402460160026016601800260106ea800a29410060c01c004c00cdd5003c52689b2b20021",
-      "hash": "5e72f591a5579cfe98d788c71eb77c1b76c674276e372e9e2b730c13"
+      "parameters": [
+        {
+          "title": "tx0",
+          "schema": {
+            "$ref": "#/definitions/ByteArray"
+          }
+        },
+        {
+          "title": "index0",
+          "schema": {
+            "$ref": "#/definitions/Int"
+          }
+        },
+        {
+          "title": "config_asset_name",
+          "schema": {
+            "$ref": "#/definitions/ByteArray"
+          }
+        }
+      ],
+      "compiledCode": "5902d201010022229800aba2aba1aba0aab9faab9eaab9dab9a9bae0049bad0039bae0024888888888966002646465300130083754003370e90004dc3a4005300c0039806001244444b30013004005899912cc004c018c03cdd519199119801001000912cc004006298103d87a80008992cc004cdd7980b980a1baa001004898029980b000a5eb8226600600660300048090c0580050141bac30143011375400a6002660246ea4034cc048dd400625eb82264b30013375e602860226ea8c050c044dd500099ba548008cc04cdd4801a5eb8226644b30013008329800800cc966002601460286ea8006297adef6c6089bab3018301537540028098cc008dd59801980a1baa008006a400080088896600200510018994c004012603600732337006eb4c06000800cdd7180b000a0083019002405d132598009804cc004dd59801980a1baa008803403d00144c02660026eacc05cc060c050dd5002401a01e800a2941012111192cc004c030c058dd5000c5200089bad301a3017375400280a8c9660026018602c6ea80062980103d87a8000899198008009bab301b3018375400444b30010018a6103d87a8000899192cc004cdc8803000c56600266e3c018006260186603a603600497ae08a60103d87a80004065133004004301f00340646eb8c064004c07000501a202a330040030028a5040444602a602c602c602c602c00244646600200200644b30010018a60103d87a8000899192cc004cdc8802800c56600266e3c0140062601066032602e00497ae08a60103d87a80004055133004004301b00340546eb8c054004c0600050164528201e3259800a518cc0040066eb0c050c054c054c044dd5002d2000400516403c444b300130090018980b001466002007301700299b800014800500320228b201c375c6022601c6ea8018dd2a40011598009801802c4c8cc892818090009809180980098071baa0068b20184030300b300c001300b00130063754017149a26cac80201",
+      "hash": "68d27ae07bfee2ae3f531a9827ac5d7e1298ae0feb3de6b5f069cbc9"
     },
     {
       "title": "bitcoin/general_spend.general_spend.spend",
@@ -804,6 +875,90 @@
         }
       ]
     },
+    "bifrost/types/config/ConfigDatum": {
+      "title": "ConfigDatum",
+      "anyOf": [
+        {
+          "title": "ConfigDatum",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "title": "bridged_token_policy_id",
+              "$ref": "#/definitions/cardano~1assets~1PolicyId"
+            },
+            {
+              "title": "bridged_token_asset_name",
+              "$ref": "#/definitions/cardano~1assets~1AssetName"
+            },
+            {
+              "title": "source_chain_merkle_tree_policy_id",
+              "$ref": "#/definitions/cardano~1assets~1PolicyId"
+            },
+            {
+              "title": "source_chain_merkle_tree_asset_name",
+              "$ref": "#/definitions/cardano~1assets~1AssetName"
+            },
+            {
+              "title": "block_header_merkle_tree_policy_id",
+              "$ref": "#/definitions/cardano~1assets~1PolicyId"
+            },
+            {
+              "title": "block_header_merkle_tree_asset_name",
+              "$ref": "#/definitions/cardano~1assets~1AssetName"
+            },
+            {
+              "title": "completed_peg_ins_merkle_tree_policy_id",
+              "$ref": "#/definitions/cardano~1assets~1PolicyId"
+            },
+            {
+              "title": "completed_peg_ins_merkle_tree_asset_name",
+              "$ref": "#/definitions/cardano~1assets~1AssetName"
+            },
+            {
+              "title": "completed_peg_outs_merkle_tree_policy_id",
+              "$ref": "#/definitions/cardano~1assets~1PolicyId"
+            },
+            {
+              "title": "completed_peg_outs_merkle_tree_asset_name",
+              "$ref": "#/definitions/cardano~1assets~1AssetName"
+            },
+            {
+              "title": "peg_in_withdraw_script_hash",
+              "$ref": "#/definitions/ByteArray"
+            },
+            {
+              "title": "peg_out_withdraw_script_hash",
+              "$ref": "#/definitions/ByteArray"
+            },
+            {
+              "title": "legit_treasury_movement_and_peg_in_spent_verifier_script_hash",
+              "$ref": "#/definitions/ByteArray"
+            },
+            {
+              "title": "legit_treasury_movement_and_peg_out_produced_verifier_script_hash",
+              "$ref": "#/definitions/ByteArray"
+            },
+            {
+              "title": "legit_treasury_movement_and_peg_out_not_produced_verifier_script_hash",
+              "$ref": "#/definitions/ByteArray"
+            },
+            {
+              "title": "treasury_nft_policy_id",
+              "$ref": "#/definitions/ByteArray"
+            },
+            {
+              "title": "treasury_nft_asset_name",
+              "$ref": "#/definitions/ByteArray"
+            },
+            {
+              "title": "min_stake",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        }
+      ]
+    },
     "bifrost/types/general/AuthorizationMethod": {
       "title": "AuthorizationMethod",
       "anyOf": [
@@ -1282,38 +1437,6 @@
         }
       ]
     },
-    "bitcoin/config/Datum": {
-      "title": "Datum",
-      "anyOf": [
-        {
-          "title": "Datum",
-          "dataType": "constructor",
-          "index": 0,
-          "fields": [
-            {
-              "title": "owner",
-              "$ref": "#/definitions/aiken~1crypto~1VerificationKeyHash"
-            }
-          ]
-        }
-      ]
-    },
-    "bitcoin/config/Redeemer": {
-      "title": "Redeemer",
-      "anyOf": [
-        {
-          "title": "Redeemer",
-          "dataType": "constructor",
-          "index": 0,
-          "fields": [
-            {
-              "title": "msg",
-              "$ref": "#/definitions/ByteArray"
-            }
-          ]
-        }
-      ]
-    },
     "bitcoin/spos_registry/Datum": {
       "title": "Datum",
       "anyOf": [
@@ -1446,6 +1569,10 @@
       "title": "AssetName",
       "dataType": "bytes"
     },
+    "cardano/assets/PolicyId": {
+      "title": "PolicyId",
+      "dataType": "bytes"
+    },
     "cardano/transaction/OutputReference": {
       "title": "OutputReference",
       "description": "An `OutputReference` is a unique reference to an output on-chain. The `output_index`\n corresponds to the position in the output list of the transaction (identified by its id)\n that produced that output",
@@ -1466,6 +1593,10 @@
           ]
         }
       ]
+    },
+    "cardano/transaction/Redeemer": {
+      "title": "Redeemer",
+      "description": "Any Plutus data."
     }
   }
 }
