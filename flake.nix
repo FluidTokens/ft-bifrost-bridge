@@ -15,9 +15,6 @@
     (flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
-        jdk = pkgs.openjdk25;
-        sbt = pkgs.sbt.override { jre = jdk; };
-        visualvm = pkgs.visualvm.override { jdk = jdk; };
       in
       rec {
         devShell = pkgs.mkShell {
@@ -25,15 +22,13 @@
           buildInputs = [ pkgs.bashInteractive ];
           packages = with pkgs; [
             git
-            jdk
-            sbt
-            visualvm
             aiken
             nixpkgs-fmt
             nodejs
             nodePackages.mermaid-cli
             texliveFull
             pandoc
+            elan
           ];
           shellHook = ''
             echo ""
@@ -45,6 +40,10 @@
             echo "    make whitepaper                 — build whitepaperV1.pdf"
             echo "    make diagram-<name>             — build single diagram (e.g. diagram-utxo_flow)"
             echo "    make clean                      — remove generated images and PDFs"
+            echo ""
+            echo "  Lean 4 (elan):"
+            echo "    elan default leanprover/lean4:v4.24.0  — set Lean toolchain"
+            echo "    lake build                              — build Lean project"
             echo ""
           '';
         };

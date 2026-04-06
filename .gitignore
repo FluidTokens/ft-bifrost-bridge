@@ -1,1 +1,5 @@
 CLAUDE.md
+.aider*
+.direnv/
+.envrc
+proofs/.lake/
