@@ -15,9 +15,6 @@
     (flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
-        jdk = pkgs.openjdk25;
-        sbt = pkgs.sbt.override { jre = jdk; };
-        visualvm = pkgs.visualvm.override { jdk = jdk; };
       in
       rec {
         devShell = pkgs.mkShell {
@@ -25,9 +22,6 @@
           buildInputs = [ pkgs.bashInteractive ];
           packages = with pkgs; [
             git
-            jdk
-            sbt
-            visualvm
             aiken
             nixpkgs-fmt
             nodejs
@@ -35,7 +29,6 @@
             texliveFull
             pandoc
             elan
-            z3
           ];
           shellHook = ''
             echo ""
