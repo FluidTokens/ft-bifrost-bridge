@@ -633,7 +633,7 @@
       "redeemer": {
         "title": "redeemer",
         "schema": {
-          "$ref": "#/definitions/bitcoin~1treasury~1MintRedeemer"
+          "$ref": "#/definitions/bifrost~1types~1treasury~1TreasuryMintRedeemer"
         }
       },
       "compiledCode": "5903e501010029800aba2aba1aba0aab9faab9eaab9dab9a4888888966002646465300130053754003370e90004dc3a400530090039804801244444b300130040058992cc004c014c02cdd500144c8c8c8ca60026eb8c04c0066eb8c04c00e6eb8c04c00922259800980b80244c966002601a60266ea8006264646644b3001301c003899192cc004c0780062646644b30013021002899192cc004c05cdd6980f80144c8c966002604a0031323259800980d9bad302630270018acc00566002603860446ea8c8cc88cc008008004896600200314c0103d87a80008992cc004cdd7981518139baa0010048980699814800a5eb8226600600660560048128c0a40050271bac302730243754036604c60466ea8066294629410214566002b30013371e6eb8c098008062266e3cdd718130009bc83766604c60466ea80662941021456600266ebcc02cc08cdd500399ba548010cc094c024cc094c010c08cdd500c99812980598119baa0193302530263027302730273023375403297ae04bd7044cdd7981318119baa0073009330253374a9001198129ba90184bd7019812a6103d87a80004bd70452820428a50408514a0810a2c8108c098004dd61812000c59022191980080099198008009bab30033022375400c44b30010018a5eb7bdb1822653001375c604600337566048003302800248896600266e45221000038acc004cdc7a441000038800c401502544cc0a4cdd81ba9003374c0046600c00c0028128604c0028120896600200314bd7044c8cc88cc88cc00800800489660020031003899198151ba73302a375200a66054604e00266054605000297ae033003003302c002302a00140a06eacc09400cdd718110009980180198138011812800a0462302330240018b203a375c603a002604000516407864b30013014301b375400314bd6f7b63044dd5980f980e1baa001406864660020026eacc07cc080c080c080c080c070dd5009912cc0040062980103d87a8000899192cc004cdc880a000c56600266e3c0500062600a66042603e00497ae08a60103d87a80004075133004004302300340746eb8c074004c08000501e180f0011ba5480022c80d8c8cc004004dd61801180d1baa0112259800800c52f5c1133225980099baf3020301d37546040603a6ea8008cdd2a40046603e6ea40492f5c113301f00233004004001899802002000a036301e001301f001407046038603a603a0031640646eb4c064004dd7180c801180c800980a1baa0018b202430160078b202818098009809000980880098061baa0028b2014375c601c60166ea801a2b300130030058991991250300f001300f3010001300b375400d14a080490090c020c024004c020004c00cdd5004452689b2b200201",
@@ -1341,6 +1341,34 @@
         }
       ]
     },
+    "bifrost/types/treasury/TreasuryMintRedeemer": {
+      "title": "TreasuryMintRedeemer",
+      "anyOf": [
+        {
+          "title": "TreasuryMintRedeemer",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "title": "input_ref",
+              "$ref": "#/definitions/cardano~1transaction~1OutputReference"
+            },
+            {
+              "title": "current_treasury_address",
+              "$ref": "#/definitions/ByteArray"
+            },
+            {
+              "title": "current_treasury_utxo_id",
+              "$ref": "#/definitions/ByteArray"
+            },
+            {
+              "title": "current_spos_frost_key",
+              "$ref": "#/definitions/ByteArray"
+            }
+          ]
+        }
+      ]
+    },
     "bitcoin/bridged_token/MintRedeemer": {
       "title": "MintRedeemer",
       "anyOf": [
@@ -1463,34 +1491,6 @@
           "fields": [
             {
               "title": "msg",
-              "$ref": "#/definitions/ByteArray"
-            }
-          ]
-        }
-      ]
-    },
-    "bitcoin/treasury/MintRedeemer": {
-      "title": "MintRedeemer",
-      "anyOf": [
-        {
-          "title": "MintRedeemer",
-          "dataType": "constructor",
-          "index": 0,
-          "fields": [
-            {
-              "title": "input_ref",
-              "$ref": "#/definitions/cardano~1transaction~1OutputReference"
-            },
-            {
-              "title": "current_treasury_address",
-              "$ref": "#/definitions/ByteArray"
-            },
-            {
-              "title": "current_treasury_utxo_id",
-              "$ref": "#/definitions/ByteArray"
-            },
-            {
-              "title": "current_spos_frost_key",
               "$ref": "#/definitions/ByteArray"
             }
           ]

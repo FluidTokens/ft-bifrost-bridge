@@ -1,4 +1,15 @@
+use cardano/transaction.{
+  InlineDatum, Output, OutputReference, Transaction, Withdraw, find_input,
+}
+
 pub type TreasuryDatum {
+  current_treasury_address: ByteArray,
+  current_treasury_utxo_id: ByteArray,
+  current_spos_frost_key: ByteArray,
+}
+
+pub type TreasuryMintRedeemer {
+  input_ref: OutputReference,
   current_treasury_address: ByteArray,
   current_treasury_utxo_id: ByteArray,
   current_spos_frost_key: ByteArray,

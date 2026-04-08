@@ -3,7 +3,7 @@ use aiken/collection/dict
 use aiken/collection/list
 use aiken/crypto.{VerificationKeyHash}
 use aiken/option
-use bifrost/types/treasury.{TreasuryDatum}
+use bifrost/types/treasury.{TreasuryDatum, TreasuryMintRedeemer}
 use bifrost/utils
 use cardano/address.{Address, Credential, Inline, Script, StakeCredential}
 use cardano/assets.{PolicyId, flatten, quantity_of, tokens, without_lovelace}
@@ -12,19 +12,8 @@ use cardano/transaction.{
   InlineDatum, Output, OutputReference, Transaction, Withdraw, find_input,
 }
 
-pub type MintRedeemer {
-  input_ref: OutputReference,
-  current_treasury_address: ByteArray,
-  current_treasury_utxo_id: ByteArray,
-  current_spos_frost_key: ByteArray,
-}
-
-pub type SpendRedeemer {
-  config_ref_input_index: Int,
-}
-
 validator treasury_info {
-  mint(redeemer: MintRedeemer, policy_id: PolicyId, self: Transaction) {
+  mint(redeemer: TreasuryMintRedeemer, policy_id: PolicyId, self: Transaction) {
     let input_ref_hash = utils.hash_output_ref(redeemer.input_ref)
     let is_input_ref_spent =
       option.is_some(find_input(self.inputs, redeemer.input_ref))
