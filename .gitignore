@@ -3,3 +3,5 @@ CLAUDE.md
 .direnv/
 .envrc
 proofs/.lake/
+AGENTS.md
+.codex/
