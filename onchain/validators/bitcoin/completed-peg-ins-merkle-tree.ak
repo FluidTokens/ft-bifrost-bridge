@@ -35,12 +35,6 @@ validator completed_peg_ins_merkle_tree_validator(
     let is_input_ref_spent =
       option.is_some(find_input(self.inputs, redeemer.input_ref))
 
-    let minted_tokens =
-      list.filter(
-        dict.to_pairs(tokens(self.mint, policy_id)),
-        fn(Pair(_asset_name, quantity)) { quantity > 0 },
-      )
-
     expect [completed_peg_ins_merkle_tree_output] =
       list.filter(
         self.outputs,

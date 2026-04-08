@@ -32,26 +32,9 @@ validator completed_peg_outs_merkle_tree_validator(
   one_shot_input_ref: OutputReference,
 ) {
   mint(redeemer: MintRedeemer, policy_id: PolicyId, self: Transaction) {
-    let config =
-      utils.get_config_as_data_list(
-        utils.safe_list_at(
-          self.reference_inputs,
-          redeemer.config_ref_input_index,
-        ),
-        configNFTPolicyId,
-        configNFTAssetName,
-      )
-    let peg_out_withdraw_script_hash =
-      builtin.un_b_data(utils.safe_list_at(config, 11))
     let input_ref_hash = utils.hash_output_ref(redeemer.input_ref)
     let is_input_ref_spent =
       option.is_some(find_input(self.inputs, redeemer.input_ref))
-
-    let minted_tokens =
-      list.filter(
-        dict.to_pairs(tokens(self.mint, policy_id)),
-        fn(Pair(_asset_name, quantity)) { quantity > 0 },
-      )
 
     expect [completed_peg_outs_merkle_tree_output] =
       list.filter(
