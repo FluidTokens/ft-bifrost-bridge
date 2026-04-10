@@ -16,8 +16,10 @@ $Y_{federation}$
 
 ## Cardano Treasury Movement UTxO
 
-Minting policy: ??? (alwaysOK script for demo purposes)
+Minting policy: 186e32faa80a26810392fda6d559c7ed4721a65ce1c9d4ef3e1c87b4 (alwaysOK script for demo purposes)
 Asset Name: "TMTx"
+
+Datum: Constr 0 [TMTx bytestring]
 
 ## fBTC minting policy
 
