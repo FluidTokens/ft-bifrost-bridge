@@ -10,7 +10,7 @@ use cardano/assets.{AssetName, PolicyId, Value, quantity_of, tokens}
 use cardano/transaction.{InlineDatum, Input, Output, OutputReference}
 
 pub fn hash_output_ref(outputRef: OutputReference) -> ByteArray {
-  outputRef |> builtin.serialise_data |> crypto.blake2b_224
+  outputRef |> builtin.serialise_data |> crypto.sha2_256
 }
 
 pub fn safe_list_at(self: List<a>, index: Int) -> a {

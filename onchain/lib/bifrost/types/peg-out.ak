@@ -1,6 +1,6 @@
 use aiken/builtin
 use aiken/collection/list
-use aiken/crypto.{VerificationKeyHash, blake2b_224}
+use aiken/crypto.{VerificationKeyHash}
 use aiken/merkle_patricia_forestry as mpf
 use aiken_design_patterns/stake_validator
 use bifrost/authorizer.{authorize_action, create_auth}
