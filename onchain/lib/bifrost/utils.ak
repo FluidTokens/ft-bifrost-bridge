@@ -161,3 +161,7 @@ pub fn mpf_multiple_inserts(
     fn((key, value, proof), result) { mpf.insert(result, key, value, proof) },
   )
 }
+
+pub fn bitcoin_hash(bytes: ByteArray) -> ByteArray {
+  crypto.sha2_256(crypto.sha2_256(bytes))
+}

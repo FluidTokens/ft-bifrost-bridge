@@ -1,6 +1,6 @@
 use aiken/builtin
 use aiken/collection/list
-use aiken/crypto.{VerificationKeyHash, sha2_256}
+use aiken/crypto.{VerificationKeyHash}
 use aiken/merkle_patricia_forestry as mpf
 use aiken_design_patterns/stake_validator
 use bifrost/authorizer.{authorize_action, create_auth}
@@ -94,7 +94,8 @@ validator peg_out_validator(
               treasury_movement_raw_tx,
               treasury_movement_tx_inclusion_proof,
             } = utils.safe_list_at(per_input_cancel_info, index)
-            let block_header_hash = sha2_256(builtin.un_b_data(block_header))
+            let block_header_hash =
+              utils.bitcoin_hash(builtin.un_b_data(block_header))
             let block_header_merkle_tree_ref_input =
               utils.safe_list_at(
                 self.reference_inputs,
@@ -120,7 +121,7 @@ validator peg_out_validator(
                 block_header_merkle_tree_ref_input.output,
               )
             let treasury_movement_tx_hash =
-              sha2_256(builtin.un_b_data(treasury_movement_raw_tx))
+              utils.bitcoin_hash(builtin.un_b_data(treasury_movement_raw_tx))
             expect InlineDatum(input_datum) = input.output.datum
             expect datum: PegOutDatum = input_datum
             //PegOut cancel authorized
@@ -286,7 +287,8 @@ validator peg_out_validator(
               expect InlineDatum(input_datum) = input.output.datum
               expect datum: PegOutDatum = input_datum
 
-              let block_header_hash = sha2_256(builtin.un_b_data(block_header))
+              let block_header_hash =
+                utils.bitcoin_hash(builtin.un_b_data(block_header))
 
               let block_header_merkle_tree_ref_input =
                 utils.safe_list_at(
@@ -313,7 +315,7 @@ validator peg_out_validator(
                   block_header_merkle_tree_ref_input.output,
                 )
               let treasury_movement_tx_hash =
-                sha2_256(builtin.un_b_data(treasury_movement_raw_tx))
+                utils.bitcoin_hash(builtin.un_b_data(treasury_movement_raw_tx))
 
               //PegIn completion authorized
               let user_authorized =

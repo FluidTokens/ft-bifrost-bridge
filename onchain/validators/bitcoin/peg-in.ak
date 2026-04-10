@@ -1,7 +1,7 @@
 use aiken/builtin
 use aiken/collection/dict
 use aiken/collection/list
-use aiken/crypto.{VerificationKeyHash, sha2_256}
+use aiken/crypto.{VerificationKeyHash}
 use aiken/merkle_patricia_forestry as mpf
 use aiken/option
 use aiken/primitive/bytearray
@@ -93,7 +93,7 @@ validator peg_in_validator(
           let source_chain_merkle_tree =
             utils.get_mpf_from_output(source_chain_merkle_tree_ref_input.output)
           let block_header_hash =
-            sha2_256(builtin.un_b_data(peg_in_request.block_header))
+            utils.bitcoin_hash(builtin.un_b_data(peg_in_request.block_header))
           let block_header_merkle_tree_ref_input =
             utils.safe_list_at(
               self.reference_inputs,
@@ -117,7 +117,7 @@ validator peg_in_validator(
               block_header_merkle_tree_asset_name,
             ) == 1
           let peg_in_request_tx_hash =
-            sha2_256(
+            utils.bitcoin_hash(
               builtin.un_b_data(peg_in_request.source_chain_raw_peg_in_tx),
             )
           //PegInRequest tx must belong to block header merkle tree
@@ -284,7 +284,9 @@ validator peg_in_validator(
               expect InlineDatum(input_datum) = input.output.datum
               expect datum: PegInDatum = input_datum
               let peg_in_tx_hash =
-                sha2_256(builtin.un_b_data(datum.source_chain_raw_peg_in_tx))
+                utils.bitcoin_hash(
+                  builtin.un_b_data(datum.source_chain_raw_peg_in_tx),
+                )
               (peg_in_tx_hash, peg_in_tx_hash, proof)
             },
           )
@@ -318,7 +320,8 @@ validator peg_in_validator(
               expect InlineDatum(input_datum) = input.output.datum
               expect datum: PegInDatum = input_datum
 
-              let block_header_hash = sha2_256(builtin.un_b_data(block_header))
+              let block_header_hash =
+                utils.bitcoin_hash(builtin.un_b_data(block_header))
 
               let block_header_merkle_tree_ref_input =
                 utils.safe_list_at(
@@ -345,9 +348,11 @@ validator peg_in_validator(
                   block_header_merkle_tree_ref_input.output,
                 )
               let treasury_movement_tx_hash =
-                sha2_256(builtin.un_b_data(treasury_movement_raw_tx))
+                utils.bitcoin_hash(builtin.un_b_data(treasury_movement_raw_tx))
               let peg_in_tx_hash =
-                sha2_256(builtin.un_b_data(datum.source_chain_raw_peg_in_tx))
+                utils.bitcoin_hash(
+                  builtin.un_b_data(datum.source_chain_raw_peg_in_tx),
+                )
               //PegIn completion authorized
               let user_authorized =
                 authorize_action(
