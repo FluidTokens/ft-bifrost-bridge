@@ -2,13 +2,22 @@
 
 Simplifications of the specificaion to make the testnet demo easier to understand and use. These are not intended to be permanent changes to the specification, but rather temporary simplifications for the purpose of the demo.
 
+## Federation Verification Key
+
+$Y_{federation}$ = 02b1e15a532a4e816ec75af608256b0808e36fb7d22560605178850885e53f2854
+
 ## Pegin Taproot
 
-$Y_federation || $Alice_vk + 5 days timeout (720 blocks)
+$Y_{federation}$ || Alice_vk + 5 days timeout (720 blocks)
 
 ## Treasury Taproot
 
-$Y_federation
+$Y_{federation}$
+
+## Cardano Treasury Movement UTxO
+
+Minting policy: ??? (alwaysOK script for demo purposes)
+Asset Name: "TMTx"
 
 ## fBTC minting policy
 
