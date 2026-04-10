@@ -30,6 +30,156 @@ Once big amounts of liquidity have been bridged to Cardano, for this type of sma
 
 The security of Bifrost is guaranteed by SPOs participation: for a strong and reliable bridge, most of the top SPOs by delegation must participate in the protocol.
 
+## Definitions and Abbreviations
+
+This section collects the acronyms, protocol terms, on-chain validators, mathematical symbols, and named lifecycle labels used throughout the rest of the document. Sub-sections are alphabetized for quick lookup; cross-references point to the body sections where each concept is fully specified.
+
+### Acronyms
+
+* **ADA**: Cardano's native token.
+* **BIP**: Bitcoin Improvement Proposal (BIP141, BIP340 [3], BIP341 [4] are referenced).
+* **BTC**: Bitcoin.
+* **CSV**: `OP_CHECKSEQUENCEVERIFY` (Bitcoin relative-timelock opcode).
+* **DKG**: Distributed Key Generation.
+* **ECDH**: Elliptic Curve Diffie–Hellman.
+* **fBTC**: Bridged Bitcoin (Cardano-native token representing locked BTC).
+* **FROST**: Flexible Round-Optimized Schnorr Threshold Signatures (RFC 9591 [2]).
+* **HASH160**: RIPEMD160(SHA256(·)).
+* **HKDF**: HMAC-based Key Derivation Function.
+* **L2**: Layer 2.
+* **MIN_ADA / min_utxo**: Minimum ADA required to keep a UTxO alive.
+* **MPT**: Merkle Patricia Trie.
+* **NFT**: Non-Fungible Token.
+* **P2PKH**: Pay-to-Public-Key-Hash.
+* **PoK**: Proof of Knowledge.
+* **PoW**: Proof-of-Work.
+* **RBF**: Replace-By-Fee.
+* **SHA256**: Secure Hash Algorithm, 256-bit.
+* **SPO**: Stake Pool Operator.
+* **TM / TMTx**: Treasury Movement (Transaction).
+* **UTxO**: Unspent Transaction Output.
+* **ZK**: Zero-Knowledge.
+
+### Protocol terms
+
+* **Attempt counter**: 0-based retry index for a `(epoch, threshold-mode)` DKG instance or a `(epoch, txid, mode)` signing instance.
+* **Banning (exponential timeout)**: temporary exclusion of an SPO from the active roster, with each successive ban doubling the exclusion duration (see §SPO Registration).
+* **Bifrost identity key (`bifrost_id_pk` / `bifrost_id_sk`)**: long-term Secp256k1 keypair used for all Bifrost protocol operations after registration.
+* **Bifrost Membership Token**: singleton NFT minted per `pool_id` as the on-chain badge of Bifrost participation.
+* **Bifrost URL (`bifrost_url`)**: HTTP endpoint where an SPO publishes DKG and signing payloads.
+* **Binocular Oracle**: on-chain Cardano contract that stores validated Bitcoin block headers and serves inclusion proofs (see [1]).
+* **Canonical byte layout**: deterministic serialization of a payload's fields used as the message under signature for the `sign-the-hash` scheme.
+* **Challenge–response (missing publication)**: optimistic mechanism for handling unproven Round 2 absences (see §Misbehavior Handling).
+* **Cold key (`cold_vkey` / `cold_skey`)**: a pool's long-term Ed25519 keypair, used only for registration and revocation.
+* **Completed peg-ins trie**: MPT in `treasury.ak` recording every minted peg-in to prevent double minting.
+* **Confirmed (Binocular)**: a Bitcoin block that has 100+ confirmations and has cleared the 200-minute challenge window (see [1]).
+* **Current roster**: the on-chain SPO set currently controlling the treasury and authorized to sign the next TM.
+* **Depositor**: user who locks BTC on Bitcoin to mint fBTC on Cardano.
+* **Eligible roster**: `registration_list \ active_ban_list` for the current epoch.
+* **Epoch boundary**: Cardano epoch transition; the moment registration snapshots, stake distribution snapshots, and roster handoffs occur.
+* **Equivocation**: two distinct signed payloads from the same SPO under the same `namespace_hash`.
+* **FaultToken**: singleton NFT minted by `fault_verifier.ak` after a fault is established; consumed by `spos_registry.ak` to apply a ban or slash.
+* **Federation / $Y_{federation}$**: pre-defined fallback signing entity used for emergency Treasury Movement signing.
+* **Group public key ($Y$, $Y_{51}$, $Y_{67}$)**: FROST aggregate public keys produced by the DKG.
+* **Identity-index linked-list**: on-chain ordered list keyed by `bifrost_id_pk` enforcing global uniqueness of active Bifrost identities.
+* **Inclusion / Non-inclusion proof**: cryptographic proof that an item is (or is not) in a Merkle/MPT structure.
+* **Internal key (Taproot)**: key used as the BIP341 [4] Taproot internal key ($Y_{51}$ for both Treasury and peg-in trees in Bifrost).
+* **Invalid payload (fault)**: payload whose contents fail cryptographic verification; provable on-chain via Plonk ZK.
+* **Key path / Script path**: the two BIP341 [4] Taproot spending paths.
+* **Leader (TM submission)**: SPO selected (with timeout cascade) to post the signed TM to Cardano (see §Cardano submission and leader reward).
+* **Live subset**: SPOs that published valid Round 1 payloads before the Round 1 deadline of an attempt.
+* **Mode (`67` / `51` / federation)**: active threshold path used for the current TM signing attempt.
+* **`namespace_hash`**: `blake2b_256(phase ‖ epoch ‖ threshold_or_mode ‖ attempt ‖ txid?)`, scoping a fault to a single protocol round.
+* **New roster**: roster derived from registrations at the upcoming epoch boundary; takes control after treasury handoff.
+* **PegInRequest**: UTxO at `peg_in.ak` carrying the raw Bitcoin peg-in transaction and an NFT, marking a confirmed deposit available for SPOs to sweep.
+* **PegOut request**: UTxO at `peg_out.ak` locking fBTC plus MIN_ADA with a Bitcoin destination address in the datum.
+* **`pool_id`**: `blake2b_224(cold_vkey)`; the canonical Cardano stake pool identifier.
+* **Pull model**: communication model where SPOs poll each other's `bifrost_url` endpoints rather than push.
+* **Registration bond**: slashable ADA escrowed in an SPO's registration linked-list node.
+* **Registration linked-list**: on-chain ordered list keyed by `pool_id` of all currently registered Bifrost SPOs.
+* **Roster handoff**: end-of-epoch transfer of treasury control from the old to the new roster, finalized by the last TM of the epoch.
+* **Round 0 / Round 1 / Round 2**: DKG and FROST signing rounds (init / commitments / shares-or-partials).
+* **Schnorr signature (BIP340 [3])**: 64-byte secp256k1 Schnorr signature scheme used throughout the protocol.
+* **Sighash (BIP341 [4])**: per-input message digest signed under SIGHASH_ALL Taproot rules.
+* **Sign-the-hash**: authentication scheme where the SPO signs `SHA256(canonical_bytes)`, enabling both off-chain and on-chain signature verification.
+* **Signing cascade / Threshold failover**: sequential attempt order: 67% → 51% → federation.
+* **Signing share ($s_i$)**: SPO's long-lived FROST private share.
+* **Stability window**: Cardano `3k/f` window after which the pegs snapshot is taken for the current epoch's TM.
+* **Tagged hash**: `SHA256(SHA256(tag) ‖ SHA256(tag) ‖ msg)`, per BIP340 [3] / BIP341 [4].
+* **Taproot tree / Merkle root**: script tree structure committing alternative spending paths for a Taproot output.
+* **Timeout cascade (leader)**: slot-indexed schedule under which subsequent SPOs become eligible to submit a TM.
+* **Treasury**: Bitcoin Taproot UTxO holding all consolidated bridged BTC.
+* **Treasury Info UTxO**: reference UTxO holding `prev_tm_txid` and other inter-TM state.
+* **Treasury Movement (TM) Transaction**: Bitcoin transaction sweeping confirmed PegInRequests, fulfilling PegOuts, and moving the treasury to the next-epoch Treasury address.
+* **Tweak / Tweaked key**: `Y + tagged_hash("TapTweak", Y ‖ merkle_root) · G`, per BIP341 [4].
+* **Verification share ($Y_i = s_i · G$)**: public counterpart of an SPO's FROST signing share.
+* **Watchtower**: permissionless actor that relays Bitcoin headers to Binocular, posts PegInRequests, and broadcasts signed TMs to Bitcoin.
+* **Withdrawer**: user who burns fBTC on Cardano to receive BTC on Bitcoin.
+
+### On-chain validators
+
+Source code for all validators listed here is published in the Bifrost on-chain repository [5].
+
+| Validator              | Role                                                                                                                    |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `spos_registry.ak`     | Pool-scoped registration and ban linked-lists; consumes `FaultToken`s for slash/ban.                                    |
+| `fault_verifier.ak`    | Verifies invalid-payload (Plonk ZK) and equivocation evidence; runs missing-publication challenges; mints `FaultToken`. |
+| `peg_in.ak`            | Holds PegInRequest UTxOs created from confirmed Bitcoin deposits.                                                       |
+| `peg_out.ak`           | Holds PegOut UTxOs from withdrawers; consumed once the TM is confirmed on Bitcoin.                                      |
+| `treasury.ak`          | Stores current $Y_{67}$, $Y_{51}$, and the completed peg-ins MPT.                                                       |
+| `treasury_movement.ak` | Stores SPO-signed Bitcoin TM transactions for watchtower relay; enforces leader-election rules.                         |
+| `bridged_asset.ak`     | fBTC mint/burn policy; verifies TM-confirmed peg-in sweeps and Schnorr-signed depositor claims.                         |
+
+### Mathematical notation
+
+| Symbol                                 | Meaning                                                           |
+| -------------------------------------- | ----------------------------------------------------------------- |
+| $Y_{51}$, $Y_{67}$                     | FROST group public keys at the 51% and 67% thresholds             |
+| $Y_{federation}$                       | Federation emergency public key                                   |
+| $s_i$                                  | Participant $i$'s long-lived FROST signing share                  |
+| $Y_i = s_i · G$                        | Participant $i$'s verification share                              |
+| $f_i(x)$                               | Round 1 secret polynomial of degree $t-1$                         |
+| $φ_{ij} = a_{ij} · G$                  | Public commitments to $f_i$'s coefficients                        |
+| $σ_i$                                  | Schnorr proof of knowledge of $a_{i0}$                            |
+| $(d_{ij}, e_{ij})$, $(D_{ij}, E_{ij})$ | Per-input FROST nonces and their commitments                      |
+| $z_{i,j}$                              | Partial signature of participant $i$ for input $j$                |
+| $R_j$, $σ_j = (R_j, z_j)$              | Group commitment and aggregated per-input signature               |
+| $t$                                    | FROST threshold (computed per `(epoch, mode)` DKG)                |
+| $G$                                    | secp256k1 generator point                                         |
+| $Q_{treasury}$, $Q$                    | Tweaked Taproot output keys for the Treasury and peg-in addresses |
+
+### Lifecycle labels
+
+**Rollout phases** (see §Rollout Phases):
+
+| Label                           | Meaning                                                                                                             |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Phase 1 — Federation Launch     | Bridge runs with $Y_{federation}$ as the only signer; SPOs begin registering.                                       |
+| Phase 2 — 51% SPO Participation | Once enough SPOs have completed DKG, $Y_{51}$ becomes the main-line key; federation is emergency-only.              |
+| Phase 3 — 67% SPO Participation | Aspirational level at which $Y_{67}$ script-leaf signing becomes the preferred path for stronger on-chain security. |
+
+**Per-epoch timeline phases** (see §Flow of Bitcoin over epochs, ceremonies):
+
+| Label                  | Meaning                                                                                                    |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Registry Snapshot      | Epoch-boundary snapshot of the registration linked-list.                                                   |
+| Stake Distribution     | Epoch-boundary snapshot of delegated stake from the previous epoch.                                        |
+| Pegs Snapshot          | Freezing of pending PegInRequest and PegOut UTxOs at the Cardano stability window for inclusion in the TM. |
+| Update Y               | Publication of the new roster's $Y_{67}$ and $Y_{51}$ to `treasury.ak`.                                    |
+| Build TM               | Deterministic construction of the unsigned Treasury Movement transaction by all SPOs.                      |
+| FROST signing cascade  | Threshold-failover signing sequence (67% → 51% → federation).                                              |
+| TM submission deadline | Latest slot at which the signed TM may be posted to `treasury_movement.ak`.                                |
+| Treasury handoff       | Final TM of the epoch moving consolidated funds to the new roster's Taproot address.                       |
+
+**Spending paths** (see §Spending paths and Treasury Movement variants):
+
+| Label                     | Meaning                                                                                                  |
+| ------------------------- | -------------------------------------------------------------------------------------------------------- |
+| 67% quorum (aspirational) | Treasury spent via the $Y_{67}$ script leaf; peg-in inputs spent via $Y_{51}$ key path.                  |
+| 51% quorum (main line)    | All inputs spent via the $Y_{51}$ key path — the cheapest spending path.                                 |
+| Federation (emergency)    | All inputs spent via the $Y_{federation}$ script leaf with CSV timelock.                                 |
+| Depositor refund          | After ~30 days (4320 blocks), the depositor reclaims a peg-in UTxO via the depositor refund script leaf. |
+
 ## Components
 
 ![Bifrost High Level Diagram](./images/Bifrost_HLD.png)
@@ -128,11 +278,11 @@ The Treasury address and peg-in addresses use different Taproot trees following 
 
 The Treasury address (holding consolidated funds) uses $Y_{51}$ as the key-path internal key, with an aspirational stronger path and an emergency fallback:
 
-| Path | Key | Condition | Use case |
-|------|-----|-----------|----------|
-| Key path | $Y_{51}$ | Immediate | Normal operation (main line): full TM |
-| Script leaf 1 | $Y_{67}$ | Immediate | Aspirational: full TM with strongest security proof |
-| Script leaf 2 | $Y_{federation}$ | After timeout | Emergency fallback: full TM |
+| Path          | Key              | Condition     | Use case                                            |
+| ------------- | ---------------- | ------------- | --------------------------------------------------- |
+| Key path      | $Y_{51}$         | Immediate     | Normal operation (main line): full TM               |
+| Script leaf 1 | $Y_{67}$         | Immediate     | Aspirational: full TM with strongest security proof |
+| Script leaf 2 | $Y_{federation}$ | After timeout | Emergency fallback: full TM                         |
 
 When 67% quorum is available, SPOs prefer $Y_{67}$ (script leaf 1) to prove the stronger security threshold on-chain on Bitcoin, even though it costs slightly more than the key path. When 67% is not available, they fall back to $Y_{51}$ key path (main line, cheapest).
 
@@ -163,11 +313,11 @@ When 67% quorum is available, SPOs spend the treasury via the $Y_{67}$ script le
 
 The peg-in address uses $Y_{51}$ as the key-path internal key (for SPO sweep — main line), with a federation emergency sweep leaf and a depositor refund leaf:
 
-| Path | Key | Condition | Use case |
-|------|-----|-----------|----------|
-| Key path | $Y_{51}$ | Immediate | SPO sweep (main line) |
-| Script leaf 1 | $Y_{federation}$ | After timeout | Federation emergency sweep |
-| Script leaf 2 | Depositor | After ~30 days (4320 blocks) | Depositor self-refund |
+| Path          | Key              | Condition                    | Use case                   |
+| ------------- | ---------------- | ---------------------------- | -------------------------- |
+| Key path      | $Y_{51}$         | Immediate                    | SPO sweep (main line)      |
+| Script leaf 1 | $Y_{federation}$ | After timeout                | Federation emergency sweep |
+| Script leaf 2 | Depositor        | After ~30 days (4320 blocks) | Depositor self-refund      |
 
 Script leaf 1 (federation emergency sweep):
 ```
