@@ -1042,7 +1042,9 @@ All SPOs independently construct the same Treasury Movement (TM) transaction fro
 
 - Input 0: the current treasury UTxO (txid+vout from shared state).
 - Inputs 1..$k$: peg-in UTxOs, ordered lexicographically by (txid ‖ vout). Comparison is byte-by-byte, left-to-right; txid is 32 bytes, vout is encoded as 4 bytes little-endian.
-- Sequence number for every input: `0xFFFFFFFD` (enables RBF and satisfies `OP_CHECKSEQUENCEVERIFY`).
+- Sequence numbers (per spending mode):
+  - **51% and 67% modes**: `0xFFFFFFFD` for every input. Bit 31 is set, so BIP68 relative timelocks are disabled; the value is below `0xFFFFFFFE`, so RBF is signaled. No CSV is evaluated in these paths.
+  - **Federation mode**: `timeout_federation` (the protocol parameter, encoded as a BIP68 block-based value with bit 31 clear) for every input. Bit 31 clear enables BIP68, satisfying `OP_CHECKSEQUENCEVERIFY <timeout_federation>` in the federation script leaves. Any value with bit 31 clear is automatically below `0xFFFFFFFE`, so RBF is also signaled.
 
 **Outputs (deterministic ordering).**
 
