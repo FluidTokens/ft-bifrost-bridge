@@ -1046,10 +1046,10 @@ All SPOs independently construct the same Treasury Movement (TM) transaction fro
 
 **Outputs (deterministic ordering).**
 
-- Outputs 0..$m−1$: peg-out payments, ordered lexicographically by raw `scriptPubKey` bytes. Each output pays the requested amount minus the protocol fee (see below).
-- Output $m$ (last): treasury change — remaining balance sent to the Treasury Taproot address.
+- Output 0: treasury change — remaining balance sent to the Treasury Taproot address.
   - For intermediate TMs within the epoch: the current roster's Treasury address.
   - For the **final TM of the epoch**: the new roster's Treasury address (derived from the new DKG group key).
+- Outputs 1..$m$: peg-out payments, ordered lexicographically by raw `scriptPubKey` bytes. Each output pays the requested amount minus the protocol fee (see below).
 
 **Amounts and fees.**
 
