@@ -456,6 +456,16 @@ It's the program that Cardano SPOs must run and it allows signature aggregation.
 3. group signing.
 We describe each in detail.
 
+### SPO Bootstrap State
+
+Before the first SPO registration, protocol deployment creates the SPO-related on-chain state:
+
+1. The Treasury state UTxO at `treasury.ak`, with an empty `bifrost_identity_root`.
+2. The registration-list root UTxO at `spos_registry.ak`, authenticated by its root NFT.
+3. The ban-list root UTxO at `spos_registry.ak`, authenticated by its root NFT.
+
+Later `register`, `deregister`, and `ban` transactions consume and recreate this state. When the registration or ban list is otherwise empty, its root UTxO is the anchor for the first insertion.
+
 ### SPO Registration
 
 #### 1. Overview
@@ -585,7 +595,7 @@ A **registration tx** performs the following:
 
 1. **Redeemer**: contains `cold_vkey`, `cold_sig`, `bifrost_sig`, `registration_anchor_output_index`, and the Merkle Patricia Trie witness needed to prove that `bifrost_id_pk` is currently absent from the Treasury state identity map.
 2. **Inputs**:
-   - Anchor node UTxO from the registration linked-list (the node after which the new registration node will be inserted).
+   - Anchor element UTxO from the registration linked-list (either the root UTxO or an existing registration node, depending on where the new node is inserted).
    - Treasury state UTxO from `treasury.ak`, carrying the current `bifrost_identity_root`.
 3. **Mint**: exactly one Bifrost Membership Token with `TokenName = pool_id`.
 4. **Outputs**:
@@ -675,7 +685,7 @@ For DKG namespaces, `txid` is omitted. Other scripts reference or spend this ver
 **Ban transaction format**: the ban transaction is permissionless and:
 1. Spends a `FaultToken` verifier UTxO whose `accused_pool_id` matches the targeted registration.
 2. References the accused SPO's registration node to bind the fault to an existing `pool_id`.
-3. Spends the appropriate anchor node of the ban linked-list, plus the existing ban node for this `pool_id` if one already exists.
+3. Spends the appropriate anchor element of the ban linked-list (the root UTxO for the first ban on a branch, otherwise an existing node), plus the existing ban node for this `pool_id` if one already exists.
 4. Inserts or updates the ban node with the incremented `ban_counter` and `ban_until_epoch = current_epoch + 2^(ban_counter - 1)`.
 5. Leaves the Membership Token and registration node untouched while recording the updated ban state in the ban linked-list.
 
