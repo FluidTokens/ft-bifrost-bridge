@@ -16,7 +16,6 @@ use cardano/transaction.{
 }
 
 const registration_root_key = "reg-root"
-const ban_root_key = "ban-root"
 
 const registration_node_key_prefix = ""
 
@@ -131,16 +130,14 @@ fn validate_bootstrap(
   expect Some(_bootstrap_input) = find_input(self.inputs, bootstrap_ref)
 
   and {
-    utils.quantity_of_policy_id(self.mint, policy_id) == 2,
+    utils.quantity_of_policy_id(self.mint, policy_id) == 1,
     quantity_of(self.mint, policy_id, registration_root_key) == 1,
-    quantity_of(self.mint, policy_id, ban_root_key) == 1,
     validate_bootstrap_root(
       self.outputs,
       self.mint,
       policy_id,
       registration_root_key,
     ),
-    validate_bootstrap_root(self.outputs, self.mint, policy_id, ban_root_key),
   }
 }
 
