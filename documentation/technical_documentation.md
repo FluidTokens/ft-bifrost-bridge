@@ -456,15 +456,21 @@ It's the program that Cardano SPOs must run and it allows signature aggregation.
 3. group signing.
 We describe each in detail.
 
-### SPO Bootstrap State
+### SPO Bootstrap Flow
 
-Before the first SPO registration, protocol deployment creates the SPO-related on-chain state:
+Before the first SPO registration, the protocol bootstrap creates the SPO-related on-chain state in production:
 
-1. The Treasury state UTxO at `treasury.ak`, with an empty `bifrost_identity_root`.
-2. The registration-list root UTxO at `spos_registry.ak`, authenticated by its root NFT.
-3. The ban-list root UTxO at `spos_registry.ak`, authenticated by its root NFT.
+1. A one-shot bootstrap minting policy mints the **Treasury state NFT** and creates the Treasury state UTxO at `treasury.ak`, with the initial treasury parameters and an empty `bifrost_identity_root`.
+2. A one-shot bootstrap minting policy mints the **registration-list root NFT** and creates the empty registration-list root UTxO at `spos_registry.ak`.
+3. A one-shot bootstrap minting policy mints the **ban-list root NFT** and creates the empty ban-list root UTxO at `spos_registry.ak`.
 
-Later `register`, `deregister`, and `ban` transactions consume and recreate this state. When the registration or ban list is otherwise empty, its root UTxO is the anchor for the first insertion.
+These three authenticated UTxOs are the starting point for all later SPO-related transactions. The runtime protocol never creates replacement roots. Instead:
+
+- `register` consumes the current registration-list anchor element and the Treasury state UTxO, and produces the updated anchor element, the new registration node, and the updated Treasury state UTxO;
+- `deregister` consumes the current registration node, its anchor element, and the Treasury state UTxO, and produces the updated anchor element and the updated Treasury state UTxO;
+- `ban` inserts or updates a ban node: if the `pool_id` is not yet in the ban list, it consumes the current ban-list anchor element and produces the updated anchor element plus a new ban node; if the `pool_id` already has a ban node, it consumes that ban node and produces the updated ban node with the incremented `ban_counter` and new `ban_until_epoch`.
+
+When the registration or ban list is otherwise empty, its bootstrap-created root UTxO is the anchor for the first insertion.
 
 ### SPO Registration
 
