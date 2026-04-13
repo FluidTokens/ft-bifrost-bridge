@@ -66,7 +66,7 @@ This section collects the acronyms, protocol terms, on-chain validators, mathema
 * **Banning (exponential timeout)**: temporary exclusion of an SPO from the active roster, with each successive ban doubling the exclusion duration (see §SPO Registration).
 * **Bifrost identity key (`bifrost_id_pk` / `bifrost_id_sk`)**: long-term Secp256k1 keypair used for all Bifrost protocol operations after registration.
 * **Bifrost identity root (`bifrost_identity_root`)**: MPT root in `treasury.ak` over active `bifrost_id_pk -> pool_id` bindings.
-* **Bifrost Membership Token**: singleton NFT minted per `pool_id` as the on-chain badge of Bifrost participation.
+* **Bifrost Membership Token**: singleton NFT minted per `pool_id` under `spos_registry.ak` as the on-chain badge of Bifrost participation.
 * **Bifrost URL (`bifrost_url`)**: HTTP endpoint where an SPO publishes DKG and signing payloads.
 * **Binocular Oracle**: on-chain Cardano contract that stores validated Bitcoin block headers and serves inclusion proofs (see [1]).
 * **Canonical byte layout**: deterministic serialization of a payload's fields used as the message under signature for the `sign-the-hash` scheme.
@@ -460,9 +460,8 @@ We describe each in detail.
 
 Before the first SPO registration, the protocol bootstrap creates the SPO-related on-chain state in production:
 
-1. A one-shot bootstrap minting policy mints the **Treasury state NFT** and creates the Treasury state UTxO at `treasury.ak`, with the initial treasury parameters and an empty `bifrost_identity_root`.
-2. A one-shot bootstrap minting policy mints the **registration-list root NFT** and creates the empty registration-list root UTxO at `spos_registry.ak`.
-3. A one-shot bootstrap minting policy mints the **ban-list root NFT** and creates the empty ban-list root UTxO at `spos_registry.ak`.
+1. The treasury bootstrap policy mints the **Treasury state NFT** and creates the Treasury state UTxO at `treasury.ak`, with the initial treasury parameters and an empty `bifrost_identity_root`.
+2. The `spos_registry.ak` minting policy has a one-shot bootstrap branch that consumes a fixed bootstrap nonce UTxO, mints the **registration-list root NFT** (`reg-root`) and the **ban-list root NFT** (`ban-root`), and creates the empty registration-list and ban-list root UTxOs at `spos_registry.ak`.
 
 These three authenticated UTxOs are the starting point for all later SPO-related transactions. The runtime protocol never creates replacement roots. Instead:
 
@@ -499,10 +498,11 @@ Before participating in Bifrost, each SPO must complete a **one-time registratio
 
 ##### 3.1 Bifrost Membership Token
 
-- **Minting Policy**: `BifrostMembershipPolicy`
+- **Minting Policy**: `spos_registry.ak`
 - **TokenName**: `pool_id`
 - Exactly **one token per SPO** (enforced by minting policy).
 - The token serves as the on-chain badge of Bifrost participation.
+- The same minting policy also mints the registration-list and ban-list root NFTs during protocol bootstrap.
 
 ##### 3.2 Registration Linked-List
 
@@ -603,7 +603,7 @@ A **registration tx** performs the following:
 2. **Inputs**:
    - Anchor element UTxO from the registration linked-list (either the root UTxO or an existing registration node, depending on where the new node is inserted).
    - Treasury state UTxO from `treasury.ak`, carrying the current `bifrost_identity_root`.
-3. **Mint**: exactly one Bifrost Membership Token with `TokenName = pool_id`.
+3. **Mint**: exactly one Bifrost Membership Token with `TokenName = pool_id` under `spos_registry.ak`.
 4. **Outputs**:
    - New registration linked-list node UTxO at registry script address with:
      - Bifrost Membership Token + the minimum ADA required to hold the token and datum
@@ -645,7 +645,7 @@ Where:
 1. **Redeemer**: contains `cold_vkey`, `cold_sig`, `removed_node_input_index`, and `anchor_node_input_index`.
 2. **Validity interval**: must fall within the epoch boundary window.
 3. Spends the registration node and the Treasury state UTxO.
-4. Burns the Bifrost Membership Token and returns the registration node's ADA to an SPO-controlled output.
+4. Burns the Bifrost Membership Token under `spos_registry.ak` and returns the registration node's ADA to an SPO-controlled output.
 5. Removes the registration node from the registration linked-list by updating the anchor node's `next` pointer to skip the removed node.
 6. Updates the Treasury state UTxO by removing the matching `bifrost_id_pk -> pool_id` mapping from the identity trie.
 
