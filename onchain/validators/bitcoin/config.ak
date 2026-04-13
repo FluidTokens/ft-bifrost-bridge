@@ -1,14 +1,8 @@
-use aiken/collection/dict
-use aiken/collection/list
-use bifrost/authorizer
-use bifrost/constants
 use bifrost/types/config.{ConfigDatum} as configType
 use bifrost/utils.{quantity_of_policy_id}
-use cardano/address.{Address, Script}
-use cardano/assets.{PolicyId, flatten, quantity_of, tokens}
-use cardano/transaction.{
-  InlineDatum, Input, Output, OutputReference, Redeemer, Transaction, find_input,
-}
+use cardano/address.{Script}
+use cardano/assets.{PolicyId, quantity_of}
+use cardano/transaction.{OutputReference, Redeemer, Transaction, find_input}
 
 //Contains all SC params
 validator config(tx0: ByteArray, index0: Int, config_asset_name: ByteArray) {
@@ -33,10 +27,10 @@ validator config(tx0: ByteArray, index0: Int, config_asset_name: ByteArray) {
   }
 
   spend(
-    datum_opt: Option<ConfigDatum>,
+    _datum_opt: Option<ConfigDatum>,
     _redeemer: Redeemer,
-    own_ref: OutputReference,
-    self: Transaction,
+    _own_ref: OutputReference,
+    _self: Transaction,
   ) {
     False
   }

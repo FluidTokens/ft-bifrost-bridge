@@ -1,15 +1,14 @@
 use aiken/builtin
 use aiken/collection/dict
 use aiken/collection/list
-use aiken/crypto.{VerificationKeyHash}
 use aiken/option
 use bifrost/types/peg_out.{CompletePegOut, PegOutWithdrawRedeemer}
 use bifrost/utils
-use cardano/address.{Address, Credential, Inline, Script, StakeCredential}
-use cardano/assets.{PolicyId, flatten, quantity_of, tokens, without_lovelace}
+use cardano/address.{Address, Script}
+use cardano/assets.{PolicyId, flatten, tokens, without_lovelace}
 use cardano/script_context.{ScriptContext}
 use cardano/transaction.{
-  InlineDatum, Output, OutputReference, Transaction, Withdraw, find_input,
+  InlineDatum, OutputReference, Transaction, Withdraw, find_input,
 }
 
 pub type CompletedPegOutsMerkleTreeDatum {
@@ -29,7 +28,7 @@ pub type SpendRedeemer {
 validator completed_peg_outs_merkle_tree_validator(
   configNFTPolicyId: ByteArray,
   configNFTAssetName: ByteArray,
-  one_shot_input_ref: OutputReference,
+  _one_shot_input_ref: OutputReference,
 ) {
   mint(redeemer: MintRedeemer, policy_id: PolicyId, self: Transaction) {
     let input_ref_hash = utils.hash_output_ref(redeemer.input_ref)
@@ -43,7 +42,7 @@ validator completed_peg_outs_merkle_tree_validator(
       )
 
     //Minted tokens from this policy id must be only 1 and with quantity 1
-    expect [Pair(this_token_asset_name, 1)] =
+    expect [Pair(_this_token_asset_name, 1)] =
       dict.to_pairs(tokens(self.mint, policy_id))
 
     //AssetName must be correct
@@ -79,7 +78,7 @@ validator completed_peg_outs_merkle_tree_validator(
   spend(
     _datumOpt: Option<Data>,
     redeemer: SpendRedeemer,
-    own_ref: OutputReference,
+    _own_ref: OutputReference,
     self: Transaction,
   ) {
     let config =
