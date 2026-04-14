@@ -247,10 +247,10 @@ validator peg_out_validator(
               )
             },
           )
-        //The completed_peg_in_txs must not change in value
+        //The completed_peg_in_utxos must not change in value
         let same_completed_peg_outs_value =
           completed_peg_outs_input.output.value == completed_peg_outs_output.value
-        //The completed_peg_in_txs must not change address
+        //The completed_peg_in_utxos must not change address
         let same_completed_peg_outs_address =
           completed_peg_outs_input.output.address == completed_peg_outs_output.address
         //All the pegged out bridged tokens must be burnt

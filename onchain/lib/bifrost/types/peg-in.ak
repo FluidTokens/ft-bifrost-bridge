@@ -20,53 +20,47 @@ pub type PegInDatum {
   //Auth that can then spend this utxo
   owner_auth: AuthorizationMethod,
   //PegInRequest tx to be parsed
-  source_chain_raw_peg_in_tx: Data,
+  source_chain_peg_in_raw_tx: ByteArray,
+  //PegInRequest tx index in the block
+  source_chain_peg_in_raw_tx_index: Int,
+  //Utxo ID of the PegIn in the Taproot address
+  peg_in_utxo_id: ByteArray,
   //The utxo id of the Treasury on the source chain
-  source_chain_treasury_utxo_id: Data,
+  source_chain_treasury_utxo_id: ByteArray,
   //Amount of tokens to PegIn
-  peg_in_amount: Data,
+  peg_in_amount: Int,
+  //Pubkey used by the user to start the PegIn on the source chain
+  user_source_chain_pub_key: ByteArray,
 }
 
 pub type PegInRequest {
-  //Auth that can then spend this utxo
-  owner_auth: AuthorizationMethod,
-  //PegInRequest tx to be parsed
-  source_chain_raw_peg_in_tx: Data,
-  //The utxo id of the Treasury on the source chain
-  source_chain_treasury_utxo_id: Data,
-  //Amount of tokens to PegIn
-  peg_in_amount: Data,
-  //The block header containing the PegInRequests tx TODO Correct type
-  block_header: Data,
+  expected_datum: PegInDatum,
+  //The block header containing the PegInRequests tx
+  block_header: ByteArray,
   //Proof that the passed block header belongs to the source chain
   block_header_in_source_chain_inclusion_proof: mpf.Proof,
-  //Block header mpf root is contained in the datum of this reference input
-  block_header_merkle_tree_ref_input_index: Int,
   //Proof that the PegInRequest belongs to the block header
-  peg_in_request_tx_in_block_header_inclusion_proof: mpf.Proof,
+  tx_in_block_header_inclusion_proof: List<ByteArray>,
 }
 
 pub type PegInMintRedeemer {
   //Input spent during the minting (= creation of the PegInRequests)
   input_ref: OutputReference,
-  config_ref_input_index: Int,
-  //The source chain (eg. Bitcoin) blocks mpf root is contained in the datum of this reference input
-  source_chain_merkle_tree_ref_input_index: Int,
   //One or more PegInRequests that must be created on Cardano
   new_peg_in_requests: List<PegInRequest>,
 }
 
 pub type InputCompletePegIn {
-  //The actual block header containing the Treasury Movement tx TODO Correct type
-  block_header: Data,
-  //Block header mpf root is contained in the datum of this reference input
-  block_header_merkle_tree_ref_input_index: Int,
+  //The actual block header containing the Treasury Movement tx
+  block_header: ByteArray,
   //Proof that the passed block header belongs to the source chain
   block_header_in_source_chain_inclusion_proof: mpf.Proof,
   //Treasury Movement tx to be parsed
-  treasury_movement_raw_tx: Data,
+  treasury_movement_raw_tx: ByteArray,
+  //Treasury Movement tx index in the block
+  treasury_movement_tx_index: Int,
   //Proof that the Treasury Movement tx is included in the block header
-  treasury_movement_tx_inclusion_proof: mpf.Proof,
+  treasury_movement_tx_inclusion_proof: List<ByteArray>,
   //Proof that the PegIn tx is not yet included in the merkle tree of completed PegIns
   peg_in_in_completed_peg_ins_exclusion_proof: mpf.Proof,
 }
@@ -77,9 +71,9 @@ pub type ActionType {
     //Multiple PegIns can be completed in one tx
     per_input_complete_peg_in_info: List<InputCompletePegIn>,
     //Index of the input containing the completed_peg_ins merkle tree
-    completed_peg_in_txs_input_index: Int,
+    completed_peg_in_utxos_input_index: Int,
     //Index of the output containing the completed_peg_ins merkle tree
-    completed_peg_in_txs_output_index: Int,
+    completed_peg_in_utxos_output_index: Int,
     //List of inclusion proofs to insert all the newly completed PegIns
     added_peg_ins_to_completed_peg_ins_inclusion_proofs: List<mpf.Proof>,
     //Redeemer index of the withdraw script that checks for treasury movement and PegIn spent
@@ -89,8 +83,6 @@ pub type ActionType {
 
 pub type PegInWithdrawRedeemer {
   config_ref_input_index: Int,
-  //The source chain (eg. Bitcoin) blocks mpf root is contained in the datum of this reference input
-  source_chain_merkle_tree_ref_input_index: Int,
   //Type of action with the relative additional data
   action_type: ActionType,
 }

@@ -30,3 +30,10 @@ pub type Authorization {
     withdrawals: Pairs<Credential, Int>,
   }
 }
+
+// Binocular oracle ChainState datum
+pub type ChainState {
+  confirmed_blocks_root: ByteArray,
+  ctx: Data,
+  pending: Data,
+}
