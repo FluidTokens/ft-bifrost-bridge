@@ -4,20 +4,22 @@ use aiken/crypto.{VerificationKeyHash}
 use aiken/merkle_patricia_forestry as mpf
 use aiken_design_patterns/stake_validator
 use bifrost/authorizer.{authorize_action, create_auth}
-use bifrost/types/general.{AuthorizationMethod}
+use bifrost/bitcoin
+use bifrost/types/general.{AuthorizationMethod, ChainState}
 use bifrost/types/peg_out.{
   ActionType, Cancel, CompletePegOut, InputCancel, InputCompletePegOut,
   PegOutDatum, PegOutWithdrawRedeemer,
 }
 use bifrost/utils
 use cardano/address.{Credential, Script}
-use cardano/assets.{AssetName, PolicyId, quantity_of}
+use cardano/assets.{AssetName, PolicyId, quantity_of, without_lovelace}
 use cardano/script_context.{ScriptContext}
 use cardano/transaction.{InlineDatum, Output, OutputReference, Transaction}
 
 validator peg_out_validator(
-  configNFTPolicyId: ByteArray,
-  configNFTAssetName: ByteArray,
+  oracle_policy_id: PolicyId,
+  config_nft_policy_id: ByteArray,
+  config_nft_asset_name: ByteArray,
 ) {
   withdraw(
     redeemer: PegOutWithdrawRedeemer,
@@ -30,17 +32,13 @@ validator peg_out_validator(
           self.reference_inputs,
           redeemer.config_ref_input_index,
         ),
-        configNFTPolicyId,
-        configNFTAssetName,
+        config_nft_policy_id,
+        config_nft_asset_name,
       )
     let bridged_token_policy_id =
       builtin.un_b_data(utils.safe_list_at(config, 0))
     let bridged_token_asset_name =
       builtin.un_b_data(utils.safe_list_at(config, 1))
-    let source_chain_merkle_tree_policy_id =
-      builtin.un_b_data(utils.safe_list_at(config, 2))
-    let source_chain_merkle_tree_asset_name =
-      builtin.un_b_data(utils.safe_list_at(config, 3))
     let block_header_merkle_tree_policy_id =
       builtin.un_b_data(utils.safe_list_at(config, 4))
     let block_header_merkle_tree_asset_name =
@@ -58,20 +56,16 @@ validator peg_out_validator(
         self.inputs,
         fn(input) { input.output.address.payment_credential == credential },
       )
-    let source_chain_merkle_tree_ref_input =
-      utils.safe_list_at(
+    //Oracle reference input
+    expect Some(oracle_ref_input) =
+      list.find(
         self.reference_inputs,
-        redeemer.source_chain_merkle_tree_ref_input_index,
+        fn(input) {
+          assets.quantity_of(input.output.value, oracle_policy_id, #"") == 1
+        },
       )
-    //Source chain merkle tree ref input must have the unique NFT
-    expect
-      quantity_of(
-        source_chain_merkle_tree_ref_input.output.value,
-        source_chain_merkle_tree_policy_id,
-        source_chain_merkle_tree_asset_name,
-      ) == 1
-    let source_chain_merkle_tree =
-      utils.get_mpf_from_output(source_chain_merkle_tree_ref_input.output)
+    expect InlineDatum(oracle_raw) = oracle_ref_input.output.datum
+    expect ChainState { confirmed_blocks_root, .. } = oracle_raw
 
     when redeemer.action_type is {
       Cancel { per_input_cancel_info, tmtilasponpvsh_withdraw_redeemer_index } ->
@@ -85,46 +79,36 @@ validator peg_out_validator(
                 bridged_token_policy_id,
                 bridged_token_asset_name,
               )
-            let bridged_tokens_to_peg_out_as_data: Data =
-              bridged_tokens_to_peg_out
             let InputCancel {
               block_header,
-              block_header_merkle_tree_ref_input_index,
               block_header_in_source_chain_inclusion_proof,
               treasury_movement_raw_tx,
+              treasury_movement_tx_index,
               treasury_movement_tx_inclusion_proof,
             } = utils.safe_list_at(per_input_cancel_info, index)
-            let block_header_hash =
-              utils.bitcoin_hash(builtin.un_b_data(block_header))
-            let block_header_merkle_tree_ref_input =
-              utils.safe_list_at(
-                self.reference_inputs,
-                block_header_merkle_tree_ref_input_index,
-              )
+            expect InlineDatum(input_datum) = input.output.datum
+            expect datum: PegOutDatum = input_datum
+            let block_hash = utils.bitcoin_hash(block_header)
             //Block header must belong to the official source chain
             let block_header_included_in_source_chain =
               mpf.has(
-                source_chain_merkle_tree,
-                block_header_hash,
-                block_header_hash,
+                mpf.from_root(confirmed_blocks_root),
+                block_hash,
+                block_hash,
                 block_header_in_source_chain_inclusion_proof,
               )
-            //Block header merkle tree ref input must have the unique NFT
-            expect
-              quantity_of(
-                block_header_merkle_tree_ref_input.output.value,
-                block_header_merkle_tree_policy_id,
-                block_header_merkle_tree_asset_name,
-              ) == 1
-            let block_header_merkle_tree =
-              utils.get_mpf_from_output(
-                block_header_merkle_tree_ref_input.output,
-              )
+
             let treasury_movement_tx_hash =
-              utils.bitcoin_hash(builtin.un_b_data(treasury_movement_raw_tx))
-            expect InlineDatum(input_datum) = input.output.datum
-            expect datum: PegOutDatum = input_datum
-            //PegOut cancel authorized
+              utils.bitcoin_hash(treasury_movement_raw_tx)
+            //Treasury Movement tx must belong to the block
+            let treasury_movement_tx_included_in_block_header =
+              bitcoin.verify_tx_merkle_proof(
+                treasury_movement_tx_hash,
+                treasury_movement_tx_index,
+                treasury_movement_tx_inclusion_proof,
+                bitcoin.block_merkle_root(block_header),
+              )
+            //PegIn completion authorized
             let user_authorized =
               authorize_action(
                 create_auth(
@@ -136,15 +120,7 @@ validator peg_out_validator(
                   self.mint,
                 ),
               )
-            //Treasury Movement tx must belong to block header merkle tree
-            let treasury_movement_tx_included_in_block_header =
-              mpf.has(
-                block_header_merkle_tree,
-                treasury_movement_tx_hash,
-                treasury_movement_tx_hash,
-                treasury_movement_tx_inclusion_proof,
-              )
-            //Prove that the Treasury Movement is legit and dpes NOT produce this PegOut
+            //Prove that the Treasury Movement is legit and does NOT produce this PegOut
             //delegating it to a specific withdraw script
             let tmtilaspisvsh_redeemer <-
               stake_validator.validate_withdraw(
@@ -164,10 +140,18 @@ validator peg_out_validator(
             //doesn't validate.
             let treasury_movement_tx_is_legit_and_does_not_produce_peg_out_utxo =
               and {
-                redeemer_source_chain_treasury_utxo_id == datum.source_chain_treasury_utxo_id,
-                redeemer_source_chain_destination_address == datum.source_chain_destination_address,
-                redeemer_peg_out_amount == bridged_tokens_to_peg_out_as_data,
-                redeemer_treasury_movement_raw_tx == treasury_movement_raw_tx,
+                redeemer_source_chain_treasury_utxo_id == builtin.b_data(
+                  datum.source_chain_treasury_utxo_id,
+                ),
+                redeemer_source_chain_destination_address == builtin.b_data(
+                  datum.source_chain_destination_address,
+                ),
+                redeemer_peg_out_amount == builtin.i_data(
+                  bridged_tokens_to_peg_out,
+                ),
+                redeemer_treasury_movement_raw_tx == builtin.b_data(
+                  treasury_movement_raw_tx,
+                ),
               }
             and {
               user_authorized,
@@ -215,15 +199,15 @@ validator peg_out_validator(
               per_input_complete_peg_out_info,
             ),
           }
-        //Obtain a list of triples (source_chain_peg_out_utxo_id, source_chain_peg_out_utxo_id, proof)
+        //Obtain a list of triples (peg_out_utxo_id, peg_out_utxo_id, proof)
         let peg_out_utxo_hashes_as_key_and_value_and_added_peg_outs_to_completed_peg_outs_inclusion_proofs =
           list.map2(
             per_input_complete_peg_out_info,
             added_peg_out_to_completed_peg_outs_inclusion_proofs,
             fn(peg_out_info, proof) {
               (
-                peg_out_info.source_chain_peg_out_utxo_id,
-                peg_out_info.source_chain_peg_out_utxo_id,
+                peg_out_info.peg_out_utxo_id,
+                peg_out_info.peg_out_utxo_id,
                 proof,
               )
             },
@@ -247,11 +231,13 @@ validator peg_out_validator(
               )
             },
           )
-        //The completed_peg_in_utxos must not change in value
-        let same_completed_peg_outs_value =
-          completed_peg_outs_input.output.value == completed_peg_outs_output.value
-        //The completed_peg_in_utxos must not change address
-        let same_completed_peg_outs_address =
+        //The completed_peg_out_utxos must not change in value
+        let same_completed_peg_out_utxos_value =
+          without_lovelace(completed_peg_outs_input.output.value) == without_lovelace(
+            completed_peg_outs_output.value,
+          )
+        //The completed_peg_out_utxos must not change address
+        let same_completed_peg_out_utxos_address =
           completed_peg_outs_input.output.address == completed_peg_outs_output.address
         //All the pegged out bridged tokens must be burnt
         let all_bridged_tokens_burnt =
@@ -270,53 +256,38 @@ validator peg_out_validator(
                   bridged_token_policy_id,
                   bridged_token_asset_name,
                 )
-              let bridged_tokens_to_peg_out_as_data: Data =
-                bridged_tokens_to_peg_out
               let InputCompletePegOut {
                 block_header,
-                block_header_merkle_tree_ref_input_index,
                 block_header_in_source_chain_inclusion_proof,
                 treasury_movement_raw_tx,
+                treasury_movement_tx_index,
                 treasury_movement_tx_inclusion_proof,
-                source_chain_peg_out_utxo_id,
+                peg_out_utxo_id,
                 peg_out_in_completed_peg_outs_exclusion_proof,
               } = utils.safe_list_at(per_input_complete_peg_out_info, index)
-              let source_chain_peg_out_utxo_id_as_data: Data =
-                source_chain_peg_out_utxo_id
-
               expect InlineDatum(input_datum) = input.output.datum
               expect datum: PegOutDatum = input_datum
 
-              let block_header_hash =
-                utils.bitcoin_hash(builtin.un_b_data(block_header))
-
-              let block_header_merkle_tree_ref_input =
-                utils.safe_list_at(
-                  self.reference_inputs,
-                  block_header_merkle_tree_ref_input_index,
-                )
+              let block_hash = utils.bitcoin_hash(block_header)
               //Block header must belong to the official source chain
               let block_header_included_in_source_chain =
                 mpf.has(
-                  source_chain_merkle_tree,
-                  block_header_hash,
-                  block_header_hash,
+                  mpf.from_root(confirmed_blocks_root),
+                  block_hash,
+                  block_hash,
                   block_header_in_source_chain_inclusion_proof,
                 )
-              //Block header merkle tree ref input must have the unique NFT
-              expect
-                quantity_of(
-                  block_header_merkle_tree_ref_input.output.value,
-                  block_header_merkle_tree_policy_id,
-                  block_header_merkle_tree_asset_name,
-                ) == 1
-              let block_header_merkle_tree =
-                utils.get_mpf_from_output(
-                  block_header_merkle_tree_ref_input.output,
-                )
-              let treasury_movement_tx_hash =
-                utils.bitcoin_hash(builtin.un_b_data(treasury_movement_raw_tx))
 
+              let treasury_movement_tx_hash =
+                utils.bitcoin_hash(treasury_movement_raw_tx)
+              //Treasury Movement tx must belong to the block
+              let treasury_movement_tx_included_in_block_header =
+                bitcoin.verify_tx_merkle_proof(
+                  treasury_movement_tx_hash,
+                  treasury_movement_tx_index,
+                  treasury_movement_tx_inclusion_proof,
+                  bitcoin.block_merkle_root(block_header),
+                )
               //PegIn completion authorized
               let user_authorized =
                 authorize_action(
@@ -329,15 +300,6 @@ validator peg_out_validator(
                     self.mint,
                   ),
                 )
-
-              //Treasury Movement tx must belong to block header merkle tree
-              let treasury_movement_tx_included_in_block_header =
-                mpf.has(
-                  block_header_merkle_tree,
-                  treasury_movement_tx_hash,
-                  treasury_movement_tx_hash,
-                  treasury_movement_tx_inclusion_proof,
-                )
               //Prove that the Treasury Movement is legit and produces the PegOut utxo
               //delegating it to a specific withdraw script
               let tmtilaspopvsh_redeemer <-
@@ -349,7 +311,7 @@ validator peg_out_validator(
               expect [
                 redeemer_source_chain_treasury_utxo_id,
                 redeemer_source_chain_destination_address,
-                redeemer_source_chain_peg_out_utxo_id, redeemer_peg_out_amount,
+                redeemer_peg_out_utxo_id, redeemer_peg_out_amount,
                 redeemer_treasury_movement_raw_tx,
                 ..
               ] = builtin.un_list_data(tmtilaspopvsh_redeemer)
@@ -359,17 +321,26 @@ validator peg_out_validator(
               //doesn't validate.
               let treasury_movement_tx_is_legit_and_produces_peg_out_utxo =
                 and {
-                  redeemer_source_chain_treasury_utxo_id == datum.source_chain_treasury_utxo_id,
-                  redeemer_source_chain_destination_address == datum.source_chain_destination_address,
-                  redeemer_source_chain_peg_out_utxo_id == source_chain_peg_out_utxo_id_as_data,
-                  redeemer_peg_out_amount == bridged_tokens_to_peg_out_as_data,
-                  redeemer_treasury_movement_raw_tx == treasury_movement_raw_tx,
+                  redeemer_source_chain_treasury_utxo_id == builtin.b_data(
+                    datum.source_chain_treasury_utxo_id,
+                  ),
+                  redeemer_source_chain_destination_address == builtin.b_data(
+                    datum.source_chain_destination_address,
+                  ),
+                  redeemer_peg_out_utxo_id == builtin.b_data(peg_out_utxo_id),
+                  redeemer_peg_out_amount == builtin.i_data(
+                    bridged_tokens_to_peg_out,
+                  ),
+                  redeemer_treasury_movement_raw_tx == builtin.b_data(
+                    treasury_movement_raw_tx,
+                  ),
                 }
 
+              //The PegOut must not yet be in the completed_peg_out merkle tree
               let completed_peg_out_exclusion_proven =
                 mpf.miss(
                   input_completed_peg_out_merkle_tree,
-                  source_chain_peg_out_utxo_id,
+                  peg_out_utxo_id,
                   peg_out_in_completed_peg_outs_exclusion_proof,
                 )
 
@@ -385,8 +356,8 @@ validator peg_out_validator(
           peg_out_inputs_and_info_and_proofs_have_same_length,
           added_completed_peg_outs_to_merkle_tree,
           all_bridged_tokens_burnt,
-          same_completed_peg_outs_value,
-          same_completed_peg_outs_address,
+          same_completed_peg_out_utxos_value,
+          same_completed_peg_out_utxos_address,
         }
       }
     }

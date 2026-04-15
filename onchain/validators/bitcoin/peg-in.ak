@@ -234,7 +234,7 @@ validator peg_in_validator(
           ) == 1
         let output_completed_peg_in_merkle_tree =
           utils.get_mpf_from_output(completed_peg_in_utxos_output)
-        //Number of proofs == number of PegIns to complete
+        //Number of proofs == number of PegIns to complete == number of PegIn infos
         let peg_in_inputs_and_proofs_have_same_length = and {
             list.length(added_peg_ins_to_completed_peg_ins_inclusion_proofs) == list.length(
               per_input_complete_peg_in_info,

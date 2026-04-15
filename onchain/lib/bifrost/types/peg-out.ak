@@ -15,37 +15,37 @@ pub type PegOutDatum {
   //Auth that can then spend this utxo
   owner_auth: AuthorizationMethod,
   //The address that will receive the pegged-out tokens on the source chain
-  source_chain_destination_address: Data,
+  source_chain_destination_address: ByteArray,
   //The utxo id of the Treasury on the source chain
-  source_chain_treasury_utxo_id: Data,
+  source_chain_treasury_utxo_id: ByteArray,
 }
 
 pub type InputCancel {
   //The actual block header containing the Treasury Movement tx TODO Correct type
-  block_header: Data,
-  //Block header mpf root is contained in the datum of this reference input
-  block_header_merkle_tree_ref_input_index: Int,
+  block_header: ByteArray,
   //Proof that the passed block header belongs to the source chain
   block_header_in_source_chain_inclusion_proof: mpf.Proof,
   //Treasury Movement tx to be parsed
-  treasury_movement_raw_tx: Data,
+  treasury_movement_raw_tx: ByteArray,
+  //Treasury Movement tx index in the block
+  treasury_movement_tx_index: Int,
   //Proof that the Treasury Movement tx is included in the block header
-  treasury_movement_tx_inclusion_proof: mpf.Proof,
+  treasury_movement_tx_inclusion_proof: List<ByteArray>,
 }
 
 pub type InputCompletePegOut {
   //The actual block header containing the Treasury Movement tx TODO Correct type
-  block_header: Data,
-  //Block header mpf root is contained in the datum of this reference input
-  block_header_merkle_tree_ref_input_index: Int,
+  block_header: ByteArray,
   //Proof that the passed block header belongs to the source chain
   block_header_in_source_chain_inclusion_proof: mpf.Proof,
   //Treasury Movement tx to be parsed
-  treasury_movement_raw_tx: Data,
+  treasury_movement_raw_tx: ByteArray,
+  //Treasury Movement tx index in the block
+  treasury_movement_tx_index: Int,
   //Proof that the Treasury Movement tx is included in the block header
-  treasury_movement_tx_inclusion_proof: mpf.Proof,
+  treasury_movement_tx_inclusion_proof: List<ByteArray>,
   //Treasury Movement PegOut utxo id on the source chain
-  source_chain_peg_out_utxo_id: ByteArray,
+  peg_out_utxo_id: ByteArray,
   //Proof that the PegOut tx is not yet included in the merkle tree of completed PegOuts
   peg_out_in_completed_peg_outs_exclusion_proof: mpf.Proof,
 }
@@ -73,8 +73,6 @@ pub type ActionType {
 
 pub type PegOutWithdrawRedeemer {
   config_ref_input_index: Int,
-  //The source chain (eg. Bitcoin) blocks mpf root is contained in the datum of this reference input
-  source_chain_merkle_tree_ref_input_index: Int,
   //Type of action with the relative additional data
   action_type: ActionType,
 }
