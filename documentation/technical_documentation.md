@@ -615,7 +615,7 @@ If the TM is malformed or omits a peg-out, recovery paths on Cardano unwind the 
 
 ### Post signed TM as `Unconfirmed TM tx` (Cardano)
 
-**Purpose**: publish the signed Bitcoin TM transaction on Cardano so watchtowers can relay it to Bitcoin. This creates the TM UTxO in its initial `Unconfirmed` state — **not** yet usable by mint-fBTC or burn-fBTC, which only reference `Confirmed TM tx` (produced later by Promote).
+**Purpose**: publish the signed Bitcoin TM transaction on Cardano so watchtowers can relay it to Bitcoin. This creates the TM UTxO in its initial `Unconfirmed` state — **not** yet usable by mint-fBTC or burn-fBTC, which only reference `Confirmed TM tx` (produced later by the Confirm TM tx transition).
 
 **Who**: a current-roster SPO (typically the elected leader, per the leader-election rule).
 **Trigger**: the signing cascade produced a valid signed Bitcoin tx.
@@ -647,18 +647,18 @@ flowchart LR
 
 **Checks delegated off-chain**
 
-* `signed_btc_tx` is a well-formed Bitcoin tx with valid signatures that sweeps the frozen PegInRequest / PegOut batch. If malformed, it fails to confirm on Bitcoin and Promote never fires — a correct resubmission is required. The peg-in and peg-out sets are implicit in `signed_btc_tx` (Promote parses them out).
+* `signed_btc_tx` is a well-formed Bitcoin tx with valid signatures that sweeps the frozen PegInRequest / PegOut batch. If malformed, it fails to confirm on Bitcoin and Confirm TM tx never fires — a correct resubmission is required. The peg-in and peg-out sets are implicit in `signed_btc_tx` (Confirm TM tx parses them out).
 
-### Promote TM to `Confirmed TM tx` (Cardano)
+### Confirm TM tx (Cardano)
 
-**Purpose**: once the posted TM is confirmed on Bitcoin, transition the TM UTxO from `Unconfirmed` to `Confirmed`. This is the one place the Binocular proof is checked; every downstream mint-fBTC / burn-fBTC reads `Confirmed TM tx` and skips Binocular entirely. Promote does **not** touch `treasury.ak`: key rotation is done in a separate Update-Y transaction after DKG, and the current treasury BTC UTxO pointer is tracked off-chain by SPOs.
+**Purpose**: once the posted TM is confirmed on Bitcoin, transition the TM UTxO from `Unconfirmed` to `Confirmed`. This is the one place the Binocular proof is checked; every downstream mint-fBTC / burn-fBTC reads `Confirmed TM tx` and skips Binocular entirely. Confirm TM tx does **not** touch `treasury.ak`: key rotation is done in a separate Update-Y transaction after DKG, and the current treasury BTC UTxO pointer is tracked off-chain by SPOs.
 
 **Who**: anyone — typically a watchtower.
 **Trigger**: the TM is Binocular-confirmed (≥100 Bitcoin blocks + 200 min challenge).
 
 ```mermaid
 flowchart LR
-  unconf["Unconfirmed TM tx UTxO"] --> tx{{"Promote → Confirmed TM tx"}}
+  unconf["Unconfirmed TM tx UTxO"] --> tx{{"Confirm TM tx"}}
   prover["Prover UTxO (fees)"] --> tx
   binoc[["Binocular Oracle<br/>(reference)"]] -. ref .-> tx
   tx --> conf["Confirmed TM tx UTxO<br/>@ treasury_movement.ak<br/>datum: { btc_txid, epoch,<br/>swept_peg_in_utxo_ids,<br/>fulfilled_peg_outs }"]
@@ -680,7 +680,7 @@ flowchart LR
 
 **Checks enforced on-chain**
 
-* `blake2b(Unconfirmed.signed_btc_tx) == btc_txid` (identifies the tx we're Promoting).
+* `blake2b(Unconfirmed.signed_btc_tx) == btc_txid` (identifies the tx we're confirming).
 * `btc_txid` is Merkle-included in the supplied block header.
 * That block header is in Binocular's confirmed-chain root.
 * `Confirmed` datum fields (`swept_peg_in_utxo_ids`, `fulfilled_peg_outs`) are populated by parsing the inputs and outputs of `Unconfirmed.signed_btc_tx` respectively. The old treasury input and the new treasury output are included in these lists — they are inert, because no PegInRequest can satisfy the depositor Schnorr-sig check against the TM tx's inputs (no `BFR` OP_RETURN), and no PegOut will match the new treasury destination + amount.
@@ -693,7 +693,7 @@ Confirmed UTxOs are drained (and can eventually be garbage-collected) once every
 **Purpose**: mint fBTC to the depositor's chosen Cardano address. This is the gate where the depositor's identity and non-double-mint are checked.
 
 **Who**: the depositor (proving ownership with a Bitcoin Schnorr signature).
-**Trigger**: the TM that swept this peg-in has been Promoted to `Confirmed`.
+**Trigger**: the TM that swept this peg-in has been confirmed (a `Confirmed TM tx` UTxO exists).
 
 ```mermaid
 flowchart LR
@@ -731,10 +731,10 @@ flowchart LR
 
 ### Complete peg-out / burn fBTC (Cardano)
 
-**Purpose**: unlock the PegOut UTxO once the TM that fulfilled it has been Promoted — burning the locked fBTC and returning MIN_ADA to the withdrawer.
+**Purpose**: unlock the PegOut UTxO once the TM that fulfilled it has been confirmed — burning the locked fBTC and returning MIN_ADA to the withdrawer.
 
 **Who**: anyone (permissionless clean-up).
-**Trigger**: the TM that paid this peg-out has been Promoted to `Confirmed`.
+**Trigger**: the TM that paid this peg-out has been confirmed (a `Confirmed TM tx` UTxO exists).
 
 ```mermaid
 flowchart LR
