@@ -424,6 +424,7 @@ flowchart LR
 | **Outputs** | Peg-in UTxO at Taproot address $Q$ (holds the BTC to be bridged); OP_RETURN `"BFR" ‖ depositor_pubkey_hash` (23 bytes); optional change → depositor |
 | **Signer** | depositor (their Bitcoin keys) |
 | **Validity** | standard Bitcoin transaction |
+| **Size (est.)** | ~220 vB (1 P2WPKH input + 3 outputs: P2TR peg-in ~43 B, OP_RETURN ~34 B, P2WPKH change ~31 B) |
 
 **Taproot address $Q$** (see **Taproot address construction** for the full derivation)
 
@@ -472,6 +473,7 @@ flowchart LR
 | **Outputs** | N × PegInRequest UTxO — each holds one NFT + MIN_ADA; datum = `{ raw BTC peg-in tx, owner_auth }` |
 | **Witness data (redeemer)** | for each of the N requests: Merkle proof BTC tx ∈ block header; Merkle proof block header ∈ Binocular confirmed-chain root |
 | **Validity interval** | unconstrained |
+| **Size (est.)** | ~2 KB for N=1; up to ~16 KB for N=10 (batch ceiling). See **Size estimation and batch ceiling** below. |
 
 **Checks enforced on-chain** (per minted NFT, independently)
 
@@ -547,6 +549,7 @@ flowchart LR
 | **Outputs** | PegOut UTxO @ `peg_out.ak` — holds the locked fBTC + MIN_ADA; datum = `{ btc_destination_scriptPubKey, owner_auth }` |
 | **Witness data (redeemer)** | — (a plain payment to a script address; the validator runs only on spend) |
 | **Validity interval** | unconstrained |
+| **Size (est.)** | ~0.5 KB (no script execution; fee ≈ 0.18 ADA) |
 
 **Checks enforced on-chain**
 
@@ -590,6 +593,7 @@ flowchart LR
 | **Outputs** | New Treasury UTxO at the new roster's $Q_{treasury}$ + one payment output per PegOut (pays `btc_destination_scriptPubKey` with `amount`) |
 | **Witness** | FROST aggregated Schnorr signature(s) per the chosen variant |
 | **Validity** | CSV timelock enforced on inputs only in the federation variant |
+| **Size (est.)** | **Hard-capped at ~15 KB raw bytes** — the signed TM is carried in the Cardano Post-TM datum, which must fit the 16 KB Cardano tx limit. Per-variant max batch: ~100 peg-ins + ~100 peg-outs (51% key-path, ~107 B/input); ~98+98 (67% aspirational); ~57+57 (federation — script-path + CSV on every input, ~213 B/input). Beyond these, SPOs split across multiple TMs (see line above). |
 
 **Signing-path variants** (chosen by the signing cascade; see **Spending paths and Treasury Movement variants**)
 
@@ -634,6 +638,7 @@ flowchart LR
 | **Outputs** | `Unconfirmed TM tx` UTxO @ `treasury_movement.ak`; datum = `{ signed_btc_tx }` |
 | **Validity interval** | before the epoch's TM submission deadline |
 | **Required signers** | poster SPO (current roster) |
+| **Size (est.)** | ~10.5–15.5 KB depending on the signing variant and batch size (datum carries the full signed BTC tx, up to ~15 KB). The **16 KB Cardano tx limit is the binding constraint**, and it drives the per-variant max batch sizes listed under *Treasury Movement (Bitcoin)* above. Fee ≈ 0.67 ADA at ~10.5 KB; ≈ 0.9 ADA near the 15 KB ceiling. |
 
 **Checks enforced on-chain**
 
@@ -646,7 +651,7 @@ flowchart LR
 
 ### Promote TM to `Confirmed TM tx` (Cardano)
 
-**Purpose**: once the posted TM is confirmed on Bitcoin, transition the TM UTxO from `Unconfirmed` to `Confirmed` and **atomically** advance `treasury.ak` to the new-epoch state. This is the one place the Binocular proof is checked; every downstream mint-fBTC / burn-fBTC reads `Confirmed TM tx` and skips Binocular entirely.
+**Purpose**: once the posted TM is confirmed on Bitcoin, transition the TM UTxO from `Unconfirmed` to `Confirmed`. This is the one place the Binocular proof is checked; every downstream mint-fBTC / burn-fBTC reads `Confirmed TM tx` and skips Binocular entirely. Promote does **not** touch `treasury.ak`: key rotation is done in a separate Update-Y transaction after DKG, and the current treasury BTC UTxO pointer is tracked off-chain by SPOs.
 
 **Who**: anyone — typically a watchtower.
 **Trigger**: the TM is Binocular-confirmed (≥100 Bitcoin blocks + 200 min challenge).
@@ -654,11 +659,9 @@ flowchart LR
 ```mermaid
 flowchart LR
   unconf["Unconfirmed TM tx UTxO"] --> tx{{"Promote → Confirmed TM tx"}}
-  tres_in["treasury.ak UTxO"] --> tx
   prover["Prover UTxO (fees)"] --> tx
   binoc[["Binocular Oracle<br/>(reference)"]] -. ref .-> tx
   tx --> conf["Confirmed TM tx UTxO<br/>@ treasury_movement.ak<br/>datum: { btc_txid, epoch,<br/>swept_peg_in_utxo_ids,<br/>fulfilled_peg_outs }"]
-  tx --> tres_out["treasury.ak UTxO′<br/>(new Y₅₁/Y₆₇, new treasury BTC UTxO)"]
   tx --> change["Change → prover"]
 ```
 
@@ -666,25 +669,24 @@ flowchart LR
 
 | Role | Content |
 |------|---------|
-| **Inputs** | `Unconfirmed TM tx` UTxO; current `treasury.ak` UTxO; Prover UTxO (fees) |
+| **Inputs** | `Unconfirmed TM tx` UTxO; Prover UTxO (fees) |
 | **Reference inputs** | Binocular Oracle — supplies the confirmed-chain root |
 | **Mint** | — (the TM NFT is carried over to the Confirmed output) |
-| **Outputs** | `Confirmed TM tx` UTxO @ `treasury_movement.ak` — datum = `{ btc_txid, epoch, swept_peg_in_utxo_ids, fulfilled_peg_outs: [{scriptPubKey, amount}] }`; updated `treasury.ak` with the new roster keys and new treasury BTC UTxO pointer |
-| **Witness data (redeemer)** | raw BTC tx bytes; Merkle proof of its txid in a BTC block header; Binocular inclusion proof of that block header |
+| **Outputs** | `Confirmed TM tx` UTxO @ `treasury_movement.ak` — datum = `{ btc_txid, epoch, swept_peg_in_utxo_ids, fulfilled_peg_outs: [{scriptPubKey, amount}] }` |
+| **Witness data (redeemer)** | Merkle proof of `btc_txid` in a BTC block header; Binocular inclusion proof of that block header (the raw BTC tx itself is read from the consumed `Unconfirmed` datum, not duplicated) |
 | **Validity interval** | unconstrained |
 | **Required signers** | prover (fee spend) — permissionless |
+| **Size (est.)** | ~9 KB at 100+100: redeemer ~1 KB (two proofs at ~500–600 B each); `Confirmed` output datum ~7 KB (100 swept peg-ins + 100 fulfilled peg-outs). **Primary constraint is exec-unit memory** for parsing the raw BTC tx on-chain, not byte size. Fee ≈ 0.7 ADA. |
 
 **Checks enforced on-chain**
 
-* The raw BTC tx provided in the redeemer hashes to `Unconfirmed.signed_btc_tx` (so we're parsing the very tx that was posted).
-* Its `btc_txid` is Merkle-included in the supplied block header, and that block header is in Binocular's confirmed-chain root.
-* The BTC tx's inputs include the old treasury BTC UTxO pointer (from `treasury.ak`); the remaining inputs are parsed as `swept_peg_in_utxo_ids`.
-* The BTC tx's outputs are split: one new-treasury output (paying $Q_{treasury}$ for the new roster) and the rest are parsed as `fulfilled_peg_outs`.
-* `Confirmed` datum fields (`btc_txid`, `swept_peg_in_utxo_ids`, `fulfilled_peg_outs`) are populated from the parse above.
-* `treasury.ak` advances: new $Y_{51}$ / $Y_{67}$, new treasury BTC UTxO pointer. The completed-peg-ins MPT root is unchanged here — peg-in insertions are lazy, done per mint-fBTC.
+* `blake2b(Unconfirmed.signed_btc_tx) == btc_txid` (identifies the tx we're Promoting).
+* `btc_txid` is Merkle-included in the supplied block header.
+* That block header is in Binocular's confirmed-chain root.
+* `Confirmed` datum fields (`swept_peg_in_utxo_ids`, `fulfilled_peg_outs`) are populated by parsing the inputs and outputs of `Unconfirmed.signed_btc_tx` respectively. The old treasury input and the new treasury output are included in these lists — they are inert, because no PegInRequest can satisfy the depositor Schnorr-sig check against the TM tx's inputs (no `BFR` OP_RETURN), and no PegOut will match the new treasury destination + amount.
 * TM NFT is carried from the Unconfirmed input to the Confirmed output (preserving identity).
 
-Confirmed UTxOs are drained (and can eventually be garbage-collected) once every entry in `swept_peg_in_utxo_ids` has been minted and every entry in `fulfilled_peg_outs` has been burned.
+Confirmed UTxOs are drained (and can eventually be garbage-collected) once every claimable peg-in in `swept_peg_in_utxo_ids` has been minted and every peg-out in `fulfilled_peg_outs` has been burned.
 
 ### Complete peg-in / mint fBTC (Cardano)
 
@@ -715,6 +717,7 @@ flowchart LR
 | **Witness data (redeemer)** | depositor's x-only BTC pubkey + Schnorr signature; non-inclusion proof of peg-in in the current MPT + updated-root proof |
 | **Validity interval** | unconstrained |
 | **Required signers** | depositor (fee spend) |
+| **Size (est.)** | ~2.7 KB per mint: redeemer ~1.3 KB (Schnorr sig + pubkey + two MPT proofs at ~600 B each); input datum ~500 B (PegInRequest). Fee ≈ 0.37 ADA. Membership check against `swept_peg_in_utxo_ids` scales with list length (up to 100 entries). |
 
 **Checks enforced on-chain**
 
@@ -753,6 +756,7 @@ flowchart LR
 | **Witness data (redeemer)** | index of the matching entry in `Confirmed.fulfilled_peg_outs` |
 | **Validity interval** | unconstrained |
 | **Required signers** | executor (fee spend) — permissionless |
+| **Size (est.)** | ~0.8 KB: redeemer is just an index (~15 B); small input datums. Fee ≈ 0.22 ADA. |
 
 **Checks enforced on-chain**
 
