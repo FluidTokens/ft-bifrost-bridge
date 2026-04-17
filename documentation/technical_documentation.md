@@ -723,7 +723,17 @@ flowchart LR
 
 * Referenced `Confirmed TM tx` UTxO carries a legitimate TM NFT.
 * PegInRequest's `peg_in_utxo_id` appears in `Confirmed.swept_peg_in_utxo_ids`.
-* Depositor's Schnorr signature is valid over `Confirmed.btc_txid`, using the x-only pubkey whose `HASH160` equals the `depositor_pubkey_hash` embedded in `source_chain_peg_in_raw_tx`. *This is what proves the depositor — not a watchtower — is claiming the fBTC.*
+* Depositor's Schnorr signature is valid over the **per-mint signing message**, using the x-only pubkey whose `HASH160` equals the `depositor_pubkey_hash` embedded in `source_chain_peg_in_raw_tx`. *This is what proves the depositor — not a watchtower — is claiming the fBTC.*
+
+  The signing message is a blake2b hash of:
+
+  ```
+  sig_msg = "BFR-mint-v1" ‖ Confirmed.btc_txid ‖ peg_in_utxo_id ‖ chosen_cardano_address
+  ```
+
+  * `"BFR-mint-v1"` — domain-separation tag (BIP340 practice).
+  * `peg_in_utxo_id` — binds the signature to **this specific peg-in**. Without it, if a depositor reused the same BTC pubkey across multiple peg-ins in the same TM, publishing the signature to claim one would let an attacker replay it to claim the others.
+  * `chosen_cardano_address` — binds the signature to the **destination the depositor chose**. Prevents reorg-based front-running where an attacker replays the signature with their own Cardano address after a short chain reorganisation of the depositor's mint tx.
 * Peg-in is **not yet** in the completed-peg-ins MPT (non-inclusion proof).
 * Peg-in **is** in the new MPT root in the output (prevents double-mint).
 * fBTC minted equals the amount parsed from the raw BTC peg-in tx.
