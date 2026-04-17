@@ -30,18 +30,21 @@ fn get_fault_proof_datum(output: Output) -> FaultProofDatum {
   datum
 }
 
-fn get_fault_proof_pool_id(
+fn get_fault_proof_info(
   input: Input,
   fault_proof_policy_id: PolicyId,
-) -> ByteArray {
-  expect Pair(pool_id, 1) =
+) -> (ByteArray, Int) {
+  expect Pair(token_name, 1) =
     utils.get_singleton_asset_with_policy(
       input.output.value,
       fault_proof_policy_id,
     )
   expect _fault = get_fault_proof_datum(input.output)
-  expect True = bytearray.length(pool_id) == 28
-  pool_id
+  expect True = bytearray.length(token_name) == 32
+  (
+    bytearray.take(token_name, 28),
+    bytearray.drop(token_name, 28) |> bytearray.to_int_big_endian,
+  )
 }
 
 fn get_ban_node_data(output: Output) -> spo_bans_types.BanNodeData {
@@ -141,13 +144,13 @@ fn has_valid_ban_auth_asset(value: Value, own_hash: PolicyId) -> Bool {
 
 fn fault_proof_burn_ok(
   self: Transaction,
-  fault_pool_id: ByteArray,
+  fault_token_name: ByteArray,
   fault_proof_policy_id: PolicyId,
 ) -> Bool {
   expect [Pair(burnt_fault_token_name, -1)] =
     dict.to_pairs(tokens(self.mint, fault_proof_policy_id))
 
-  burnt_fault_token_name == fault_pool_id
+  burnt_fault_token_name == fault_token_name
 }
 
 fn pow2(exponent: Int) -> Int {
@@ -212,6 +215,7 @@ fn repeated_ban_transition_ok(
   self: Transaction,
   own_hash: PolicyId,
   pool_id: ByteArray,
+  fault_epoch: Int,
   existing_ban_input_index: Int,
   ban_node_output_index: Int,
   current_epoch: Int,
@@ -234,7 +238,7 @@ fn repeated_ban_transition_ok(
         lovelace_change == 0,
         node_key == Some(pool_id),
         old_ban_data.ban_counter >= 1,
-        current_epoch > old_ban_data.ban_until_epoch -
+        fault_epoch > old_ban_data.ban_until_epoch -
           pow2(old_ban_data.ban_counter - 1),
         new_ban_data == spo_bans_types.BanNodeData {
           ban_counter: old_ban_data.ban_counter + 1,
@@ -341,8 +345,14 @@ validator spo_bans(
     let registration_ref_input =
       utils.safe_list_at(self.reference_inputs, registration_ref_input_index)
     let fault_input = utils.safe_list_at(self.inputs, fault_input_index)
-    let fault_pool_id =
-      get_fault_proof_pool_id(fault_input, fault_proof_policy_id)
+    let fault_token_name =
+      utils.get_singleton_asset_with_policy(
+        fault_input.output.value,
+        fault_proof_policy_id,
+      )
+        |> fn(Pair(token_name, _quantity)) { token_name }
+    let (fault_pool_id, fault_epoch) =
+      get_fault_proof_info(fault_input, fault_proof_policy_id)
 
     when existing_ban_input_index is {
       Some(index) -> {
@@ -353,12 +363,13 @@ validator spo_bans(
             fault_pool_id,
           ),
           current_epoch >= 0,
-          fault_proof_burn_ok(self, fault_pool_id, fault_proof_policy_id),
+          fault_proof_burn_ok(self, fault_token_name, fault_proof_policy_id),
           utils.quantity_of_policy_id(self.mint, own_hash) == 0,
           repeated_ban_transition_ok(
             self,
             own_hash,
             fault_pool_id,
+            fault_epoch,
             index,
             ban_node_output_index,
             current_epoch,
@@ -375,7 +386,7 @@ validator spo_bans(
             fault_pool_id,
           ),
           current_epoch >= 0,
-          fault_proof_burn_ok(self, fault_pool_id, fault_proof_policy_id),
+          fault_proof_burn_ok(self, fault_token_name, fault_proof_policy_id),
           quantity_of(self.mint, own_hash, token_name) == 1,
           first_ban_transition_ok(
             self,

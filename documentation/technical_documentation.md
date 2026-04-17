@@ -78,7 +78,7 @@ This section collects the acronyms, protocol terms, on-chain validators, mathema
 * **Eligible roster**: `registration_list \ active_ban_list` for the current epoch.
 * **Epoch boundary**: Cardano epoch transition; the moment registration snapshots, stake distribution snapshots, and roster handoffs occur.
 * **Equivocation**: two distinct signed payloads from the same SPO under the same `namespace_hash`.
-* **FaultProof token**: singleton NFT minted by `fault_verifier.ak` after a direct fault is established. Its token name is the accused SPO's `pool_id`, and `spo_bans.ak` consumes it to apply a ban.
+* **FaultProof token**: singleton NFT minted by `fault_verifier.ak` after a direct fault is established. Its token name is `pool_id || epoch_u32_be`, and `spo_bans.ak` consumes it to apply a ban.
 * **Federation / $Y_{federation}$**: pre-defined fallback signing entity used for emergency Treasury Movement signing.
 * **Group public key ($Y$, $Y_{51}$, $Y_{67}$)**: FROST aggregate public keys produced by the DKG.
 * **Inclusion / Non-inclusion proof**: cryptographic proof that an item is (or is not) in a Merkle/MPT structure.
@@ -766,7 +766,7 @@ where `active_ban_list(E)` contains all `pool_id`s whose ban entry satisfies `ba
 }
 ```
 
-The `FaultProof` token name is exactly the accused SPO's `pool_id`.
+The `FaultProof` token name is `pool_id || epoch_u32_be`, where `epoch_u32_be` is the fault epoch encoded as a 4-byte big-endian unsigned integer.
 
 `namespace_hash` is the hash of the protocol namespace in which the fault occurred:
 
@@ -777,11 +777,11 @@ blake2b_256(phase || epoch || threshold_or_mode || attempt || txid?)
 For DKG namespaces, `txid` is omitted. Other scripts reference or spend this verifier UTxO instead of replaying the original proof or challenge evidence.
 
 **Ban transaction format**: the ban transaction is permissionless and:
-1. Spends a `FaultProof` token verifier UTxO whose token name is the targeted registration `pool_id`.
+1. Spends a `FaultProof` token verifier UTxO whose token name encodes both the targeted registration `pool_id` and the fault epoch.
 2. References the accused SPO's registration node to bind the fault to an existing `pool_id`.
 3. Spends the appropriate anchor element of the ban linked-list (the root UTxO for the first ban on a branch, otherwise an existing node), plus the existing ban node for this `pool_id` if one already exists.
 4. Inserts or updates the ban node with the incremented `ban_counter` and `ban_until_epoch = current_epoch + 2^(ban_counter - 1)`.
-5. Rejects a second ban for the same `pool_id` in the same epoch.
+5. Rejects a repeated ban unless the `FaultProof` token's encoded fault epoch is strictly greater than the previously punished epoch for that `pool_id`. In particular, a participant cannot be banned twice for the same epoch.
 6. Leaves the Membership Token and registration node untouched while recording the updated ban state in the ban linked-list.
 
 **Prototype transaction skeletons**:
@@ -812,7 +812,7 @@ Mint:
 
 Burn:
 - under `fault_verifier.ak`:
-  - `pool_id` => -1
+  - `pool_id || epoch_u32_be` => -1
 
 Outputs:
 - continued ban anchor output
@@ -856,7 +856,7 @@ Mint:
 
 Burn:
 - under `fault_verifier.ak`:
-  - `pool_id` => -1
+  - `pool_id || epoch_u32_be` => -1
 
 Outputs:
 - continued ban node output
@@ -1116,7 +1116,7 @@ Misbehavior verification is separated from ban-list updates. `fault_verifier.ak`
 }
 ```
 
-The `FaultProof` token name is exactly the accused SPO's `pool_id`.
+The `FaultProof` token name is `pool_id || epoch_u32_be`, where `epoch_u32_be` is the fault epoch encoded as a 4-byte big-endian unsigned integer.
 
 `namespace_hash = blake2b_256(phase || epoch || threshold_or_mode || attempt || txid?)`, where `txid` is omitted for DKG namespaces. Other scripts spend or reference this UTxO rather than re-verifying the raw evidence.
 
@@ -1136,7 +1136,7 @@ Withdrawals:
 
 Mint:
 - under `fault_verifier.ak`:
-  - `pool_id` => +1
+  - `pool_id || epoch_u32_be` => +1
 
 Burn:
 - none
