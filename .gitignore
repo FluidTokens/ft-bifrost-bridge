@@ -5,3 +5,6 @@ CLAUDE.md
 proofs/.lake/
 AGENTS.md
 .codex/
+node_modules/
+mermaid-filter.err
+documentation/.git-info.tex

@@ -25,7 +25,7 @@
             aiken
             nixpkgs-fmt
             nodejs
-            nodePackages.mermaid-cli
+            mermaid-cli
             texliveFull
             pandoc
             elan

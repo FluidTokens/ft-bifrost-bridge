@@ -577,10 +577,10 @@ The peg-out **amount** is simply the fBTC quantity held in the UTxO's value — 
 
 ```mermaid
 flowchart LR
-  tres_in["Current Treasury UTxO"] --> tx{{"Treasury Movement (Bitcoin)"}}
+  tres_in["Treasury UTxO"] --> tx{{"Treasury Movement"}}
   pin1["Peg-in UTxO #1"] --> tx
   pinN["Peg-in UTxO #N"] --> tx
-  tx --> tres_out["New Treasury UTxO<br/>@ Q_treasury (new roster)"]
+  tx --> tres_out["New Treasury UTxO<br/>"]
   tx --> pay1["PegOut payment #1<br/>→ scriptPubKey"]
   tx --> payM["PegOut payment #M<br/>→ scriptPubKey"]
 ```
