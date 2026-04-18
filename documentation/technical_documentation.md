@@ -428,7 +428,7 @@ flowchart LR
 
 **Taproot address $Q$** (see **Taproot address construction** for the full derivation)
 
-$Q = Y_{51} + \text{tagged\_hash}(\text{"TapTweak"}, Y_{51} \| \text{merkle\_root}) \cdot G$
+`Q = Y_51 + tagged_hash("TapTweak", Y_51 || merkle_root) · G`
 
 where the script tree has two leaves:
 
