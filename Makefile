@@ -1,13 +1,13 @@
 # Bifrost Bridge — documentation build targets
 #
 # Usage:
-#   make diagrams          build all .mmd → .png
+#   make diagrams          build all .mmd → .png (high-res)
 #   make diagram-FOO       build documentation/diagrams/FOO.mmd only
 #   make whitepaper              build whitepaperV1.pdf
 #   make docs              build everything (diagrams first, then PDFs)
 #   make clean             remove generated images and PDFs
 
-MMDC       := mmdc
+MMDC       := ./node_modules/.bin/mmdc
 PANDOC     := pandoc
 MERMAID_FILTER := ./node_modules/.bin/mermaid-filter
 
@@ -17,6 +17,15 @@ DOC_DIR    := documentation
 
 MMD_SRCS   := $(wildcard $(DIAG_DIR)/*.mmd)
 MMD_PNGS   := $(patsubst $(DIAG_DIR)/%.mmd,$(IMG_DIR)/%.png,$(MMD_SRCS))
+
+# Scale factor for mermaid PNG rendering — bump for higher density in PDF
+MMDC_SCALE := 6
+
+# Env vars that control inline ```mermaid block rendering by mermaid-filter
+MERMAID_FILTER_ENV := MERMAID_FILTER_FORMAT=png \
+  MERMAID_FILTER_WIDTH=2400 \
+  MERMAID_FILTER_SCALE=3 \
+  MERMAID_FILTER_BACKGROUND=white
 
 WHITEPAPER := $(DOC_DIR)/whitepaperV1.pdf
 
@@ -59,10 +68,10 @@ clean:
 # ── Pattern rules ──────────────────────────────────────────────
 
 $(IMG_DIR)/%.png: $(DIAG_DIR)/%.mmd | $(IMG_DIR)
-	$(MMDC) -i $< -o $@ -b white -s 4
+	$(MMDC) -i $< -o $@ -b white -s $(MMDC_SCALE)
 
 $(WHITEPAPER): $(DOC_DIR)/technical_documentation.md $(MMD_PNGS) $(MERMAID_FILTER) $(HEADER_TEX) git-info | $(IMG_DIR)
-	$(PANDOC) $(PANDOC_FLAGS) -o $@ $<
+	$(MERMAID_FILTER_ENV) $(PANDOC) $(PANDOC_FLAGS) -o $@ $<
 
 $(MERMAID_FILTER): package.json
 	npm install

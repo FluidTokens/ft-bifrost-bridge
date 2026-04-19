@@ -119,16 +119,15 @@ This section collects the acronyms, protocol terms, on-chain validators, mathema
 
 Source code for all validators listed here is published in the Bifrost on-chain repository [5].
 
-| Validator              | Role                                                                                                                    |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `spos_registry.ak`     | Pool-scoped registration linked-list; mints membership tokens and validates registration / deregistration.         |
-| `spo_bans.ak`          | Pool-scoped ban linked-list; applies exponential-timeout bans by consuming verified `FaultProof` tokens.         |
-| `fault_verifier.ak`    | Verifies invalid-payload (Plonk ZK) and equivocation evidence; mints `FaultProof` tokens.                           |
-| `peg_in.ak`            | Holds PegInRequest UTxOs created from confirmed Bitcoin deposits.                                                    |
-| `peg_out.ak`           | Holds PegOut UTxOs from withdrawers; consumed once the TM is confirmed on Bitcoin.                                   |
+| Validator              | Role                                                                                                                                              |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| `spos_registry.ak`     | Pool-scoped registration and ban linked-lists; consumes `FaultToken`s to apply bans.                                                              |
+| `fault_verifier.ak`    | Verifies invalid-payload (Plonk ZK) and equivocation evidence; mints `FaultToken`s.                                                               |
+| `peg_in.ak`            | Holds PegInRequest UTxOs created from confirmed Bitcoin deposits.                                                                                 |
+| `peg_out.ak`           | Holds PegOut UTxOs from withdrawers; consumed once the TM is confirmed on Bitcoin.                                                                |
 | `treasury.ak`          | Stores the Treasury state UTxO, including current $Y_{67}$, $Y_{51}$, $Y_{federation}$, the completed peg-ins MPT, and the Bifrost identity root. |
-| `treasury_movement.ak` | Stores SPO-signed Bitcoin TM transactions for watchtower relay; enforces leader-election rules.                      |
-| `bridged_asset.ak`     | fBTC mint/burn policy; verifies TM-confirmed peg-in sweeps and Schnorr-signed depositor claims.                      |
+| `treasury_movement.ak` | Stores SPO-signed Bitcoin TM transactions for watchtower relay; enforces leader-election rules.                                                   |
+| `bridged_asset.ak`     | fBTC mint/burn policy; verifies TM-confirmed peg-in sweeps and Schnorr-signed depositor claims.                                                   |
 
 ### Mathematical notation
 
