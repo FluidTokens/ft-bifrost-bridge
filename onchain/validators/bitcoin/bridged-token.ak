@@ -1,19 +1,13 @@
 use aiken/builtin
 use aiken/collection/dict
 use aiken/collection/list
-use aiken/crypto.{VerificationKeyHash}
-use aiken/option
 use bifrost/types/peg_in.{CompletePegIn, PegInWithdrawRedeemer}
 use bifrost/types/peg_out.{CompletePegOut, PegOutWithdrawRedeemer}
 use bifrost/utils
-use cardano/address.{Address, Credential, Inline, Script, StakeCredential}
-use cardano/assets.{
-  AssetName, PolicyId, flatten, quantity_of, tokens, without_lovelace,
-}
+use cardano/address.{Script}
+use cardano/assets.{PolicyId, tokens}
 use cardano/script_context.{ScriptContext}
-use cardano/transaction.{
-  InlineDatum, Output, OutputReference, Transaction, Withdraw, find_input,
-}
+use cardano/transaction.{Transaction, Withdraw}
 
 pub type MintRedeemer {
   config_ref_input_index: Int,

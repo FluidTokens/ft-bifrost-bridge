@@ -1,5 +1,4 @@
-use cardano/address.{Credential}
-use cardano/assets.{AssetName, PolicyId, quantity_of, tokens}
+use cardano/assets.{AssetName, PolicyId}
 
 pub type ConfigDatum {
   bridged_token_policy_id: PolicyId,

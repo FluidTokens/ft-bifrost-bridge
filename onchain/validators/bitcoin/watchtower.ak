@@ -1,4 +1,3 @@
-use aiken/collection/list
 use aiken/crypto.{VerificationKeyHash}
 use cardano/assets.{PolicyId}
 use cardano/script_context.{ScriptContext}
@@ -13,7 +12,7 @@ pub type Redeemer {
 }
 
 validator watchtower {
-  mint(redeemer: Redeemer, policy_id: PolicyId, self: Transaction) {
+  mint(_redeemer: Redeemer, _policy_id: PolicyId, _self: Transaction) {
     True
   }
 

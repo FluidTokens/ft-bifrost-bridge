@@ -1,26 +1,42 @@
-pub type RegisteredSposDatum {
-  registration_time: Int,
-  spo_cardano_ecdsa_key: ByteArray,
-  spo_bitcoin_secp256k1_key: ByteArray,
+use aiken/merkle_patricia_forestry.{Proof}
+use aiken_design_patterns/linked_list
+
+pub type ListRootData {
+  ListRootData
 }
 
-pub type RegisteredSposMintRedeemer {
-  Init
-  Deinit
+pub type RegistrationNodeData {
+  bifrost_id_pk: ByteArray,
+  bifrost_url: ByteArray,
+}
+
+pub type RegistrationListDatum =
+  linked_list.Element<ListRootData, RegistrationNodeData>
+
+pub type SposRegistryMintRedeemer {
+  Bootstrap
   Register {
-    key_to_prepend: ByteArray,
-    config_ref_input_index: Int,
-    prepended_node_output_index: Int,
-    anchor_node_output_index: Int,
-    spo_bitcoin_secp256k1_key_signature: ByteArray,
+    cold_vkey: ByteArray,
+    cold_sig: ByteArray,
+    bifrost_sig: ByteArray,
+    registration_anchor_input_index: Int,
+    registration_anchor_output_index: Int,
+    treasury_input_index: Int,
+    treasury_output_index: Int,
+    bifrost_identity_absence_proof: Proof,
   }
   Deregister {
-    node_to_deregister_key: ByteArray,
-    removed_node_input_index: Int,
-    anchor_node_input_index: Int,
+    cold_vkey: ByteArray,
+    cold_sig: ByteArray,
+    registration_input_index: Int,
+    registration_anchor_input_index: Int,
+    registration_anchor_output_index: Int,
+    treasury_input_index: Int,
+    treasury_output_index: Int,
+    bifrost_identity_removal_proof: Proof,
   }
 }
 
-pub type RegisteredSposSpendRedeemer {
-  RegisteredSposSpendRedeemer
+pub type SposRegistrySpendRedeemer {
+  RegistrationListAction
 }

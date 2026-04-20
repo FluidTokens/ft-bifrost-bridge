@@ -1,20 +1,7 @@
-use aiken/builtin
-use aiken/collection/dict
-use aiken/collection/list
-use aiken/crypto.{VerificationKeyHash}
 use aiken/merkle_patricia_forestry as mpf
-use aiken/option
-use aiken/primitive/bytearray
-use aiken_design_patterns/stake_validator
-use bifrost/authorizer.{authorize_action, create_auth}
 use bifrost/types/general.{AuthorizationMethod}
-use bifrost/utils
-use cardano/address.{Address, Credential, Inline, Script, StakeCredential}
-use cardano/assets.{AssetName, PolicyId, quantity_of, tokens}
-use cardano/script_context.{ScriptContext}
-use cardano/transaction.{
-  InlineDatum, Output, OutputReference, Transaction, find_input,
-}
+use cardano/assets.{AssetName}
+use cardano/transaction.{OutputReference}
 
 pub type PegInDatum {
   //Auth that can then spend this utxo

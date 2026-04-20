@@ -5,7 +5,7 @@ use aiken/crypto
 use aiken/merkle_patricia_forestry as mpf
 use bifrost/constants
 use bifrost/types/watchtower.{OracleState}
-use cardano/address.{Address, VerificationKey}
+use cardano/address.{Address, Script, VerificationKey}
 use cardano/assets.{AssetName, PolicyId, Value, quantity_of, tokens}
 use cardano/transaction.{InlineDatum, Input, Output, OutputReference}
 
@@ -66,6 +66,27 @@ pub fn get_singleton_asset_with_policy(
       |> dict.to_pairs
 
   p
+}
+
+pub fn find_singleton_asset_output_at_script(
+  outputs: List<Output>,
+  script_hash: ByteArray,
+  policy_id: PolicyId,
+  asset_name: AssetName,
+) -> Output {
+  expect Some(output) =
+    list.find(
+      outputs,
+      fn(output) {
+        output.address.payment_credential == Script(script_hash) && quantity_of(
+          output.value,
+          policy_id,
+          asset_name,
+        ) == 1
+      },
+    )
+
+  output
 }
 
 pub fn get_oracle_state(
