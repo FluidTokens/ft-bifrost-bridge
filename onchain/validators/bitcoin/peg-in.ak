@@ -321,6 +321,7 @@ validator peg_in_validator(
                   ),
                 )
 
+              //TODO This is happening for each input while it should be ran only once!
               //Prove that the Treasury Movement is legit and spends this PegIn
               //delegating it to a specific withdraw script.
               //We also need to check that peg_in_amount is real.

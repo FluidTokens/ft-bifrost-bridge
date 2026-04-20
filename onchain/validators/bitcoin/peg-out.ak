@@ -120,6 +120,7 @@ validator peg_out_validator(
                   self.mint,
                 ),
               )
+            //TODO This is happening for each input while it should be ran only once!
             //Prove that the Treasury Movement is legit and does NOT produce this PegOut
             //delegating it to a specific withdraw script
             let tmtilaspisvsh_redeemer <-
@@ -300,6 +301,7 @@ validator peg_out_validator(
                     self.mint,
                   ),
                 )
+              //TODO This is happening for each input while it should be ran only once!
               //Prove that the Treasury Movement is legit and produces the PegOut utxo
               //delegating it to a specific withdraw script
               let tmtilaspopvsh_redeemer <-
