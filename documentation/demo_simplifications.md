@@ -6,9 +6,9 @@ Simplifications of the specificaion to make the testnet demo easier to understan
 
 $Y_{federation}$ = 02b1e15a532a4e816ec75af608256b0808e36fb7d22560605178850885e53f2854
 
-## Pegin Taproot
+## Pegin Taproot Script
 
-$Y_{federation}$ || Alice_vk + 5 days timeout (720 blocks)
+$Y_{federation}$ || <720> OP_CHECKSEQUENCEVERIFY OP_DROP <depositor's xonly pubkey> OP_CHECKSIG
 
 ## Treasury Taproot
 
