@@ -264,47 +264,39 @@ These are the steps to execute a correct peg-in:
 
 ### Taproot address construction
 
-The Treasury address and peg-in addresses use different Taproot trees following BIP341 [4]. Both use $Y_{51}$ as the key-path internal key, making the 51% FROST threshold the primary ("main line") operating mode. The 67% threshold appears as a script leaf in the Treasury tree for aspirational stronger security, and the federation appears as a timelock-gated fallback in both trees.
+The Treasury address and peg-in addresses use different Taproot trees following BIP341 [4]. Both use $Y_{51}$ as the key-path internal key, making the 51% FROST threshold the main-line operating mode. The federation appears as a timelock-gated fallback script leaf in both trees.
 
 #### Keys
 
-- $Y_{67}$ and $Y_{51}$ are FROST group public keys produced by **separate DKGs** with thresholds ensuring any signing subset controls ≥67% and ≥51% of delegated stake respectively. Both are stored in `treasury.ak`.
+- $Y_{51}$ is the FROST group public key produced by DKG with a threshold ensuring any signing subset controls more than 51% of delegated stake. It is stored in `treasury.ak`.
 - $Y_{federation}$ is a known protocol parameter — a public key controlled by a federation of trusted entities, used only as a last-resort spending path.
 
 #### Treasury Taproot tree
 
-The Treasury address (holding consolidated funds) uses $Y_{51}$ as the key-path internal key, with an aspirational stronger path and an emergency fallback:
+The Treasury address (holding consolidated funds) uses $Y_{51}$ as the key-path internal key, with a single emergency fallback script leaf:
 
-| Path          | Key              | Condition     | Use case                                            |
-| ------------- | ---------------- | ------------- | --------------------------------------------------- |
-| Key path | $Y_{51}$ | Immediate | Normal operation (main line): full TM |
-| Script leaf 1 | $Y_{67}$ | Immediate | Aspirational: full TM with strongest security proof |
-| Script leaf 2 | $Y_{federation}$ | After timeout | Emergency fallback: full TM |
+| Path        | Key              | Condition     | Use case                              |
+| ----------- | ---------------- | ------------- | ------------------------------------- |
+| Key path    | $Y_{51}$         | Immediate     | Normal operation (main line): full TM |
+| Script leaf | $Y_{federation}$ | After timeout | Emergency fallback: full TM           |
 
-When 67% quorum is available, SPOs prefer $Y_{67}$ (script leaf 1) to prove the stronger security threshold on-chain on Bitcoin, even though it costs slightly more than the key path. When 67% is not available, they fall back to $Y_{51}$ key path (main line, cheapest).
-
-Script leaf 1 ($Y_{67}$ aspirational):
-```
-<Y_67> OP_CHECKSIG
-```
-
-Script leaf 2 (federation rescue):
+Script leaf (federation rescue):
 ```
 <timeout_federation> OP_CHECKSEQUENCEVERIFY OP_DROP <Y_federation> OP_CHECKSIG
 ```
 
-Merkle tree (2 leaves):
+Merkle tree (single leaf):
 ```
      root
-    /    \
-  Y_67  Y_federation
+       |
+  Y_federation
 ```
 
 Treasury output key: `Q_treasury = Y_51 + tagged_hash("TapTweak", Y_51 || merkle_root) · G`
 
-This address changes each epoch after DKG, since $Y_{67}$ and $Y_{51}$ are regenerated.
+This address changes each epoch after DKG, since $Y_{51}$ is regenerated.
 
-When 67% quorum is available, SPOs spend the treasury via the $Y_{67}$ script leaf — proving the stronger security threshold on Bitcoin at a slightly higher cost. When only 51% quorum is available, SPOs use the $Y_{51}$ key path — a single 64-byte Schnorr signature with no script reveal, the cheapest spending path. In emergency (federation), the $Y_{federation}$ script path with timelock is used.
+SPOs spend the treasury via the $Y_{51}$ key path — a single 64-byte Schnorr signature with no script reveal, the cheapest spending path. In emergency (federation), the $Y_{federation}$ script path with timelock is used.
 
 #### Peg-in Taproot tree
 
