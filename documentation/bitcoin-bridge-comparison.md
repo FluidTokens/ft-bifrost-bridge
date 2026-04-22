@@ -340,7 +340,6 @@ Bifrost uses **Cardano Stake Pool Operators (SPOs)** — the same entities that 
 |---|---|
 | **Custody model** | FROST threshold signatures by Cardano SPOs, weighted by delegated stake |
 | **Primary trust assumption** | Weighted majority (51%+ of delegated stake) of participating Cardano SPOs must be honest |
-| **Aspirational security** | 67%+ stake threshold for stronger guarantees when enough SPOs participate |
 | **Federation fallback** | Emergency-only, timelock-gated federation key for liveness if SPO quorum fails |
 | **Oracle assumption** | 1-honest-watchtower for Binocular Oracle (permissionless, anyone can become a watchtower) |
 
@@ -377,7 +376,7 @@ The threshold t is computed as the minimum k such that the bottom-k SPOs by stak
 
 - **F1**: Depositor can reclaim BTC after ~30 days (Taproot CSV) if not swept
 - **F2**: Withdrawer can cancel peg-out if treasury has rotated
-- **F3**: Federation can sign if both 67% and 51% quorums fail (timelocked emergency)
+- **F3**: Federation can sign if 51% quorum fails (timelocked emergency)
 - **F4/F5**: PegInRequest closable after refund or if duplicate
 - **F6**: Withdrawer can cancel peg-out after timeout unconditionally
 - **Total failure theorem**: Under complete signing failure, the only permanently locked value is the treasury UTxO. All deposits are refundable (Taproot CSV) and all peg-outs are cancellable (timeout)
