@@ -169,7 +169,7 @@ theorem pegout_liveness :
         pegoutFulfilled s' pegout ∨ canApply s' (CancelPegOut pegout))
 ```
 
-**Proof sketch**: With honest SPO majority, the FROST signing cascade (67% → 51% → federation) eventually produces a signed Treasury Movement transaction (signing cascade liveness). With 1 honest watchtower, the TM is relayed to Bitcoin and the Bitcoin confirmation eventually reaches the oracle (oracle liveness). Once confirmed, anyone can complete the peg-out on Cardano. If the treasury rotates before fulfillment, the withdrawer can cancel.
+**Proof sketch**: With honest SPO majority, the FROST signing cascade (51% → federation) eventually produces a signed Treasury Movement transaction (signing cascade liveness). With 1 honest watchtower, the TM is relayed to Bitcoin and the Bitcoin confirmation eventually reaches the oracle (oracle liveness). Once confirmed, anyone can complete the peg-out on Cardano. If the treasury rotates before fulfillment, the withdrawer can cancel.
 
 ---
 
@@ -201,7 +201,7 @@ theorem pegout_liveness :
 |----|----------|-----------|
 | F1 | Depositor can reclaim BTC after ~30 days if not swept | Axiom: Taproot timeout script spendable |
 | F2 | Withdrawer can cancel peg-out if treasury rotated | Axiom: validator allows cancel when `treasury ≠ datum.treasury` |
-| F3 | Federation can sign TM if both 67% and 51% quorum fail | Axiom: federation key in Taproot tree, timelock expires |
+| F3 | Federation can sign TM if 51% quorum fails | Axiom: federation key in Taproot tree, timelock expires |
 | F4 | PegInRequest closable if deposit already refunded by depositor | Axiom: validator checks refund script witness |
 | F5 | PegInRequest closable if duplicate (trie inclusion proof) | Axiom: validator checks trie inclusion |
 
@@ -234,7 +234,7 @@ theorem pegout_liveness :
 | S1 | FROST group signature is valid BIP340 Schnorr (verifiable by Bitcoin) | Axiom: FROST correctness |
 | S2 | Cannot forge TM signature without threshold of signing shares | Axiom: FROST EUF-CMA |
 | S3 | All honest SPOs construct identical TM transaction (deterministic) | Axiom: deterministic construction rules |
-| S4 | Signing cascade: 67% tried first, then 51%, then federation | State machine rule |
+| S4 | Signing cascade: 51% tried first, then federation | State machine rule |
 | S5 | Leader election is deterministic from `prev_tm_txid` | Pure function, provable |
 | S6 | Timeout cascade ensures some SPO submits within bounded time | R1, S5 |
 
@@ -468,10 +468,8 @@ structure ProtocolState where
 /-- Roster of SPOs for a given epoch -/
 structure Roster where
   members           : Finset SPO
-  threshold67       : Nat
   threshold51       : Nat
   securityThreshold : Nat  -- basis points (e.g. 5100 for 51%)
-  groupKey67        : PublicKey
   groupKey51        : PublicKey
 
 /-- Protocol actions (labels in the transition system) -/
