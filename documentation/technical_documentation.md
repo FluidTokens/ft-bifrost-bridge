@@ -80,7 +80,7 @@ This section collects the acronyms, protocol terms, on-chain validators, mathema
 * **Equivocation**: two distinct signed payloads from the same SPO under the same `namespace_hash`.
 * **FaultProof token**: singleton NFT minted by `fault_verifier.ak` after a direct fault is established. Its token name is `pool_id || epoch_u32_be`, and `spo_bans.ak` consumes it to apply a ban.
 * **Federation / $Y_{federation}$**: pre-defined fallback signing entity used for emergency Treasury Movement signing.
-* **Group public key ($Y$, $Y_{51}$, $Y_{67}$)**: FROST aggregate public keys produced by the DKG.
+* **Group public key ($Y$, $Y_{51}$)**: FROST aggregate public key produced by the DKG.
 * **Inclusion / Non-inclusion proof**: cryptographic proof that an item is (or is not) in a Merkle/MPT structure.
 * **Internal key (Taproot)**: key used as the BIP341 [4] Taproot internal key ($Y_{51}$ for both Treasury and peg-in trees in Bifrost).
 * **Invalid payload (fault)**: payload whose contents fail cryptographic verification; provable on-chain via Plonk ZK.
@@ -125,7 +125,7 @@ Source code for all validators listed here is published in the Bifrost on-chain 
 | `fault_verifier.ak`    | Verifies invalid-payload (Plonk ZK) and equivocation evidence; mints `FaultToken`s.                                                               |
 | `peg_in.ak`            | Holds PegInRequest UTxOs created from confirmed Bitcoin deposits.                                                                                 |
 | `peg_out.ak`           | Holds PegOut UTxOs from withdrawers; consumed once the TM is confirmed on Bitcoin.                                                                |
-| `treasury.ak`          | Stores the Treasury state UTxO, including current $Y_{67}$, $Y_{51}$, $Y_{federation}$, the completed peg-ins MPT, and the Bifrost identity root. |
+| `treasury.ak`          | Stores the Treasury state UTxO, including current $Y_{51}$, $Y_{federation}$, the completed peg-ins MPT, and the Bifrost identity root.           |
 | `treasury_movement.ak` | Stores SPO-signed Bitcoin TM transactions for watchtower relay; enforces leader-election rules.                                                   |
 | `bridged_asset.ak`     | fBTC mint/burn policy; verifies TM-confirmed peg-in sweeps and Schnorr-signed depositor claims.                                                   |
 
@@ -345,19 +345,15 @@ The resulting Bitcoin address is `bc1p<bech32m(Q)>`.
 
 #### Spending paths and Treasury Movement variants
 
-All quorum levels construct **full** Treasury Movement transactions (sweeping peg-in UTxOs, fulfilling peg-outs, and moving the treasury). The signing cascade tries higher quorums first:
-
-**Script path on Treasury, key path on peg-in inputs (67% quorum — aspirational):**
-
-SPOs collect all confirmed PegInRequest and PegOut UTxOs from Cardano and construct a full Treasury Movement transaction. They spend the treasury UTxO via the $Y_{67}$ script leaf (revealing the script and control block) to prove the stronger 67% security threshold on Bitcoin. Peg-in UTxOs are spent via key path ($Y_{51}$) — a single 64-byte FROST Schnorr signature per peg-in input. To sign peg-in inputs, SPOs compute the tweaked private key: `d = y_51 + tagged_hash("TapTweak", Y_51 || merkle_root)`, where $y_{51}$ is the FROST group private key (held as shares). Computing the merkle_root requires the depositor's pubkey hash (for the refund leaf) and $Y_{federation}$ (for the federation leaf) — both available from the PegInRequest datum and `treasury.ak`.
+Both quorum levels construct **full** Treasury Movement transactions (sweeping peg-in UTxOs, fulfilling peg-outs, and moving the treasury). The signing cascade tries the SPO threshold first, then falls back to the federation:
 
 **Key path on Treasury, key path on peg-in inputs (51% quorum — main line):**
 
-If SPOs cannot collect enough partial signatures for the 67% threshold, they switch to the $Y_{51}$ path. The transaction covers the same peg-in/peg-out batch and treasury move, but uses the witness structure required by the 51% mode.
+SPOs collect all confirmed PegInRequest and PegOut UTxOs from Cardano and construct a full Treasury Movement transaction. They spend both the treasury UTxO and the peg-in UTxOs via key path ($Y_{51}$) — a single 64-byte FROST Schnorr signature per input. To sign peg-in inputs, SPOs compute the tweaked private key: `d = y_51 + tagged_hash("TapTweak", Y_51 || merkle_root)`, where $y_{51}$ is the FROST group private key (held as shares). Computing the merkle_root requires the depositor's pubkey hash (for the refund leaf) and $Y_{federation}$ (for the federation leaf) — both available from the PegInRequest datum and `treasury.ak`. This is the cheapest spending path.
 
 **Script path on Treasury, script path on peg-in inputs (federation — emergency):**
 
-If neither the 67% mode nor the 51% mode yields a usable threshold signature within its bounded setup and signing phases, the federation signs a Treasury Movement transaction for the same peg-in/peg-out batch and treasury move, using the witness structure required by the $Y_{federation}$ script leaf with CSV timelock on all relevant inputs.
+If the 51% mode does not yield a usable threshold signature within its bounded setup and signing phases, the federation signs a Treasury Movement transaction for the same peg-in/peg-out batch and treasury move, using the witness structure required by the $Y_{federation}$ script leaf with CSV timelock on all relevant inputs.
 
 **Script path on peg-in only (depositor refund):**
 
@@ -583,15 +579,14 @@ flowchart LR
 | **Outputs** | New Treasury UTxO at the new roster's $Q_{treasury}$ + one payment output per PegOut (pays `btc_destination_scriptPubKey` with `amount`) |
 | **Witness** | FROST aggregated Schnorr signature(s) per the chosen variant |
 | **Validity** | CSV timelock enforced on inputs only in the federation variant |
-| **Size (est.)** | **Hard-capped at ~15 KB raw bytes** — the signed TM is carried in the Cardano Post-TM datum, which must fit the 16 KB Cardano tx limit. Per-variant max batch: ~100 peg-ins + ~100 peg-outs (51% key-path, ~107 B/input); ~98+98 (67% aspirational); ~57+57 (federation — script-path + CSV on every input, ~213 B/input). Beyond these, SPOs split across multiple TMs (see line above). |
+| **Size (est.)** | **Hard-capped at ~15 KB raw bytes** — the signed TM is carried in the Cardano Post-TM datum, which must fit the 16 KB Cardano tx limit. Per-variant max batch: ~100 peg-ins + ~100 peg-outs (51% key-path, ~107 B/input); ~57+57 (federation — script-path + CSV on every input, ~213 B/input). Beyond these, SPOs split across multiple TMs (see line above). |
 
 **Signing-path variants** (chosen by the signing cascade; see **Spending paths and Treasury Movement variants**)
 
 | Variant | Treasury input via | Peg-in inputs via | Chosen when |
 |---------|--------------------|-------------------|-------------|
-| **67% aspirational** | $Y_{67}$ script leaf | $Y_{51}$ key path | 67% quorum produced a valid aggregate signature |
-| **51% main line** | $Y_{51}$ key path | $Y_{51}$ key path | 67% failed, 51% quorum succeeded |
-| **Federation emergency** | $Y_{federation}$ script leaf + CSV | $Y_{federation}$ script leaf + CSV | both FROST modes exhausted |
+| **51% main line** | $Y_{51}$ key path | $Y_{51}$ key path | 51% quorum produced a valid aggregate signature |
+| **Federation emergency** | $Y_{federation}$ script leaf + CSV | $Y_{federation}$ script leaf + CSV | 51% mode exhausted |
 
 **What Bitcoin enforces**: standard Taproot verification per the chosen path. Nothing Bifrost-specific.
 
@@ -795,9 +790,7 @@ Bifrost supports a phased rollout from federated to fully decentralized operatio
 
 **Phase 1 — Federation Launch**: The bridge launches with the federation as the only signing entity. SPOs begin registering. The federation key is the $Y_{federation}$ used in the Taproot fallback path. During this phase, all Treasury Movement transactions are signed via the federation script path with timelock.
 
-**Phase 2 — 51% SPO Participation**: Once sufficient SPOs have registered and completed DKG, the 51% FROST threshold becomes operational. SPOs sign via key path ($Y_{51}$), and the federation becomes an emergency-only fallback. This is the "main line" operating mode — the protocol's primary steady-state.
-
-**Phase 3 — 67% SPO Participation (aspirational)**: As more SPOs join, the bridge achieves the aspirational 67% participation level. This doesn't change the signing key (still $Y_{51}$ key path available) but provides stronger security: any signing subset now controls at least 67% of delegated stake, making attacks significantly more expensive. When 67% quorum is available, SPOs prefer to sign via the $Y_{67}$ script leaf to prove the stronger security threshold on-chain on Bitcoin.
+**Phase 2 — 51% SPO Participation**: Once sufficient SPOs have registered and completed DKG, the 51% FROST threshold becomes operational. SPOs sign via key path ($Y_{51}$), and the federation becomes an emergency-only fallback. This is the "main line" operating mode — the protocol's terminal steady-state.
 
 ## Flow of Bitcoin over epochs, ceremonies
 
@@ -807,12 +800,12 @@ The diagram above shows two consecutive Cardano epochs with roster handoff from 
 
 1. **Registry Snapshot + Stake Distribution** — at the epoch boundary, the candidate set is locked and stake weights are read from the previous epoch's distribution.
 2. **Peg-in / peg-out requests open** — users submit bridging requests during the first ~36 hours of the epoch.
-3. **DKG** (new roster, off-chain) — the incoming roster runs distributed key generation to produce group keys $Y_{67}$ and $Y_{51}$, running concurrently with the request window.
+3. **DKG** (new roster, off-chain) — the incoming roster runs distributed key generation to produce the group key $Y_{51}$, running concurrently with the request window.
 4. **Previous-epoch peg-in completion** — peg-ins from the prior epoch's Treasury Movement complete as Bitcoin confirmations arrive (17–40 hours after epoch start).
 5. **Peg deadline + Pegs Snapshot** — at the Cardano stability window (3k/f), all bridging requests are frozen for inclusion in the Treasury Movement.
 6. **Update Y** — the current roster publishes the new roster's group public keys to `treasury.ak`.
 7. **Build Treasury Movement Tx** — the current roster constructs the Bitcoin transaction that sweeps peg-in UTxOs, fulfils peg-out payments, and moves the treasury to the new Taproot address.
-8. **Threshold signing cascade** — the current roster attempts threshold signing with overlapping quorum levels. 67% signing starts first if the 67% DKG completed during setup; 51% mode opens immediately once 67% setup/signing has finished unsuccessfully, or immediately if the 67% key was never produced; federation opens immediately once both SPO threshold modes are unavailable or unsuccessful. The first mode to succeed wins.
+8. **Threshold signing cascade** — the current roster attempts 51% threshold signing. The federation path opens immediately once 51% setup/signing has finished unsuccessfully. The first mode to succeed wins.
 9. **TM submission deadline** — the signed transaction must be posted to `treasury_movement.ak` before the epoch ends.
 10. **New peg requests** — after the pegs snapshot, new requests accumulate for the next epoch's batch.
 
@@ -820,10 +813,10 @@ The diagram above shows two consecutive Cardano epochs with roster handoff from 
 
 ![Realistic epoch lifecycle](images/epoch_lifecycle_realistic.png)
 
-The epoch lifecycle above shows generous time windows for the signing cascade (67% → 51% → federation). In the happy path, when 67% quorum is available, the epoch proceeds much faster:
+The epoch lifecycle above shows generous time windows for the signing cascade (51% → federation). In the happy path, when 51% quorum is available, the epoch proceeds much faster:
 
 - **DKG**: ~5 minutes (off-chain, SPOs communicate via `bifrost_url` endpoints).
-- **FROST 67% signing**: ~1 minute per Treasury Movement transaction.
+- **FROST 51% signing**: ~1 minute per Treasury Movement transaction.
 - **Multiple TM batches**: the roster processes peg requests in multiple batches throughout the epoch, each cycling through build → sign → broadcast → Bitcoin confirmation.
 
 The bottleneck is Bitcoin confirmation: each Treasury Movement requires ~100 Bitcoin blocks (~16.7 hours) for Binocular to promote the containing block to `confirmed` state. With a 5-day Cardano epoch, 4–5 TM batches fit sequentially, each handling its own set of peg-in sweeps and peg-out fulfillments. The final TM of the epoch moves the treasury to the new roster's Taproot address.
@@ -1270,7 +1263,7 @@ Required validity interval:
 
 #### 1. Overview
 
-The FROST Distributed Key Generation (DKG) process runs **entirely off-chain** using SPOs' `bifrost_url` endpoints. Two separate DKGs are run each epoch, producing group public keys $Y_{67}$ and $Y_{51}$ with thresholds ensuring any signing subset controls ≥67% and ≥51% of delegated stake respectively. Each DKG also produces individual signing shares $s_i$ for each participant. Upon successful completion, the **current roster** constructs and signs a Treasury Movement transaction that moves the treasury to the new Taproot address derived from $Y_{51}$, $Y_{67}$, and $Y_{federation}$ (see **Taproot address construction**), and posts the signed transaction to Cardano at `treasury_movement.ak` for watchtowers to relay to the source blockchain. No DKG result is posted on Cardano.
+The FROST Distributed Key Generation (DKG) process runs **entirely off-chain** using SPOs' `bifrost_url` endpoints. One DKG is run each epoch, producing the group public key $Y_{51}$ with a threshold ensuring any signing subset controls more than 51% of delegated stake. The DKG also produces individual signing shares $s_i$ for each participant. Upon successful completion, the **current roster** constructs and signs a Treasury Movement transaction that moves the treasury to the new Taproot address derived from $Y_{51}$ and $Y_{federation}$ (see **Taproot address construction**), and posts the signed transaction to Cardano at `treasury_movement.ak` for watchtowers to relay to the source blockchain. No DKG result is posted on Cardano.
 
 **Prerequisite**: SPOs must complete SPO Registration (see previous section) before participating in DKG.
 
@@ -1346,7 +1339,7 @@ Each $P_i$ publishes their Round 1 data at:
 <bifrost_url>/dkg/<epoch>/<threshold>/<attempt>/round1/<pool_id>.json
 ```
 
-Where `<threshold>` is `67` or `51` (the two DKGs run concurrently), and `<attempt>` is the DKG namespace field for that threshold in the current epoch. In the normal protocol flow it remains `0`.
+Where `<threshold>` is `51` (one DKG per epoch), and `<attempt>` is the DKG namespace field in the current epoch. In the normal protocol flow it remains `0`.
 
 **Payload structure**:
 
@@ -1366,7 +1359,7 @@ Where:
 **Canonical byte layout** (for authentication and on-chain misbehavior proofs):
 
 ```
-"bifrost-dkg-r1" || epoch (8B BE) || threshold (8B BE, 67 or 51) || attempt (8B BE) || pool_id (28B)
+"bifrost-dkg-r1" || epoch (8B BE) || threshold (8B BE, 51) || attempt (8B BE) || pool_id (28B)
   || φ_{i0} (33B) || ... || φ_{i(t-1)} (33B) || σ_i (64B)
 ```
 
@@ -1407,7 +1400,7 @@ Each $P_i$ publishes their Round 2 data at:
 <bifrost_url>/dkg/<epoch>/<threshold>/<attempt>/round2/<pool_id>.json
 ```
 
-Where `<threshold>` is `67` or `51` (the two DKGs run concurrently), and `<attempt>` is the same namespace field as in Round 1.
+Where `<threshold>` is `51` (one DKG per epoch), and `<attempt>` is the same namespace field as in Round 1.
 
 **Payload structure**:
 
@@ -1434,7 +1427,7 @@ Where:
 **Canonical byte layout** (for authentication and on-chain misbehavior proofs):
 
 ```
-"bifrost-dkg-r2" || epoch (8B BE) || threshold (8B BE, 67 or 51) || attempt (8B BE) || pool_id (28B)
+"bifrost-dkg-r2" || epoch (8B BE) || threshold (8B BE, 51) || attempt (8B BE) || pool_id (28B)
   || [recipient_pool_id (28B) || ephemeral_pk (33B) || ciphertext (32B)] × m
 ```
 
@@ -1468,11 +1461,11 @@ Upon successful verification of all shares from the final qualified subset $Q$, 
 
 All participants arrive at the same group public key $Y$. Ordinary non-participation therefore shrinks $Q$ in-place rather than forcing a DKG restart.
 
-The above steps are run **twice** — once with a threshold $t_{67}$ (producing $Y_{67}$) and once with $t_{51}$ (producing $Y_{51}$). The two DKGs can run concurrently with the same candidate set.
+The above steps are run once per epoch with threshold $t_{51}$, producing $Y_{51}$.
 
-4. Derives the Bitcoin Treasury Taproot address from the successfully derived threshold keys (`$Y_{67}$` and/or `$Y_{51}$`) together with $Y_{federation}$ (see **Taproot address construction**).
+4. Derives the Bitcoin Treasury Taproot address from $Y_{51}$ together with $Y_{federation}$ (see **Taproot address construction**).
 
-5. The **current roster** publishes the successfully derived group public keys on Cardano at `treasury.ak`, authenticated by a FROST group signature from the current roster. Modes whose DKG did not complete simply remain unavailable for the epoch. This makes the new Treasury address publicly verifiable on-chain, allowing depositors to look up the correct Treasury keys and derive the Treasury and peg-in Taproot addresses.
+5. The **current roster** publishes the successfully derived group public key on Cardano at `treasury.ak`, authenticated by a FROST group signature from the current roster. If the DKG did not complete, the SPO threshold mode is unavailable for the epoch and the federation path remains as the emergency fallback. This makes the new Treasury address publicly verifiable on-chain, allowing depositors to look up the correct Treasury key and derive the Treasury and peg-in Taproot addresses.
 
 #### 9. Misbehavior Handling
 
@@ -1597,19 +1590,18 @@ Non-participation alone does not mint a `FaultProof` token and does not create a
 
 #### 10. Treasury Handoff
 
-Upon successful DKG completion and publication of the new Treasury public keys $Y_{67}$ and $Y_{51}$ to `treasury.ak`:
+Upon successful DKG completion and publication of the new Treasury public key $Y_{51}$ to `treasury.ak`:
 
-1. The **new roster** derives the Bitcoin Treasury Taproot address from $Y_{51}$, $Y_{67}$, and $Y_{federation}$ (see **Taproot address construction**).
+1. The **new roster** derives the Bitcoin Treasury Taproot address from $Y_{51}$ and $Y_{federation}$ (see **Taproot address construction**).
 2. The **current roster** reads all confirmed PegInRequest UTxOs and pending PegOut UTxOs from Cardano.
-3. The **current roster** attempts to construct and sign a full Treasury Movement transaction (peg-ins + peg-outs + treasury move to new address) using the tiered signing process (see **Spending paths and Treasury Movement variants**):
-   - First, attempt to collect 67% partial signatures ($Y_{67}$) — proves the stronger security threshold on Bitcoin (script path on treasury).
-   - If 67% quorum is not reached, attempt to collect 51% partial signatures ($Y_{51}$) — main line, cheapest (key path on all inputs).
-   - If neither SPO threshold mode yields a usable signature within its bounded setup and signing phases, the federation signs using $Y_{federation}$ (script path with timelock).
+3. The **current roster** attempts to construct and sign a full Treasury Movement transaction (peg-ins + peg-outs + treasury move to new address) using the cascade signing process (see **Spending paths and Treasury Movement variants**):
+   - First, attempt to collect 51% partial signatures ($Y_{51}$) — main line, cheapest (key path on all inputs).
+   - If the 51% mode does not yield a usable signature within its bounded setup and signing phases, the federation signs using $Y_{federation}$ (script path with timelock).
    - If the resulting transaction would be too large, it is split into multiple transactions.
 4. The signed transaction is posted to Cardano at `treasury_movement.ak`.
 5. Watchtowers pick up the signed transaction from Cardano and broadcast it to the Bitcoin network.
 
-Once the Treasury Movement transaction is confirmed on Bitcoin, the epoch transition is complete. The new roster now controls the treasury. Anyone can then complete pending peg-outs on Cardano using Binocular inclusion proofs. Pending peg-ins can also be completed — all quorum levels sweep peg-in UTxOs.
+Once the Treasury Movement transaction is confirmed on Bitcoin, the epoch transition is complete. The new roster now controls the treasury. Anyone can then complete pending peg-outs on Cardano using Binocular inclusion proofs. Pending peg-ins can also be completed — both signing modes sweep peg-in UTxOs.
 
 #### 11. Security Properties
 
@@ -1655,7 +1647,7 @@ All SPOs independently construct the same Treasury Movement (TM) transaction fro
 - Input 0: the current treasury UTxO (txid+vout from shared state).
 - Inputs 1..$k$: peg-in UTxOs, ordered lexicographically by (txid ‖ vout). Comparison is byte-by-byte, left-to-right; txid is 32 bytes, vout is encoded as 4 bytes little-endian.
 - Sequence numbers (per spending mode):
-  - **51% and 67% modes**: `0xFFFFFFFD` for every input. Bit 31 is set, so BIP68 relative timelocks are disabled; the value is below `0xFFFFFFFE`, so RBF is signaled. No CSV is evaluated in these paths.
+  - **51% mode**: `0xFFFFFFFD` for every input. Bit 31 is set, so BIP68 relative timelocks are disabled; the value is below `0xFFFFFFFE`, so RBF is signaled. No CSV is evaluated in this path.
   - **Federation mode**: `timeout_federation` (the protocol parameter, encoded as a BIP68 block-based value with bit 31 clear) for every input. Bit 31 clear enables BIP68, satisfying `OP_CHECKSEQUENCEVERIFY <timeout_federation>` in the federation script leaves. Any value with bit 31 clear is automatically below `0xFFFFFFFE`, so RBF is also signaled.
 
 **Outputs (deterministic ordering).**
@@ -1795,12 +1787,11 @@ For a given TM and mode (`67` or `51`), all honest SPOs derive the same signing 
 11. Otherwise the mode fails immediately when Round 2 closes.
 
 **Mode transition rules:**
-- **67% mode** opens first and uses the $Y_{67}$ treasury path if the 67% DKG completed during setup.
-- **51% mode** opens immediately once 67% mode has finished unsuccessfully, or immediately if the 67% DKG did not produce a usable key during setup.
-- **Federation mode** opens immediately once 51% mode has finished unsuccessfully, or immediately if neither SPO threshold DKG produced a usable key during setup.
+- **51% mode** opens first and uses the $Y_{51}$ treasury key path if the DKG completed during setup.
+- **Federation mode** opens immediately once 51% mode has finished unsuccessfully, or immediately if the DKG did not produce a usable key during setup.
 - The overall bound for the cascade is therefore implicit: it is the sum of the bounded DKG and signing step deadlines, with no extra inter-mode timer.
 
-Federation mode does not use the SPO HTTP endpoints. It is an on-chain and Bitcoin-level emergency fallback after the SPO threshold modes have either failed or never become available.
+Federation mode does not use the SPO HTTP endpoints. It is an on-chain and Bitcoin-level emergency fallback after the 51% mode has either failed or never become available.
 
 ### Cardano submission and leader reward
 
@@ -1838,7 +1829,7 @@ Later, when depositors mint fBTC referencing this TM, each minting transaction i
 
 **Applies to both:**
 - **TM submission**: posting the signed Bitcoin transaction to `treasury_movement.ak`.
-- **Key publication**: posting new DKG group keys $Y_{67}$ and $Y_{51}$ to `treasury.ak` after DKG completes.
+- **Key publication**: posting the new DKG group key $Y_{51}$ to `treasury.ak` after DKG completes.
 
 ## SPOs communication
 
