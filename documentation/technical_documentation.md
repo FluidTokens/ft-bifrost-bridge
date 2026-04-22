@@ -821,6 +821,28 @@ The epoch lifecycle above shows generous time windows for the signing cascade (5
 
 The bottleneck is Bitcoin confirmation: each Treasury Movement requires ~100 Bitcoin blocks (~16.7 hours) for Binocular to promote the containing block to `confirmed` state. With a 5-day Cardano epoch, 4–5 TM batches fit sequentially, each handling its own set of peg-in sweeps and peg-out fulfillments. The final TM of the epoch moves the treasury to the new roster's Taproot address.
 
+### Cardano stability window and peg finality
+
+**Asymmetry between Bitcoin and Cardano finality.** Bitcoin PoW and Cardano Ouroboros Praos [6] both provide probabilistic finality, but Bifrost treats them asymmetrically. Binocular requires ~100 Bitcoin blocks (~17 h) before promoting a TM to `confirmed`, a depth at which Bitcoin reorgs are negligible for practical purposes. Cardano's common-prefix parameter $k = 2160$ is deliberately shallow (~12 h of expected block time) and reorgs shorter than $k$ are routine. The roster therefore has to be careful about what Cardano state it freezes into a Bitcoin-signed TM: a Cardano rollback *after* TM signing is a normal protocol event, whereas a Bitcoin reorg past Binocular confirmation is not.
+
+**Why PegOuts need finality.** A PegOut lock is a Cardano-native action — fBTC is locked at `peg_out.ak` when the PegOut UTxO is created, and the TM pays treasury BTC to match. If the PegOut UTxO rolls back on Cardano *after* the TM is signed, the fBTC lock disappears from the canonical Cardano chain while the TM on Bitcoin still pays out. The withdrawer keeps their fBTC **and** collects BTC — a net loss to the treasury. Once signed and broadcast, a TM cannot un-pay a PegOut. Every PegOut must therefore be past any possible Cardano reorg before it enters the Pegs Snapshot.
+
+**Why PegInRequests do not.** A PegInRequest is a Cardano-side *registration* of a Bitcoin deposit that already exists on Bitcoin and is already Binocular-confirmed. Three properties make its rollback recoverable:
+
+- **Permissionless creation.** Anyone can create a PegInRequest with a valid Binocular inclusion proof; the proof's validity depends only on Bitcoin state.
+- **BTC-side-bound mint authorization.** The depositor's fBTC-mint Schnorr signature is computed over `"BFR-mint-v1" ‖ btc_txid ‖ peg_in_utxo_id ‖ chosen_cardano_address`, so it is bound to the Bitcoin UTxO, not to the specific Cardano PegInRequest NFT. The same signature verifies against any re-created PegInRequest for the same deposit.
+- **BTC-side-bound double-mint protection.** The completed-peg-ins MPT on `treasury.ak` is keyed by `peg_in_utxo_id`, not by the NFT.
+
+If a PegInRequest rolls back after the TM is broadcast, the BTC sweep still succeeds on Bitcoin, and any watchtower (or the depositor) can re-create the PegInRequest; the depositor then claims fBTC with the original Schnorr signature. **Net impact: a delayed fBTC mint, never a fund loss.** Strict pre-snapshot finality is therefore *not required* for PegInRequests — only for PegOuts. In practice the protocol treats both uniformly at the same snapshot boundary for operational simplicity and for SPO determinism under restart/partition scenarios, not for fund-safety reasons.
+
+**The Cardano stability window ($3k/f$).** Under Ouroboros Praos with honest-majority stake, any transaction buried under $k$ blocks is final with probability $1 - e^{-\Omega(k)}$ by the common-prefix property [6]. $k$ blocks arrive on average in $k/f$ slots, and the Chernoff analysis reaches overwhelming probability at $3k/f$ slots. On Cardano mainnet with $k = 2160$, $f = 0.05$ and one-second slots:
+
+$$\tfrac{3k}{f} = \tfrac{3 \cdot 2160}{0.05} = 129{,}600 \text{ slots} = 36 \text{ hours.}$$
+
+**Why $3k/f$ and not "just 2160 blocks".** Block-depth alone gives common-prefix finality only *relative to the chain an observer has already chosen*. An SPO or watchtower that restarts, loses peers, or is briefly partitioned must first re-select the canonical chain, and Cardano's Genesis rule [7] does so by comparing chain density inside a $3k/f$-slot window after the fork point — so $3k/f$ is a structural parameter of chain selection, not a safety margin bolted on top of $k$. It also provides ~3× wallclock headroom for peer-diversity and out-of-band cross-checks against eclipse scenarios, and aligns with the "settled state" notion used inside `cardano-node`.
+
+**Consequence for the protocol.** The Pegs Snapshot is taken **$3k/f = 36$ hours after the epoch boundary** (phase 5 of the epoch lifecycle). PegOuts posted after the cut-off are deferred to the next epoch; the roster signs the BTC Treasury Movement only against this frozen, post-stability-window PegOut set, so that no Cardano rollback can retroactively invalidate a PegOut committed on Bitcoin. PegInRequests use the same boundary for determinism, even though their rollback is recoverable by re-creation.
+
 ## SPO Program
 
 It's the program that Cardano SPOs must run and it allows signature aggregation. Being based on the FROST protocol requires:
@@ -2022,3 +2044,7 @@ Bifrost's watchtower design relies on a minimal trust assumption: only one hones
 [4] Wuille, P. et al. "BIP341: Taproot: SegWit version 1 spending rules." Bitcoin Improvement Proposal, 2020. <https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki>
 
 [5] *Bifrost On-Chain Validators* (Aiken): https://github.com/FluidTokens/ft-bifrost-bridge/tree/main/onchain/validators
+
+[6] David, B., Gaži, P., Kiayias, A., Russell, A. "Ouroboros Praos: An Adaptively-Secure, Semi-synchronous Proof-of-Stake Blockchain." EUROCRYPT 2018. <https://eprint.iacr.org/2017/573>
+
+[7] Badertscher, C., Gaži, P., Kiayias, A., Russell, A., Zikas, V. "Ouroboros Genesis: Composable Proof-of-Stake Blockchains with Dynamic Availability." ACM CCS 2018. <https://eprint.iacr.org/2018/378>
