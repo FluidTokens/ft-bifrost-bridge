@@ -114,16 +114,13 @@ structure SPO where
 
 /-- Epoch keys produced by DKG -/
 structure EpochKeys where
-  y67 : PublicKey
   y51 : PublicKey
   deriving BEq, Repr, DecidableEq
 
 /-- A roster of SPOs for a given epoch -/
 structure Roster where
   members           : List SPO
-  threshold67       : Nat
   threshold51       : Nat
-  groupKey67        : PublicKey
   groupKey51        : PublicKey
   deriving Repr
 
@@ -207,7 +204,6 @@ structure OracleState where
 
 /-- Quorum level used for signing -/
 inductive QuorumLevel where
-  | q67        : QuorumLevel
   | q51        : QuorumLevel
   | federation : QuorumLevel
   deriving BEq, Repr

@@ -35,7 +35,7 @@ def ProtocolState.treasuryBalance (s : ProtocolState) : Nat :=
 
 /-- Current treasury address -/
 def ProtocolState.currentTreasuryAddress (s : ProtocolState) : TreasuryAddress :=
-  -- In the real protocol, this is derived from epochKeys.y51, y67, and federation key
+  -- In the real protocol, this is derived from epochKeys.y51 and the federation key
   -- via Taproot address construction. Here we model it abstractly.
   { scriptPubKey := s.epochKeys.y51.bytes }
 

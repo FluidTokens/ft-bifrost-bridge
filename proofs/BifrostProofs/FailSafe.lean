@@ -30,13 +30,13 @@ theorem failsafe_withdrawer_recovery (s : ProtocolState) (poIdx : Nat)
     ∃ s', step s (.CancelPegOut poIdx) = some s' := by
   sorry
 
-/-- F3: Federation can sign TM if both 67% and 51% quorum fail.
+/-- F3: Federation can sign TM if 51% quorum fails.
 
     The federation key is a script leaf in the Treasury Taproot tree
     with a CSV timelock. After the timelock expires, the federation
     can sign the same full Treasury Movement transaction. -/
 theorem federation_fallback (s : ProtocolState) (tm : TMTransaction) :
-    -- If 67% and 51% quorums both fail
+    -- If 51% quorum fails
     -- (modeled as: the action with federation quorum is valid)
     (∃ s', step s (.TreasuryMovement tm .federation) = some s') →
     -- Then the bridge can still process the TM
@@ -83,7 +83,7 @@ theorem failsafe_withdrawer_timeout (s : ProtocolState) (poIdx : Nat)
 -- Total signing failure analysis
 -- ============================================================================
 
-/-- Total signing failure: no quorum (67%, 51%, or federation) can sign.
+/-- Total signing failure: no quorum (51% or federation) can sign.
     This models the worst-case scenario where all SPOs are permanently offline
     or have lost their key shares. -/
 def totalSigningFailure (s : ProtocolState) : Prop :=
