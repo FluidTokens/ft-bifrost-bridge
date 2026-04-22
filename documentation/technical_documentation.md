@@ -87,7 +87,7 @@ This section collects the acronyms, protocol terms, on-chain validators, mathema
 * **Key path / Script path**: the two BIP341 [4] Taproot spending paths.
 * **Leader (TM submission)**: SPO selected (with timeout cascade) to post the signed TM to Cardano (see §Cardano submission and leader reward).
 * **Live subset**: SPOs that published valid Round 1 payloads before the Round 1 deadline of an attempt.
-* **Mode (`67` / `51` / federation)**: active threshold path used for the current TM signing attempt.
+* **Mode (`51` / federation)**: active threshold path used for the current TM signing attempt.
 * **`namespace_hash`**: `blake2b_256(phase ‖ epoch ‖ threshold_or_mode ‖ attempt ‖ txid?)`, scoping a fault to a single protocol round.
 * **New roster**: roster derived from registrations at the upcoming epoch boundary; takes control after treasury handoff.
 * **PegInRequest**: UTxO at `peg_in.ak` carrying the raw Bitcoin peg-in transaction and an NFT, marking a confirmed deposit available for SPOs to sweep.
@@ -100,7 +100,7 @@ This section collects the acronyms, protocol terms, on-chain validators, mathema
 * **Schnorr signature (BIP340 [3])**: 64-byte secp256k1 Schnorr signature scheme used throughout the protocol.
 * **Sighash (BIP341 [4])**: per-input message digest signed under SIGHASH_ALL Taproot rules.
 * **Sign-the-hash**: authentication scheme where the SPO signs `SHA256(canonical_bytes)`, enabling both off-chain and on-chain signature verification.
-* **Signing cascade / Threshold failover**: sequential attempt order: 67% → 51% → federation.
+* **Signing cascade / Threshold failover**: sequential attempt order: 51% → federation.
 * **Signing share ($s_i$)**: SPO's long-lived FROST private share.
 * **Stability window**: Cardano `3k/f` window after which the pegs snapshot is taken for the current epoch's TM.
 * **Tagged hash**: `SHA256(SHA256(tag) ‖ SHA256(tag) ‖ msg)`, per BIP340 [3] / BIP341 [4].
@@ -133,7 +133,7 @@ Source code for all validators listed here is published in the Bifrost on-chain 
 
 | Symbol                                 | Meaning                                                           |
 | -------------------------------------- | ----------------------------------------------------------------- |
-| $Y_{51}$, $Y_{67}$                     | FROST group public keys at the 51% and 67% thresholds             |
+| $Y_{51}$                               | FROST group public key at the 51% threshold                       |
 | $Y_{federation}$                       | Federation emergency public key                                   |
 | $s_i$                                  | Participant $i$'s long-lived FROST signing share                  |
 | $Y_i = s_i · G$                        | Participant $i$'s verification share                              |
@@ -155,7 +155,6 @@ Source code for all validators listed here is published in the Bifrost on-chain 
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | Phase 1 — Federation Launch     | Bridge runs with $Y_{federation}$ as the only signer; SPOs begin registering.                                       |
 | Phase 2 — 51% SPO Participation | Once enough SPOs have completed DKG, $Y_{51}$ becomes the main-line key; federation is emergency-only.             |
-| Phase 3 — 67% SPO Participation | Aspirational level at which $Y_{67}$ script-leaf signing becomes the preferred path for stronger on-chain security. |
 
 **Per-epoch timeline phases** (see §Flow of Bitcoin over epochs, ceremonies):
 
@@ -164,9 +163,9 @@ Source code for all validators listed here is published in the Bifrost on-chain 
 | Registry Snapshot      | Epoch-boundary snapshot of the registration linked-list.                                                    |
 | Stake Distribution     | Epoch-boundary snapshot of delegated stake from the previous epoch.                                         |
 | Pegs Snapshot          | Freezing of pending PegInRequest and PegOut UTxOs at the Cardano stability window for inclusion in the TM. |
-| Update Y               | Publication of the new roster's $Y_{67}$ and $Y_{51}$ to `treasury.ak`.                                     |
+| Update Y               | Publication of the new roster's $Y_{51}$ to `treasury.ak`.                                                  |
 | Build TM               | Deterministic construction of the unsigned Treasury Movement transaction by all SPOs.                       |
-| Signing cascade        | Threshold-failover signing sequence (67% → 51% → federation).                                               |
+| Signing cascade        | Threshold-failover signing sequence (51% → federation).                                                     |
 | TM submission deadline | Latest slot at which the signed TM may be posted to `treasury_movement.ak`.                                 |
 | Treasury handoff       | Final TM of the epoch moving consolidated funds to the new roster's Taproot address.                        |
 
@@ -174,7 +173,6 @@ Source code for all validators listed here is published in the Bifrost on-chain 
 
 | Label                     | Meaning                                                                                                  |
 | ------------------------- | -------------------------------------------------------------------------------------------------------- |
-| 67% quorum (aspirational) | Treasury spent via the $Y_{67}$ script leaf; peg-in inputs spent via $Y_{51}$ key path.                             |
 | 51% quorum (main line)    | All inputs spent via the $Y_{51}$ key path — the cheapest spending path.                                            |
 | Federation (emergency)    | All inputs spent via the $Y_{federation}$ script leaf with CSV timelock.                                 |
 | Depositor refund          | After ~30 days (4320 blocks), the depositor reclaims a peg-in UTxO via the depositor refund script leaf.            |
