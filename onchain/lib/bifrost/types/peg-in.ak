@@ -34,7 +34,7 @@ pub type PegInMintRedeemer {
   //Input spent during the minting (= creation of the PegInRequests)
   input_ref: OutputReference,
   //One or more PegInRequests that must be created on Cardano
-  new_peg_in_requests: List<PegInRequest>,
+  new_peg_in_request: PegInRequest,
 }
 
 pub type InputCompletePegIn {
@@ -53,16 +53,15 @@ pub type InputCompletePegIn {
 }
 
 pub type ActionType {
-  Cancel { burnt_peg_in_nft_asset_names: List<AssetName> }
+  Cancel { burnt_peg_in_nft_asset_name: AssetName }
   CompletePegIn {
-    //Multiple PegIns can be completed in one tx
-    per_input_complete_peg_in_info: List<InputCompletePegIn>,
+    complete_peg_in_info: InputCompletePegIn,
     //Index of the input containing the completed_peg_ins merkle tree
     completed_peg_in_utxos_input_index: Int,
     //Index of the output containing the completed_peg_ins merkle tree
     completed_peg_in_utxos_output_index: Int,
     //List of inclusion proofs to insert all the newly completed PegIns
-    added_peg_ins_to_completed_peg_ins_inclusion_proofs: List<mpf.Proof>,
+    added_peg_in_to_completed_peg_ins_inclusion_proof: mpf.Proof,
     //Redeemer index of the withdraw script that checks for treasury movement and PegIn spent
     tmtilaspisvsh_withdraw_redeemer_index: Int,
   }
