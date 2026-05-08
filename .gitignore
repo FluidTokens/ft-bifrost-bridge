@@ -2,6 +2,12 @@ CLAUDE.md
 .aider*
 .direnv/
 .envrc
+.env
+.env.local
+.env.*.local
+node_modules/
+offchain/spo-demo/state.json
+offchain/spo-demo/state.json.tmp
 proofs/.lake/
 AGENTS.md
 .codex/

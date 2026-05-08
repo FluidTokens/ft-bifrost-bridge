@@ -35,6 +35,7 @@ validator fault_verifier {
 
         expect Some(_input_present) = find_input(self.inputs, input_ref)
 
+        // TODO: Verify the submitted fault evidence/proof before minting FaultProof.
         expect [verifier_output] =
           list.filter(
             self.outputs,
