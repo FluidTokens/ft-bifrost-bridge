@@ -40,3 +40,11 @@ npm run demo
 
 The script is intentionally linear and commented so each transaction maps back to
 one protocol step.
+
+## Code Layout
+
+- `src/demo.ts`: top-level setup and showcase orchestration.
+- `src/transactions.ts`: transaction builders for each protocol step.
+- `src/plutus-data.ts`: datum and redeemer constructors.
+- `src/chain.ts`: Cardano/Blockfrost utility helpers.
+- `src/scripts.ts`: blueprint loading and validator parameterization.
