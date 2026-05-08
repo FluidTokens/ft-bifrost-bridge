@@ -1,0 +1,24 @@
+{
+  "name": "@bifrost/spo-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "demo": "tsx src/demo.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@blaze-cardano/sdk": "^0.2.48",
+    "@noble/curves": "^1.9.7",
+    "@sinclair/typebox": "^0.34.49",
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  },
+  "overrides": {
+    "ip-address": "10.2.0"
+  }
+}
