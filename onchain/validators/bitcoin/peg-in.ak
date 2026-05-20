@@ -59,11 +59,8 @@ validator peg_in_validator(
     let peg_in_amount_positive =
       builtin.un_i_data(peg_in_request.expected_datum.peg_in_amount) > 0
 
-    //AssetName must be the concat of index+input_ref_hash
-    let correct_asset_name = and {
-        bytearray.at(minted_asset_name, 0) == 0,
-        bytearray.drop(minted_asset_name, 1) == input_ref_hash,
-      }
+    //AssetName must be input_ref_hash
+    let correct_asset_name = minted_asset_name == input_ref_hash
 
     //Output must have 1 token with quantity 1
     let output_has_unique_token =
