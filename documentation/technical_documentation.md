@@ -741,6 +741,21 @@ flowchart LR
 * fBTC minted equals the amount parsed from the raw BTC peg-in tx.
 * PegInRequest NFT is burned.
 
+> **Implementation note — Treasury Movement tx serialization (`treasury_movement_raw_tx`).**
+> The TM is verified by two checks that need *different* views of the same bytes:
+> the inline `legit_TM_verifier` withdraw (`peg-in.ak`) inspects the TM's input
+> **witnesses** to classify the spend path (protocol sweep — 1- or 3-item Taproot
+> witness — vs. a depositor CSV refund's 4-item witness), while the Bitcoin Merkle
+> inclusion proof is checked against the block header's tx-merkle-root, which
+> commits to **txids** (= `sha256d` of the *legacy*, witness-stripped serialization).
+> The redeemer therefore carries the **full segwit-serialized** TM (so the witness
+> data is available), and `peg-in.ak` computes the txid for the inclusion proof by
+> stripping the witness data **on-chain** (`bitcoin.strip_witness_data`) before
+> hashing — never trusting a caller-supplied stripped copy. The same applies in
+> principle to any raw Bitcoin tx whose witnesses must be inspected; the peg-in
+> *deposit* tx (`source_chain_peg_in_raw_tx`) is the exception — its witnesses are
+> never inspected, so it is stored already-stripped.
+
 ### Complete peg-out / burn fBTC (Cardano)
 
 **Purpose**: unlock the PegOut UTxO once the TM that fulfilled it has been confirmed — burning the locked fBTC and returning MIN_ADA to the withdrawer.

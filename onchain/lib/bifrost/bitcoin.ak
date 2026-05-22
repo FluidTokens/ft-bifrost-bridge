@@ -143,6 +143,78 @@ pub fn get_vout_scriptpubkey(raw_tx: ByteArray, vout_index: Int) -> ByteArray {
   read_output_scriptpubkey(raw_tx, vout_section_offset(raw_tx), vout_index)
 }
 
+// ── Witness stripping (segwit → legacy / txid serialization) ────────────────────
+// A txid is sha256d over the LEGACY (non-witness) serialization. A segwit tx
+// carries a marker (0x00) + flag (0x01) after the version and a per-input witness
+// section before the locktime; double-hashing those bytes yields the wtxid, not
+// the txid. To recover the txid (e.g. to verify Merkle inclusion against a block
+// header's tx-merkle-root), strip the witness data on-chain rather than trusting a
+// pre-stripped copy — stripping is deterministic, so the result is as trustworthy
+// as the input bytes themselves.
+
+// Skip n Bitcoin outputs starting at `offset` (the first output), returns new offset.
+fn skip_outputs(bytes: ByteArray, offset: Int, count: Int) -> Int {
+  if count == 0 {
+    offset
+  } else {
+    skip_outputs(bytes, skip_output(bytes, offset), count - 1)
+  }
+}
+
+// True iff `raw_tx` is segwit-serialized: marker byte 0x00 then flag byte 0x01
+// immediately after the 4-byte version (BIP144).
+pub fn is_witness_tx(raw_tx: ByteArray) -> Bool {
+  bytearray.at(raw_tx, 4) == 0x00 && bytearray.at(raw_tx, 5) == 0x01
+}
+
+// Return the legacy (non-witness) serialization of `raw_tx`, i.e. the bytes whose
+// sha256d is the txid. Layout of a segwit tx:
+//   [version 4][marker 1][flag 1][txins][txouts][witness][locktime 4]
+// Drop marker+flag and the witness section, keep version ++ txins ++ txouts ++
+// locktime. The witness section has a variable per-input layout, so it is not
+// parsed — locktime is taken as the final 4 bytes. A non-segwit tx is returned
+// unchanged.
+pub fn strip_witness_data(raw_tx: ByteArray) -> ByteArray {
+  if is_witness_tx(raw_tx) {
+    let version = bytearray.take(raw_tx, 4)
+    // txins + txouts begin at offset 6 (after version + marker + flag).
+    let (vin_count, vin_varint_size) = read_varint(raw_tx, 6)
+    let after_inputs = skip_inputs(raw_tx, 6 + vin_varint_size, vin_count)
+    let (vout_count, vout_varint_size) = read_varint(raw_tx, after_inputs)
+    let after_outputs =
+      skip_outputs(raw_tx, after_inputs + vout_varint_size, vout_count)
+    // body = the txins+txouts section, bytes [6, after_outputs).
+    let body = bytearray.take(bytearray.drop(raw_tx, 6), after_outputs - 6)
+    let locktime =
+      bytearray.take(bytearray.drop(raw_tx, bytearray.length(raw_tx) - 4), 4)
+    version
+      |> bytearray.concat(body)
+      |> bytearray.concat(locktime)
+  } else {
+    raw_tx
+  }
+}
+
+// A minimal segwit tx (1 input, 1 output, a 1-byte witness item) and its legacy
+// (witness-stripped) serialization. sha256d(stripped) is the txid; sha256d(full)
+// is the wtxid. Verified out-of-band:
+//   txid  = 90be577bb560e587a013c68901ba7ba2cab8a183195c5d47342a3eb9d2e27bc9
+//   wtxid = bf95a4d2da4b21c271a0b5da0b474b81cb9ad3462de1e7859d0cb5080a1d4e81
+test strip_witness_data_segwit() {
+  let full =
+    #"0200000000010111111111111111111111111111111111111111111111111111111111111111110000000000ffffffff0100f2052a01000000015101010000000000"
+  let stripped =
+    #"020000000111111111111111111111111111111111111111111111111111111111111111110000000000ffffffff0100f2052a01000000015100000000"
+  strip_witness_data(full) == stripped
+}
+
+// A legacy (non-segwit) tx must pass through unchanged.
+test strip_witness_data_legacy_noop() {
+  let legacy =
+    #"020000000111111111111111111111111111111111111111111111111111111111111111110000000000ffffffff0100f2052a01000000015100000000"
+  strip_witness_data(legacy) == legacy
+}
+
 // Parse the 28-byte Cardano PKH from the OP_RETURN output (always vout 1).
 // OP_RETURN scriptpubkey format: 6a <len> "BFR" (424652) <28-byte-pkh>
 pub fn get_op_return_pkh(raw_tx: ByteArray) -> ByteArray {

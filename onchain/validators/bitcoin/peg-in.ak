@@ -246,8 +246,14 @@ validator peg_in_validator(
             block_header_in_source_chain_inclusion_proof,
           )
 
+        // treasury_movement_raw_tx is the FULL (segwit) serialization: the
+        // legit_TM_verifier withdraw inspects its input witnesses to classify the
+        // spend path (protocol sweep vs depositor CSV refund). A txid is sha256d
+        // over the legacy serialization, so strip the witness data here before
+        // hashing, otherwise this would compute the wtxid and the Merkle proof
+        // against the block's tx-merkle-root (which commits to txids) would fail.
         let treasury_movement_tx_hash =
-          utils.bitcoin_hash(treasury_movement_raw_tx)
+          utils.bitcoin_hash(bitcoin.strip_witness_data(treasury_movement_raw_tx))
         //Treasury Movement tx must belong to the block
         let treasury_movement_tx_included_in_block_header =
           bitcoin.verify_tx_merkle_proof(
