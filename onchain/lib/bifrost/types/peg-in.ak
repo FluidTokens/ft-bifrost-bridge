@@ -39,6 +39,10 @@ pub type PegInMintRedeemer {
 }
 
 pub type ActionType {
+  // Close a peg-in request via its owner_auth. NOTE: a fully spec-faithful peg-in cancellation
+  // (F4/F5: the creator closes the PIR after the depositor reclaims the BTC on the Bitcoin side via
+  // the Taproot CSV refund leaf, gated on a refund-script witness proof) is part of the unbuilt
+  // failure-mode milestone — see documentation/{technical_documentation,formal_verification}.md.
   Cancel { burnt_peg_in_nft_asset_name: AssetName }
   // B1 (full wiring): instead of re-proving the Treasury Movement inline, completion *references*
   // the Confirmed TM UTxO (authenticated by the TM NFT) and reads `btc_txid` + `swept_peg_in_utxo_ids`
