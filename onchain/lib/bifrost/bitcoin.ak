@@ -141,6 +141,18 @@ pub fn get_vout_scriptpubkey(raw_tx: ByteArray, vout_index: Int) -> ByteArray {
   read_output_scriptpubkey(raw_tx, vout_section_offset(raw_tx), vout_index)
 }
 
+// Number of outputs declared by `raw_tx` (non-witness form). Used to bound a caller-supplied
+// vout index before scanning, so a maliciously large index can't force get_vout_* to recurse
+// far past the real outputs and burn the script budget.
+pub fn get_vout_count(raw_tx: ByteArray) -> Int {
+  let offset = 4
+  let (vin_count, vin_varint_size) = read_varint(raw_tx, offset)
+  let offset = offset + vin_varint_size
+  let offset = skip_inputs(raw_tx, offset, vin_count)
+  let (vout_count, _) = read_varint(raw_tx, offset)
+  vout_count
+}
+
 // ── Witness stripping (segwit → legacy / txid serialization) ────────────────────
 // A txid is sha256d over the LEGACY (non-witness) serialization. A segwit tx
 // carries a marker (0x00) + flag (0x01) after the version and a per-input witness
@@ -274,10 +286,16 @@ pub fn deposit_binding_ok(
         vout_bytes,
         2,
       ) * 65536 + bytearray.at(vout_bytes, 3) * 16777216
-    and {
-      bytearray.take(get_vout_scriptpubkey(raw_tx, vout), 2) == #"5120",
-      get_vout_satoshis(raw_tx, vout) == peg_in_amount,
-      get_op_return_xonly(raw_tx) == user_source_chain_pub_key,
+    // Bound the caller-supplied vout by the tx's real output count BEFORE scanning, so a maliciously
+    // large vout can't make get_vout_* recurse far past the outputs and exhaust the script budget.
+    if vout >= get_vout_count(raw_tx) {
+      False
+    } else {
+      and {
+        bytearray.take(get_vout_scriptpubkey(raw_tx, vout), 2) == #"5120",
+        get_vout_satoshis(raw_tx, vout) == peg_in_amount,
+        get_op_return_xonly(raw_tx) == user_source_chain_pub_key,
+      }
     }
   }
 }
@@ -350,4 +368,16 @@ test deposit_binding_rejects_substituted_xonly() {
 test deposit_binding_rejects_short_outpoint() {
   let txid = sha2_256(sha2_256(sample_deposit_tx))
   !deposit_binding_ok(sample_deposit_tx, txid, #"00", 100000, sample_xonly)
+}
+
+// An out-of-range vout (≥ the tx's real output count) is rejected by the vout-count bound, WITHOUT
+// scanning far past the outputs (budget-exhaustion guard). The sample tx has 2 outputs; vout 9999
+// (0x270f LE) is rejected.
+test deposit_binding_rejects_out_of_range_vout() {
+  let txid = sha2_256(sha2_256(sample_deposit_tx))
+  !deposit_binding_ok(sample_deposit_tx, txid, sample_outpoint(#"0f270000"), 100000, sample_xonly)
+}
+
+test get_vout_count_of_sample_is_two() {
+  get_vout_count(sample_deposit_tx) == 2
 }
