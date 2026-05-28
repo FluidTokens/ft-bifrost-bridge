@@ -40,7 +40,7 @@ pub type InputCompletePegOut {
   peg_out_in_completed_peg_outs_exclusion_proof: mpf.Proof,
 }
 
-pub type ActionType {
+pub type PegOutActionType {
   Cancel {
     cancel_info: InputCancel,
     //Redeemer index of the withdraw script that checks for treasury movement and PegOut NOT produced
@@ -62,5 +62,5 @@ pub type ActionType {
 pub type PegOutWithdrawRedeemer {
   config_ref_input_index: Int,
   //Type of action with the relative additional data
-  action_type: ActionType,
+  action_type: PegOutActionType,
 }

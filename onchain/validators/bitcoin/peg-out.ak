@@ -7,7 +7,7 @@ use bifrost/authorizer.{authorize_action, create_auth}
 use bifrost/bitcoin
 use bifrost/types/general.{AuthorizationMethod, ChainState}
 use bifrost/types/peg_out.{
-  ActionType, Cancel, CompletePegOut, InputCancel, InputCompletePegOut,
+  PegOutActionType, Cancel, CompletePegOut, InputCancel, InputCompletePegOut,
   PegOutDatum, PegOutWithdrawRedeemer,
 }
 use bifrost/utils
