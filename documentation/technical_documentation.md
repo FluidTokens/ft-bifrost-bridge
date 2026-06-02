@@ -725,9 +725,9 @@ flowchart LR
 
 * Referenced `Confirmed TM tx` UTxO carries a legitimate TM NFT.
 * PegInRequest's `peg_in_utxo_id` appears in `Confirmed.swept_peg_in_utxo_ids`.
-* Depositor's Schnorr signature is valid over the **per-mint signing message**, using the x-only pubkey whose `HASH160` equals the `depositor_pubkey_hash` embedded in `source_chain_peg_in_raw_tx`. *This is what proves the depositor — not a watchtower — is claiming the fBTC.*
+* Depositor's Schnorr signature is valid over the **per-mint signing message**, using the x-only pubkey recorded in the PegInRequest datum (`user_source_chain_pub_key`). At PegInRequest **mint** time that key — together with `peg_in_utxo_id` and `peg_in_amount` — is bound to the depositor's *actual* deposit: the mint handler checks they match a real P2TR output of the block-confirmed deposit tx and the x-only key committed in that deposit's `BFR` OP_RETURN (`bitcoin.deposit_binding_ok`). *This is what proves the depositor — not a watchtower — is claiming the fBTC.*
 
-  The signing message is a blake2b hash of:
+  The signing message is a `sha2_256` hash of:
 
   ```
   sig_msg = "BFR-mint-v1" ‖ Confirmed.btc_txid ‖ peg_in_utxo_id ‖ chosen_cardano_address
@@ -740,6 +740,18 @@ flowchart LR
 * Peg-in **is** in the new MPT root in the output (prevents double-mint).
 * fBTC minted equals the amount parsed from the raw BTC peg-in tx.
 * PegInRequest NFT is burned.
+
+> **Implementation note — where the TM is verified (B1).**
+> `CompletePegIn` does **not** carry the raw TM tx or any Bitcoin Merkle/inclusion proof. It
+> **references** the `Confirmed TM tx` UTxO (authenticated by its TM NFT) and reads `btc_txid` +
+> `swept_peg_in_utxo_ids` straight from that UTxO's `Confirmed` datum. The TM's txid was recomputed
+> with on-chain witness-stripping and proven oracle-confirmed *earlier*, in the **Confirm TM tx**
+> step (binocular `confirm-tmtx`), so none of that is repeated at completion. Consequently the
+> depositor signing message uses `sha2_256` (not blake2b) over
+> `"BFR-mint-v1" ‖ Confirmed.btc_txid ‖ peg_in_utxo_id ‖ chosen_cardano_address`, and the depositor
+> key / amount / outpoint are bound to the real deposit tx at PegInRequest **mint** time
+> (`bitcoin.deposit_binding_ok`). The peg-in *deposit* tx (`source_chain_peg_in_raw_tx`) is stored
+> already witness-stripped — its witnesses are never inspected.
 
 ### Complete peg-out / burn fBTC (Cardano)
 

@@ -1,5 +1,6 @@
 use aiken/merkle_patricia_forestry as mpf
 use bifrost/types/general.{AuthorizationMethod}
+use cardano/address.{Address}
 use cardano/assets.{AssetName}
 use cardano/transaction.{OutputReference}
 
@@ -37,33 +38,33 @@ pub type PegInMintRedeemer {
   new_peg_in_request: PegInRequest,
 }
 
-pub type InputCompletePegIn {
-  //The actual block header containing the Treasury Movement tx
-  block_header: ByteArray,
-  //Proof that the passed block header belongs to the source chain
-  block_header_in_source_chain_inclusion_proof: mpf.Proof,
-  //Treasury Movement tx to be parsed
-  treasury_movement_raw_tx: ByteArray,
-  //Treasury Movement tx index in the block
-  treasury_movement_tx_index: Int,
-  //Proof that the Treasury Movement tx is included in the block header
-  treasury_movement_tx_inclusion_proof: List<ByteArray>,
-  //Proof that the PegIn tx is not yet included in the merkle tree of completed PegIns
-  peg_in_in_completed_peg_ins_exclusion_proof: mpf.Proof,
-}
-
 pub type ActionType {
+  // Close a peg-in request via its owner_auth. NOTE: a fully spec-faithful peg-in cancellation
+  // (F4/F5: the creator closes the PIR after the depositor reclaims the BTC on the Bitcoin side via
+  // the Taproot CSV refund leaf, gated on a refund-script witness proof) is part of the unbuilt
+  // failure-mode milestone — see documentation/{technical_documentation,formal_verification}.md.
   Cancel { burnt_peg_in_nft_asset_name: AssetName }
+  // B1 (full wiring): instead of re-proving the Treasury Movement inline, completion *references*
+  // the Confirmed TM UTxO (authenticated by the TM NFT) and reads `btc_txid` + `swept_peg_in_utxo_ids`
+  // from its datum. Depositor authorization is embedded here (the former `owner_auth` withdraw
+  // delegation to binocular's PegInDepositorAuthValidator is gone): a BIP340 Schnorr signature over
+  // sha2_256("BFR-mint-v1" ‖ btc_txid ‖ peg_in_utxo_id ‖ recipient) with the datum's
+  // `user_source_chain_pub_key`, plus recipient-binding of the minted fBTC.
   CompletePegIn {
-    complete_peg_in_info: InputCompletePegIn,
+    //Depositor-chosen fBTC destination; bound into both the signed message and the fBTC output
+    recipient: Address,
+    //Index of the output paying `peg_in_amount` fBTC to `recipient`
+    fbtc_output_index: Int,
+    //Depositor's BIP340 Schnorr signature authorizing this recipient + TM
+    depositor_signature: ByteArray,
     //Index of the input containing the completed_peg_ins merkle tree
     completed_peg_in_utxos_input_index: Int,
     //Index of the output containing the completed_peg_ins merkle tree
     completed_peg_in_utxos_output_index: Int,
-    //List of inclusion proofs to insert all the newly completed PegIns
+    //Inclusion proof to insert the newly completed PegIn
     added_peg_in_to_completed_peg_ins_inclusion_proof: mpf.Proof,
-    //Redeemer index of the withdraw script that checks for treasury movement and PegIn spent
-    tmtilaspisvsh_withdraw_redeemer_index: Int,
+    //Proof that the PegIn is not yet included in the merkle tree of completed PegIns
+    peg_in_in_completed_peg_ins_exclusion_proof: mpf.Proof,
   }
 }
 
