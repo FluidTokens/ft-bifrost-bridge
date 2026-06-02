@@ -1,0 +1,4 @@
+[submodule "offchain/bitcoin-watchtower"]
+	path = offchain/bitcoin-watchtower
+	url = https://github.com/lantr-io/binocular.git
+	branch = main
