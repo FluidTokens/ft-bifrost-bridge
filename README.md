@@ -7,3 +7,17 @@ Bitcoin users and Liquidity Providers strongly require that the bridge between B
 The current most known bridge implementation is Cardinal by IOG, a superb implementation of the BitVM framework into the Cardano ecosystem. While an incredible work of art, it suffers of the following pain points: there’s a 1-of-n trust assumption where the 1 honest player must burn his secret key (extremely difficult to prove); only a finite set of pre-chosen operators can execute the peg-out process (liveness problems); you can only peg-out the exact same amount of BTC that you have pegged-in.
 
 After almost 2 years of research and trials, we propose a similar but alternative product whose approach aims to remove these pain points, leveraging the unique properties of Cardano: eUTxO-model, SPOs consensus and being an independent strong Layer 1.
+
+## Cloning
+
+This repository uses git submodules (the [binocular](https://github.com/lantr-io/binocular) watchtower lives at `offchain/bitcoin-watchtower`). Clone with submodules included:
+
+```bash
+git clone --recurse-submodules https://github.com/FluidTokens/ft-bifrost-bridge
+```
+
+If you already cloned without `--recurse-submodules`, initialize them with:
+
+```bash
+git submodule update --init --recursive
+```
