@@ -10,7 +10,12 @@ After almost 2 years of research and trials, we propose a similar but alternativ
 
 ## Cloning
 
-This repository uses git submodules (the [binocular](https://github.com/lantr-io/binocular) watchtower lives at `offchain/bitcoin-watchtower/binocular`). Clone with submodules included:
+This repository uses git submodules:
+
+- the [binocular](https://github.com/lantr-io/binocular) watchtower lives at `offchain/bitcoin-watchtower/binocular`
+- the [heimdall](https://github.com/lantr-io/heimdall) SPO program lives at `offchain/SPO/heimdall`
+
+Clone with submodules included:
 
 ```bash
 git clone --recurse-submodules https://github.com/FluidTokens/ft-bifrost-bridge

@@ -2,3 +2,7 @@
 	path = offchain/bitcoin-watchtower/binocular
 	url = https://github.com/lantr-io/binocular.git
 	branch = main
+[submodule "offchain/SPO/heimdall"]
+	path = offchain/SPO/heimdall
+	url = https://github.com/lantr-io/heimdall.git
+	branch = main
