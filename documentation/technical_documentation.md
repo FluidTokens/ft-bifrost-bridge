@@ -908,30 +908,30 @@ Concretely, an SPO registers by submitting a Cardano `register_spo` transaction 
 All registered SPOs are tracked using an **on-chain ordered linked-list**. Each node in the list represents a registered SPO and is stored as an individual UTxO at the registry script address. The list is ordered by `pool_id`, ensuring uniqueness and enabling efficient insertion and removal.
 
 - **Node Value**: Bifrost Membership Token + the minimum ADA required to hold the token and datum.
-- **Node Datum**:
-```json
-{ key              :: ByteArray       -- pool_id (ordering key)
-, next             :: ByteArray | Null -- key of the next node, or null for the tail
-, data             ::
-    { bifrost_id_pk :: ByteArray
-    , bifrost_url   :: ByteArray
-    }
-}
+- **Element key**: the ordering key is **not stored in the datum** — it is the **asset name of the registry-policy NFT** held in the UTxO. The list root carries the constant asset name `reg-root`; each registration node carries its `pool_id` (`blake2b_224(cold_vkey)`) as the asset name. The key is therefore minted under, and authenticated by, the `spos_registry.ak` policy: immutable across spends, unique, and indexable.
+- **Element Datum** (`aiken_design_patterns/linked_list` `Element`):
+```text
+Element     = Constr(0, [ ElementData, Link ])
+ElementData = Constr(0, [ Constr(0, []) ])                             -- Root  (ListRootData, empty)
+            | Constr(1, [ Constr(0, [ bifrost_id_pk, bifrost_url ]) ]) -- Node  (RegistrationNodeData)
+Link        = Constr(0, [ next_key ])  -- Some: asset name (pool_id) of the next node, ascending
+            | Constr(1, [])            -- None: tail
 ```
+where `RegistrationNodeData` is `{ bifrost_id_pk :: ByteArray, bifrost_url :: ByteArray }` — the Bifrost identity key and URL used later by the off-chain DKG and signing protocol.
 
-The registration linked-list key is `pool_id`, not `bifrost_id_pk`. Registration, revocation, and banning are all pool-scoped operations, so the compact cold-key-derived identifier `pool_id = blake2b_224(cold_vkey)` is the canonical on-chain key. The authorized `bifrost_id_pk` is stored in the datum because it is the key actually used later by the off-chain DKG and signing protocol.
+The registration list is keyed by `pool_id`, not `bifrost_id_pk`: registration, revocation, and banning are all pool-scoped operations, so the compact cold-key-derived identifier `pool_id = blake2b_224(cold_vkey)` is the canonical on-chain key. It is carried as the **NFT asset name** (not a datum field), so it is authenticated by the minting policy and immutable across spends; the authorized `bifrost_id_pk` lives in the node datum because it is the key actually used later by the off-chain protocol.
 
 The ADA locked in the registration node is only the minimum lovelace required by Cardano to hold the membership token and datum. It is not protocol collateral and is fully returned on voluntary revocation.
 
 **Operations:**
-- **Prepend/Insert**: A new node is inserted in sorted order by verifying it is correctly positioned between its neighbors. Corresponds to `ordered.prepend` in the on-chain code.
-- **Remove**: A node is removed by relinking its neighbors. Corresponds to `ordered.remove` in the on-chain code.
+- **Insert (ascending)**: A new node is inserted in ascending key order by verifying it sits between its neighbours — the spent **anchor** (the element with the greatest key strictly below the new node, or the root) keeps its data and is relinked to point at the new key, and the new node takes over the anchor's old link. Corresponds to `linked_list.insert_ascending` in the on-chain code.
+- **Remove**: A node is removed by relinking its neighbours. Corresponds to `linked_list.remove` in the on-chain code.
 
 **Spending Conditions**: Each registration node UTxO can be spent only by **voluntary revocation** via the cold-key-signed `bifrost-revoke` message, valid only at epoch boundary (enforced via Cardano validity intervals).
 
 Fault-based banning does not spend the registration node. Instead, it updates the separate ban linked-list while the registration node remains in place.
 
-The on-chain linked-list implementation uses the `aiken_design_patterns/linked_list/ordered` module [5].
+The on-chain linked-list implementation uses the `aiken_design_patterns/linked_list` module [5].
 
 ##### 3.3 Bifrost Identity Root In Treasury State
 
@@ -955,18 +955,16 @@ This preserves `pool_id` as the canonical on-chain membership identity while ens
 Temporary and permanent bans are tracked in a **separate on-chain ordered linked-list** at `spo_bans.ak`. A ban entry does not replace or burn the Bifrost Membership Token; instead, off-chain roster derivation subtracts the active ban list from the registration list.
 
 - **Node Value**: ban node auth token `ban/ || pool_id` + the minimum ADA required to hold the token and datum.
-- **Node Datum**:
-```json
-{ key              :: ByteArray        -- pool_id (ordering key)
-, next             :: ByteArray | Null -- key of the next node, or null for the tail
-, data             ::
-    { ban_counter     :: Int
-    , ban_until_time  :: Int  -- POSIX time in milliseconds
-    , permanent       :: Bool
-    , evidence_hashes :: List<ByteArray>
-    }
-}
+- **Element key**: as in the registration list (§3.2), the ordering key is **not stored in the datum** — it is the **asset name of the ban-policy NFT** held in the UTxO. The list root carries the asset name `ban-root`; each ban node carries `ban/ || pool_id`. Keys are authenticated by the `spo_bans.ak` policy.
+- **Element Datum** (`aiken_design_patterns/linked_list` `Element`):
+```text
+Element     = Constr(0, [ ElementData, Link ])
+ElementData = Constr(0, [ Constr(0, []) ])  -- Root (BanListRootData, empty)
+            | Constr(1, [ Constr(0, [ ban_counter, ban_until_time, permanent, evidence_hashes ]) ])  -- Node (BanNodeData)
+Link        = Constr(0, [ next_key ])  -- Some: asset name of the next node, ascending
+            | Constr(1, [])            -- None: tail
 ```
+where `BanNodeData` is `{ ban_counter :: Int, ban_until_time :: Int (POSIX ms), permanent :: Bool, evidence_hashes :: List<ByteArray> }`.
 
 **Semantics:**
 - At most one ban entry exists per `pool_id`.
