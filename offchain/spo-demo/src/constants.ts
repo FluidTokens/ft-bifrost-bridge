@@ -33,6 +33,11 @@ export const BOOTSTRAP_NONCE_LOVELACE = 3_000_000n;
 export const TREASURY_BOOTSTRAP_LOVELACE = 3_000_000n;
 export const UTXO_POLL_INTERVAL_MS = 5_000;
 export const UTXO_POLL_ATTEMPTS = 24;
+export const DEMO_BASE_BAN_DURATION_MS = 86_400_000;
+export const DEMO_MAX_FAULTS_BEFORE_PERMANENT = 3;
+export const DEMO_MAX_BAN_VALIDITY_WINDOW_MS = 600_000;
+export const DEMO_BAN_TX_VALIDITY_WINDOW_MS = 300_000;
+export const DEMO_BAN_TX_VALIDITY_LOWER_SLACK_MS = 120_000;
 
 export const EMPTY_MPF_ROOT = "00".repeat(32);
 export const DEMO_TREASURY_ADDRESS = "01".repeat(32);
@@ -44,9 +49,10 @@ export const DEMO_BIFROST_URL = Buffer.from(
   "https://spo.demo.zkfold.io",
   "utf8",
 ).toString("hex");
-export const DEMO_FAULT_EPOCH = 0;
 export const DEMO_FAULT_NAMESPACE_HASH = "05".repeat(32);
 export const DEMO_FAULT_EVIDENCE_HASH = "06".repeat(32);
+export const DEMO_UNUSED_FAULT_POLICY_ID_1 = "07".repeat(28);
+export const DEMO_UNUSED_FAULT_POLICY_ID_2 = "08".repeat(28);
 
 export const REGISTRY_ROOT_TOKEN_NAME = Buffer.from(
   "reg-root",

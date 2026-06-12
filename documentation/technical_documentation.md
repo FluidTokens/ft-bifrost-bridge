@@ -75,15 +75,15 @@ This section collects the acronyms, protocol terms, on-chain validators, mathema
 * **Confirmed (Binocular)**: a Bitcoin block that has 100+ confirmations and has cleared the 200-minute challenge window (see [1]).
 * **Current roster**: the on-chain SPO set currently controlling the treasury and authorized to sign the next TM.
 * **Depositor**: user who locks BTC on Bitcoin to mint fBTC on Cardano.
-* **Eligible roster**: `registration_list \ active_ban_list` for the current epoch.
+* **Eligible roster**: `registration_list \ active_ban_list` for the relevant protocol time.
 * **Epoch boundary**: Cardano epoch transition; the moment registration snapshots, stake distribution snapshots, and roster handoffs occur.
 * **Equivocation**: two distinct signed payloads from the same SPO under the same `namespace_hash`.
-* **FaultProof token**: singleton NFT minted by `fault_verifier.ak` after a direct fault is established. Its token name is `pool_id || epoch_u32_be`, and `spo_bans.ak` consumes it to apply a ban.
+* **FaultProof token**: singleton NFT minted by an authorized fault verifier policy after a direct fault is established. Its token name is `blake2b_256(pool_id || evidence_hash)`, and `spo_bans.ak` consumes it to apply a ban.
 * **Federation / $Y_{federation}$**: pre-defined fallback signing entity used for emergency Treasury Movement signing.
 * **Group public key ($Y$, $Y_{51}$)**: FROST aggregate public key produced by the DKG.
 * **Inclusion / Non-inclusion proof**: cryptographic proof that an item is (or is not) in a Merkle/MPT structure.
 * **Internal key (Taproot)**: key used as the BIP341 [4] Taproot internal key ($Y_{51}$ for both Treasury and peg-in trees in Bifrost).
-* **Invalid payload (fault)**: payload whose contents fail cryptographic verification; provable on-chain via Plonk ZK.
+* **Invalid payload (fault)**: payload whose contents fail cryptographic verification; provable on-chain via Halo2 ZK.
 * **Key path / Script path**: the two BIP341 [4] Taproot spending paths.
 * **Leader (TM submission)**: SPO selected (with timeout cascade) to post the signed TM to Cardano (see §Cardano submission and leader reward).
 * **Live subset**: SPOs that published valid Round 1 payloads before the Round 1 deadline of an attempt.
@@ -121,8 +121,9 @@ Source code for all validators listed here is published in the Bifrost on-chain 
 
 | Validator              | Role                                                                                                                                              |
 | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
-| `spos_registry.ak`     | Pool-scoped registration and ban linked-lists; consumes `FaultToken`s to apply bans.                                                              |
-| `fault_verifier.ak`    | Verifies invalid-payload (Plonk ZK) and equivocation evidence; mints `FaultToken`s.                                                               |
+| `spos_registry.ak`     | Pool-scoped registration linked-list.                                                                                                             |
+| `spo_bans.ak`          | Pool-scoped temporary and permanent ban linked-list; consumes authorized `FaultProof` tokens to apply bans.                                       |
+| `fault_verifier.ak`    | Mock verifier policy for direct-fault records. Production uses separate authorized policies for Round 1, Round 2, and equivocation faults.          |
 | `peg_in.ak`            | Holds PegInRequest UTxOs created from confirmed Bitcoin deposits.                                                                                 |
 | `peg_out.ak`           | Holds PegOut UTxOs from withdrawers; consumed once the TM is confirmed on Bitcoin.                                                                |
 | `treasury.ak`          | Stores the Treasury state UTxO, including current $Y_{51}$, $Y_{federation}$, the completed peg-ins MPT, and the Bifrost identity root.           |
@@ -196,8 +197,8 @@ Bifrost logic is fully encapsulated in the following solutions:
 * **Watchtower program**: watchtowers run this software on top of source blockchain and Cardano nodes. It posts source blockchain block headers to the Binocular Oracle, detects peg-in transactions and posts PegInRequest UTxOs on Cardano, and relays SPO-signed Treasury Movement transactions to the source blockchain.
 * Cardano smart contracts:
   * **spos_registry.ak**: SPOs that participate in Bifrost need to register here for the next upcoming epoch. The registry maintains the pool-scoped registration linked-list on-chain. Registration entries are keyed by `pool_id = blake2b_224(cold_vkey)` and store the authorized `bifrost_id_pk` and `bifrost_url` used by the off-chain SPO protocol.
-  * **spo_bans.ak**: maintains the pool-scoped ban linked-list on-chain. It consumes verified direct-fault records and applies the exponential-timeout ban updates.
-  * **fault_verifier.ak**: verifies direct SPO fault evidence (invalid payloads and equivocation) and mints singleton `FaultProof` token UTxOs carrying verified fault records. Other scripts, including `spo_bans.ak`, reference or consume those records instead of re-verifying the raw evidence.
+  * **spo_bans.ak**: maintains the pool-scoped ban linked-list on-chain. It consumes verified direct-fault tokens from an allow-list of fault verifier policies and applies time-based ban updates.
+  * **fault_verifier.ak**: mock verifier policy for direct SPO fault evidence. Production uses separate verifier policies for DKG Round 1 faults, DKG Round 2 faults, and equivocation faults. Other scripts, including `spo_bans.ak`, consume the resulting tokens instead of re-verifying the raw evidence.
   * **Binocular**: The watchtowers (anyone) post the best chain of blocks here, other watchtowers eventually challenge it by posting a better version and the winner gets rewarded by the end of the availability window.
   * **peg_in.ak**: watchtowers (or anyone) create PegInRequest UTxOs here by minting a PegInRequest NFT and providing a Binocular inclusion proof of the Bitcoin deposit transaction. The datum contains the raw Bitcoin peg-in transaction bytes. SPOs do not have direct access to Bitcoin chain state, so PegInRequest UTxOs serve as their trusted source of Bitcoin deposit data for constructing Treasury Movement transactions.
   * **peg_out.ak**: when a withdrawer wants to unlock the bridged assets on the proper source blockchain, he locks his bridged assets at this smart contract. The datum contains the source blockchain destination address where assets should be sent. SPOs read these UTxOs to include peg-out payments in the Treasury Movement transaction.
@@ -863,7 +864,7 @@ These three authenticated UTxOs are the starting point for all later SPO-related
 
 - `register` consumes the current registration-list anchor element and the Treasury state UTxO, and produces the updated anchor element, the new registration node, and the updated Treasury state UTxO;
 - `deregister` consumes the current registration node, its anchor element, and the Treasury state UTxO, and produces the updated anchor element and the updated Treasury state UTxO;
-- `ban` inserts or updates a ban node: if the `pool_id` is not yet in the ban list, it consumes the current ban-list anchor element and produces the updated anchor element plus a new ban node; if the `pool_id` already has a ban node, it consumes that ban node and produces the updated ban node with the incremented `ban_counter` and new `ban_until_epoch`.
+- `ban` inserts or updates a ban node: if the `pool_id` is not yet in the ban list, it consumes the current ban-list anchor element and produces the updated anchor element plus a new ban node; if the `pool_id` already has a ban node, it consumes that ban node and produces the updated ban node with the incremented `ban_counter`, extended `ban_until_time`, and recorded `evidence_hash`.
 
 When the registration or ban list is otherwise empty, its bootstrap-created root UTxO is the anchor for the first insertion.
 
@@ -951,7 +952,7 @@ This preserves `pool_id` as the canonical on-chain membership identity while ens
 
 ##### 3.4 Ban Linked-List
 
-Temporary bans are tracked in a **separate on-chain ordered linked-list** at `spo_bans.ak`. A ban entry does not replace or burn the Bifrost Membership Token; instead, off-chain roster derivation subtracts the active ban list from the registration list.
+Temporary and permanent bans are tracked in a **separate on-chain ordered linked-list** at `spo_bans.ak`. A ban entry does not replace or burn the Bifrost Membership Token; instead, off-chain roster derivation subtracts the active ban list from the registration list.
 
 - **Node Value**: ban node auth token `ban/ || pool_id` + the minimum ADA required to hold the token and datum.
 - **Node Datum**:
@@ -960,16 +961,19 @@ Temporary bans are tracked in a **separate on-chain ordered linked-list** at `sp
 , next             :: ByteArray | Null -- key of the next node, or null for the tail
 , data             ::
     { ban_counter     :: Int
-    , ban_until_epoch :: Int
+    , ban_until_time  :: Int  -- POSIX time in milliseconds
+    , permanent       :: Bool
+    , evidence_hashes :: List<ByteArray>
     }
 }
 ```
 
 **Semantics:**
-- At most one active ban entry exists per `pool_id`.
-- A ban is considered **active** for epoch `E` iff `ban_until_epoch > E`.
-- Expired ban entries may remain on-chain temporarily; off-chain roster derivation must ignore them once `ban_until_epoch <= E`.
+- At most one ban entry exists per `pool_id`.
+- A ban is considered **active** at POSIX time `T` iff `permanent == True` or `ban_until_time > T`.
+- Expired temporary ban entries may remain on-chain; off-chain roster derivation must ignore them once `permanent == False` and `ban_until_time <= T`.
 - `ban_counter` is monotonically increasing for each `pool_id` and determines the exponential timeout duration.
+- `evidence_hashes` records the already-punished fault evidence hashes for the pool. `spo_bans.ak` rejects repeated punishment for the same evidence hash.
 
 #### 4. Registration Message and Signatures
 
@@ -1140,44 +1144,45 @@ Required validity interval:
 
 After exit, the SPO may re-register with a new Bifrost identity.
 
-##### 7.2 Banning (Exponential Timeout)
+##### 7.2 Banning
 
-The protocol supports **temporary banning** of SPOs who misbehave during DKG or signing rounds. A banned SPO retains their Membership Token and stays in the registration linked-list, but is excluded from participating in roster formation for a time-limited period through the separate ban linked-list.
+The protocol supports **temporary and permanent banning** of SPOs who misbehave during DKG or signing rounds. A banned SPO retains their Membership Token and stays in the registration linked-list, but is excluded from participating in roster formation through the separate ban linked-list.
 
-**Exponential timeout**: Each successive ban doubles the exclusion duration. If the previous `ban_counter` is `c`, the next one is `c + 1`, and the new exclusion duration is `2^c` epochs. Therefore the first ban lasts 1 epoch, the second 2 epochs, the third 4 epochs, and so on.
+**Exponential timeout**: Each temporary ban doubles the exclusion duration. If the new `ban_counter` is `n`, the new timeout duration is:
 
-**Active roster derivation**: For epoch `E`, the off-chain SPO program computes:
+`base_ban_duration_ms * 2^(n - 1)`
 
-`eligible_roster(E) = registration_list(E) \ active_ban_list(E)`
+The timeout is applied from the transaction validity interval's upper POSIX-time bound. For repeated temporary bans, the new expiry is:
 
-where `active_ban_list(E)` contains all `pool_id`s whose ban entry satisfies `ban_until_epoch > E`.
+`max(old_ban_until_time, ban_start_time) + duration`
 
-**Fault verification is separated from banning**: `fault_verifier.ak` is the only place that verifies raw misbehavior evidence. When a fault is established, it mints exactly one singleton `FaultProof` token and creates a verifier UTxO carrying:
+When `ban_counter >= max_faults_before_permanent`, the ban node sets `permanent = True`. A permanent ban has no expiry.
 
-```json
-{ kind              :: InvalidPayload | Equivocation
-, namespace_hash    :: ByteArray
-, evidence_hash     :: ByteArray
-}
+**Active roster derivation**: At POSIX time `T`, the off-chain SPO program computes:
+
+`eligible_roster(T) = registration_list(T) \ active_ban_list(T)`
+
+where `active_ban_list(T)` contains all `pool_id`s whose ban entry satisfies `permanent == True || ban_until_time > T`.
+
+**Fault verification is separated from banning**: fault verifier policies verify raw misbehavior evidence and mint singleton `FaultProof` tokens. The ban validator receives an allow-list containing three distinct policies: the DKG Round 1 fault policy, DKG Round 2 fault policy, and equivocation fault policy.
+
+The consensus-critical token name is:
+
+```
+blake2b_256(pool_id || evidence_hash)
 ```
 
-The `FaultProof` token name is `pool_id || epoch_u32_be`, where `epoch_u32_be` is the fault epoch encoded as a 4-byte big-endian unsigned integer.
-
-`namespace_hash` is the hash of the protocol namespace in which the fault occurred:
-
-```
-blake2b_256(phase || epoch || threshold_or_mode || attempt || txid?)
-```
-
-For DKG namespaces, `txid` is omitted. Other scripts reference or spend this verifier UTxO instead of replaying the original proof or challenge evidence.
+`evidence_hash` is the unique public input or evidence commitment for the fault. Datum attached to a fault UTxO may be used as metadata for off-chain indexing, but `spo_bans.ak` does not trust it for consensus. Instead, the ban redeemer carries `accused_pool_id` and `evidence_hash`; `spo_bans.ak` recomputes the token name and checks that exactly one authorized fault policy has minted and burned that token.
 
 **Ban transaction format**: the ban transaction is permissionless and:
-1. Spends a `FaultProof` token verifier UTxO whose token name encodes both the targeted registration `pool_id` and the fault epoch.
-2. References the accused SPO's registration node to bind the fault to an existing `pool_id`.
-3. Spends the appropriate anchor element of the ban linked-list (the root UTxO for the first ban on a branch, otherwise an existing node), plus the existing ban node for this `pool_id` if one already exists.
-4. Inserts or updates the ban node with the incremented `ban_counter` and `ban_until_epoch = current_epoch + 2^(ban_counter - 1)`.
-5. Rejects a repeated ban unless the `FaultProof` token's encoded fault epoch is strictly greater than the previously punished epoch for that `pool_id`. In particular, a participant cannot be banned twice for the same epoch.
-6. Leaves the Membership Token and registration node untouched while recording the updated ban state in the ban linked-list.
+1. Spends a `FaultProof` token UTxO under one of the authorized fault policies.
+2. Carries `accused_pool_id` and `evidence_hash` in the ban withdrawal redeemer.
+3. References the accused SPO's registration node to bind the fault to an existing `pool_id`.
+4. Spends the appropriate anchor element of the ban linked-list (the root UTxO for the first ban on a branch, otherwise an existing node), plus the existing ban node for this `pool_id` if one already exists.
+5. Burns exactly the token `blake2b_256(accused_pool_id || evidence_hash)` under the same authorized fault policy found in the fault input.
+6. Inserts or updates the ban node with the incremented `ban_counter`, updated `ban_until_time`, `permanent` flag, and new `evidence_hash`.
+7. Rejects a repeated ban if `evidence_hash` is already present in the ban node's `evidence_hashes`.
+8. Leaves the Membership Token and registration node untouched while recording the updated ban state in the ban linked-list.
 
 **Prototype transaction skeletons**:
 
@@ -1195,19 +1200,20 @@ Withdrawals:
 - coordinating ban withdrawal carrying:
   - `fault_input_index`
   - `registration_ref_input_index`
+  - `accused_pool_id`
+  - `evidence_hash`
   - `ban_anchor_input_index`
   - `ban_anchor_output_index`
   - `existing_ban_input_index = None`
   - `ban_node_output_index`
-  - `current_epoch`
 
 Mint:
 - under the ban-list policy:
   - `ban/ || pool_id` => +1
 
 Burn:
-- under `fault_verifier.ak`:
-  - `pool_id || epoch_u32_be` => -1
+- under the matching authorized fault policy:
+  - `blake2b_256(pool_id || evidence_hash)` => -1
 
 Outputs:
 - continued ban anchor output
@@ -1217,13 +1223,15 @@ Outputs:
   - min ADA
   datum:
   - `ban_counter = 1`
-  - `ban_until_epoch = current_epoch + 1`
+  - `ban_until_time = ban_start_time + base_ban_duration_ms`
+  - `permanent = 1 >= max_faults_before_permanent`
+  - `evidence_hashes = [evidence_hash]`
 
 Required witnesses:
 - normal tx witnesses only
 
 Required validity interval:
-- current epoch known to the off-chain builder
+- finite POSIX-time interval with width at most `max_validity_window_ms`
 ```
 
 ```text
@@ -1240,18 +1248,19 @@ Withdrawals:
 - coordinating ban withdrawal carrying:
   - `fault_input_index`
   - `registration_ref_input_index`
+  - `accused_pool_id`
+  - `evidence_hash`
   - `ban_anchor_input_index`
   - `ban_anchor_output_index`
   - `existing_ban_input_index = Some(...)`
   - `ban_node_output_index`
-  - `current_epoch`
 
 Mint:
 - none under the ban-list policy
 
 Burn:
-- under `fault_verifier.ak`:
-  - `pool_id || epoch_u32_be` => -1
+- under the matching authorized fault policy:
+  - `blake2b_256(pool_id || evidence_hash)` => -1
 
 Outputs:
 - continued ban node output
@@ -1260,16 +1269,18 @@ Outputs:
   - min ADA
   datum:
   - `ban_counter = old_ban_counter + 1`
-  - `ban_until_epoch = current_epoch + 2^(old_ban_counter)`
+  - `ban_until_time = max(old_ban_until_time, ban_start_time) + base_ban_duration_ms * 2^(ban_counter - 1)`
+  - `permanent = ban_counter >= max_faults_before_permanent`
+  - `evidence_hashes = evidence_hash :: old_evidence_hashes`
 
 Required witnesses:
 - normal tx witnesses only
 
 Required validity interval:
-- current epoch known to the off-chain builder
+- finite POSIX-time interval with width at most `max_validity_window_ms`
 ```
 
-**Ban expiry**: Once the ban period elapses, the SPO automatically becomes eligible for roster participation again without needing to re-register.
+**Ban expiry**: Once a temporary ban period elapses, the SPO automatically becomes eligible for roster participation again without needing to re-register. A permanent ban never expires.
 
 #### 8. Security Properties
 
@@ -1278,7 +1289,7 @@ Required validity interval:
 - **Air-gapped signing**: Both registration and revocation messages can be constructed offline and signed on an air-gapped machine.
 - **Sybil resistance**: One membership token per `pool_id` enforced by minting policy.
 - **Unique active Bifrost identities**: the Treasury state's `bifrost_identity_root` prevents two active registrations from sharing the same `bifrost_id_pk`.
-- **Separated fault verification**: `fault_verifier.ak` checks raw evidence once and mints a reusable `FaultProof` token; `spo_bans.ak` only applies ban updates.
+- **Separated fault verification**: authorized fault verifier policies check raw evidence once and mint reusable `FaultProof` tokens; `spo_bans.ak` only applies ban updates.
 - **No expiration**: Membership tokens remain valid indefinitely until explicitly revoked.
 
 
@@ -1331,7 +1342,7 @@ For each candidate $P_i$, the following information is retrieved:
 - `bifrost_id_pk` — from Membership UTxO datum.
 - `bifrost_url` — from Membership UTxO datum.
 - `delegated_stake` — queried from Cardano ledger state.
-- `ban_until_epoch` — from the ban linked-list, if a matching active entry exists.
+- `ban_until_time` and `permanent` — from the ban linked-list, if a matching ban entry exists.
 
 #### 5. Round 0: Initialization
 
@@ -1500,20 +1511,25 @@ Fault handling is split by round and evidence type:
 - **Round 1 invalidity** and **Round 1 equivocation** are directly punishable.
 - **Round 2 invalidity** and **Round 2 equivocation** are directly punishable.
 
-##### 9.1 `fault_verifier.ak` and `FaultProof` Token
+##### 9.1 Fault Verifier Policies And `FaultProof` Tokens
 
-Misbehavior verification is separated from ban-list updates. `fault_verifier.ak` verifies direct evidence. When a fault is established it mints exactly one singleton `FaultProof` token and creates a verifier UTxO:
+Misbehavior verification is separated from ban-list updates. Production uses separate authorized verifier policies for DKG Round 1 faults, DKG Round 2 faults, and equivocation faults. When a fault is established, the corresponding policy mints exactly one singleton `FaultProof` token and may create a verifier UTxO carrying metadata:
 
 ```json
 { kind               :: InvalidPayload | Equivocation
+, accused_pool_id    :: ByteArray
 , namespace_hash     :: ByteArray
 , evidence_hash      :: ByteArray
 }
 ```
 
-The `FaultProof` token name is `pool_id || epoch_u32_be`, where `epoch_u32_be` is the fault epoch encoded as a 4-byte big-endian unsigned integer.
+The `FaultProof` token name is:
 
-`namespace_hash = blake2b_256(phase || epoch || threshold_or_mode || attempt || txid?)`, where `txid` is omitted for DKG namespaces. Other scripts spend or reference this UTxO rather than re-verifying the raw evidence.
+```
+blake2b_256(pool_id || evidence_hash)
+```
+
+`namespace_hash = blake2b_256(phase || epoch || threshold_or_mode || attempt || txid?)`, where `txid` is omitted for DKG namespaces. `spo_bans.ak` does not trust the metadata datum; it authenticates the fault by checking the token name and the fault verifier policy id against its allow-list.
 
 **Prototype transaction skeleton**:
 
@@ -1530,8 +1546,8 @@ Withdrawals:
 - none
 
 Mint:
-- under `fault_verifier.ak`:
-  - `pool_id || epoch_u32_be` => +1
+- under the matching fault verifier policy:
+  - `blake2b_256(pool_id || evidence_hash)` => +1
 
 Burn:
 - none
@@ -1542,6 +1558,7 @@ Outputs:
   - min ADA
   datum:
   - `kind`
+  - `accused_pool_id`
   - `namespace_hash`
   - `evidence_hash`
 
@@ -1556,7 +1573,7 @@ Required validity interval:
 
 Direct proofs are permissionless and do not require roster consensus.
 
-**Invalid payload proofs** use Plonk ZK proofs. The sign-the-hash scheme (see **Authentication**) enables this: the accused SPO's signed `message_hash` binds them to specific protocol data, and a ZK circuit proves that data is cryptographically invalid without revealing the full payload on-chain.
+**Invalid payload proofs** use Halo2 ZK proofs. The sign-the-hash scheme (see **Authentication**) enables this: the accused SPO's signed `message_hash` binds them to specific protocol data, and a ZK circuit proves that data is cryptographically invalid without revealing the full payload on-chain.
 
 **Invalid payload types and what the ZK circuit proves:**
 
@@ -1566,21 +1583,21 @@ Direct proofs are permissionless and do not require roster consensus.
 
 **Invalid payload proof structure:**
 
-1. The prover submits `message_hash` (32B) + accused SPO signature (64B) + Plonk proof (~1–2 KB) + public inputs.
-2. `fault_verifier.ak` verifies the signature via `verifySchnorrSecp256k1Signature(bifrost_id_pk, message_hash, signature)`.
-3. `fault_verifier.ak` verifies the Plonk proof.
+1. The prover submits `message_hash` (32B) + accused SPO signature (64B) + Halo2 proof + public inputs.
+2. The appropriate fault verifier policy verifies the signature via `verifySchnorrSecp256k1Signature(bifrost_id_pk, message_hash, signature)`.
+3. The verifier policy verifies the Halo2 proof.
 4. The ZK circuit proves that the signed payload hashing to `message_hash` contains the specific invalidity.
-5. On success, `fault_verifier.ak` mints a `FaultProof` token for `kind = InvalidPayload`.
+5. On success, the verifier policy mints a `FaultProof` token for `kind = InvalidPayload`.
 
-**Size**: ~2 KB total on-chain data (message hash + signature + Plonk proof + public inputs), which fits comfortably in a 16 KB Cardano transaction. The Plonk verifier cost is constant regardless of circuit complexity, since the verification algorithm is the same for all circuit sizes.
+**Size**: the on-chain transaction carries the message hash, signature, Halo2 proof, and public inputs. The verifier cost depends on the configured proof system and generated verifier.
 
-**Equivocation proofs** are direct and do not use ZK. The prover submits two distinct signed payloads from the same accused SPO for the same namespace. `fault_verifier.ak` verifies:
+**Equivocation proofs** are direct and do not use ZK. The prover submits two distinct signed payloads from the same accused SPO for the same namespace. The equivocation verifier policy verifies:
 
 1. both payloads belong to the same `namespace_hash`;
 2. both signatures verify under the accused SPO's `bifrost_id_pk`; and
 3. the two canonical payload hashes are different.
 
-On success, `fault_verifier.ak` mints a `FaultProof` token for `kind = Equivocation`.
+On success, the equivocation verifier policy mints a `FaultProof` token for `kind = Equivocation`.
 
 ##### 9.3 Exclusion Of Non-Participants
 
@@ -1606,9 +1623,9 @@ This is the ordinary non-participation path. Only cryptographically invalid or e
 
 Direct cryptographic faults remain punishable:
 
-1. An invalid or equivocated Round 1/2 payload is proven at `fault_verifier.ak`.
-2. `fault_verifier.ak` mints a `FaultProof` token.
-3. `spo_bans.ak` may then ban the accused SPO via the exponential-timeout ban list.
+1. An invalid or equivocated Round 1/2 payload is proven at the appropriate authorized fault verifier policy.
+2. The verifier policy mints a `FaultProof` token named `blake2b_256(pool_id || evidence_hash)`.
+3. `spo_bans.ak` may then ban the accused SPO via the time-based ban list.
 
 Non-participation alone does not mint a `FaultProof` token and does not create a separate restart loop.
 
@@ -1806,7 +1823,7 @@ For a given TM and mode (`67` or `51`), all honest SPOs derive the same signing 
 6. Otherwise continue with exactly `S1` into Round 2.
 7. Wait until the Round 2 deadline and collect every valid Round 2 payload published by members of `S1`.
 8. Define the final signing subset `S2` as the members of `S1` that published valid Round 2 payloads before the deadline.
-9. Invalid or equivocating Round 2 payloads may be proven at `fault_verifier.ak` and are excluded from aggregation.
+9. Invalid or equivocating Round 2 payloads may be proven at the appropriate authorized fault verifier policy and are excluded from aggregation.
 10. If `S2` provides enough valid partial signatures to satisfy the active threshold, the mode succeeds.
 11. Otherwise the mode fails immediately when Round 2 closes.
 
@@ -1864,8 +1881,8 @@ SPO programs communicate peer-to-peer over HTTP. Each SPO runs a lightweight HTT
 Every honest SPO derives its local protocol state from Cardano first, then uses HTTP only to exchange the off-chain payloads for the current attempt. The required on-chain reads are:
 
 * the **registration linked-list**, to determine all registered Bifrost SPOs;
-* the **ban linked-list**, to determine which `pool_id`s are temporarily excluded and until which epoch;
-* the **active `fault_verifier.ak` UTxOs**, to observe already-minted `FaultProof` token records for direct cryptographic faults;
+* the **ban linked-list**, to determine which `pool_id`s are temporarily or permanently excluded;
+* the **active `FaultProof` UTxOs**, to observe already-minted direct-fault token records;
 * the **Treasury state** in `treasury.ak`, to learn the current treasury keys, the current roster authority, and the latest accepted handoff state;
 * the **pending PegInRequest and PegOut UTxOs**, to deterministically build the next Treasury Movement transaction; and
 * the **latest `treasury_movement.ak` outputs**, to determine whether a TM has already been posted by another eligible leader.
@@ -1873,7 +1890,7 @@ Every honest SPO derives its local protocol state from Cardano first, then uses 
 The SPO program must classify peers as:
 
 * **registered**: present in the registration linked-list;
-* **banned**: present in the registration linked-list and with an active ban entry for the current epoch;
+* **banned**: present in the registration linked-list and with an active temporary or permanent ban entry;
 * **eligible**: registered and not currently banned; and
 * **current roster member**: part of the on-chain roster that currently controls the treasury for signing and treasury handoff.
 
@@ -1913,11 +1930,11 @@ Failures are handled deterministically so that all honest SPOs converge on the s
 - Missing Round 2 publication does **not** create a challenge and does **not** immediately create an on-chain ban.
 
 **Direct faults**:
-- If an SPO publishes a payload with a valid transport signature but invalid cryptographic contents, or publishes two distinct signed payloads for the same namespace, any eligible SPO may submit direct fault evidence to `fault_verifier.ak`.
+- If an SPO publishes a payload with a valid transport signature but invalid cryptographic contents, or publishes two distinct signed payloads for the same namespace, any eligible SPO may submit direct fault evidence to the appropriate authorized fault verifier policy.
 - Once the resulting `FaultProof` token is consumed by `spo_bans.ak` and the ban is confirmed, future protocol runs exclude that SPO via the updated active ban list.
 
 **Deterministic subset selection**:
-- For DKG, the eligible set comes from `registration_list \ active_ban_list` at the current epoch boundary.
+- For DKG, the eligible set comes from `registration_list \ active_ban_list` at the relevant roster snapshot time.
 - For TM signing, the eligible set comes from the current on-chain roster minus any active ban entries.
 - In every attempt, the provisional subset is the set of SPOs that published valid Round 1 payloads before the common deadline, and the final qualified subset is the subset of those participants that also published valid Round 2 payloads.
 - For a fixed DKG `(epoch, threshold-mode)`, the threshold `t` is constant across attempts.

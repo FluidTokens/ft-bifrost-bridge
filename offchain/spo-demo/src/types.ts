@@ -55,7 +55,6 @@ export type DemoState = {
   demoPoolId?: string;
   faultProofTxHash?: string;
   faultProofRef?: OutputRef;
-  faultProofEpoch?: number;
   banTxHash?: string;
   banNodeRef?: OutputRef;
   deregistrationTxHash?: string;

@@ -1,18 +1,17 @@
 use aiken/builtin
 use aiken/collection/list
-use aiken/crypto.{VerificationKeyHash}
 use aiken/merkle_patricia_forestry as mpf
 use aiken_design_patterns/stake_validator
 use bifrost/authorizer.{authorize_action, create_auth}
 use bifrost/bitcoin
-use bifrost/types/general.{AuthorizationMethod, ChainState}
+use bifrost/types/general.{ChainState}
 use bifrost/types/peg_out.{
-  PegOutActionType, Cancel, CompletePegOut, InputCancel, InputCompletePegOut,
-  PegOutDatum, PegOutWithdrawRedeemer,
+  Cancel, CompletePegOut, InputCancel, InputCompletePegOut, PegOutDatum,
+  PegOutWithdrawRedeemer,
 }
 use bifrost/utils
 use cardano/address.{Credential, Script}
-use cardano/assets.{AssetName, PolicyId, quantity_of, without_lovelace}
+use cardano/assets.{PolicyId, quantity_of, without_lovelace}
 use cardano/script_context.{ScriptContext}
 use cardano/transaction.{InlineDatum, Output, OutputReference, Transaction}
 
@@ -39,9 +38,9 @@ validator peg_out_validator(
       builtin.un_b_data(utils.safe_list_at(config, 0))
     let bridged_token_asset_name =
       builtin.un_b_data(utils.safe_list_at(config, 1))
-    let block_header_merkle_tree_policy_id =
+    expect _block_header_merkle_tree_policy_id =
       builtin.un_b_data(utils.safe_list_at(config, 4))
-    let block_header_merkle_tree_asset_name =
+    expect _block_header_merkle_tree_asset_name =
       builtin.un_b_data(utils.safe_list_at(config, 5))
     let completed_peg_outs_merkle_tree_policy_id =
       builtin.un_b_data(utils.safe_list_at(config, 8))

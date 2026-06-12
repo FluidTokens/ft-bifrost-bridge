@@ -383,7 +383,7 @@ The threshold t is computed as the minimum k such that the bottom-k SPOs by stak
 
 ### 3.6 Misbehavior Accountability
 
-SPO misbehavior during DKG or signing is provable on-chain via Plonk ZK proofs. Misbehaving SPOs are banned with exponential timeouts. This is unique among Bitcoin bridges — most have no on-chain misbehavior proof mechanism.
+SPO misbehavior during DKG or signing is provable on-chain via Halo2 ZK proofs or direct equivocation evidence. Misbehaving SPOs are banned with time-based exponential timeouts and a permanent-ban threshold. This is unique among Bitcoin bridges — most have no on-chain misbehavior proof mechanism.
 
 ---
 

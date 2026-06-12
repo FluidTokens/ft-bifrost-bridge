@@ -12,12 +12,22 @@ import type {
   ParameterizedScripts,
   ScriptHashes,
 } from "./types.js";
+import {
+  DEMO_BASE_BAN_DURATION_MS,
+  DEMO_MAX_BAN_VALIDITY_WINDOW_MS,
+  DEMO_MAX_FAULTS_BEFORE_PERMANENT,
+  DEMO_UNUSED_FAULT_POLICY_ID_1,
+  DEMO_UNUSED_FAULT_POLICY_ID_2,
+} from "./constants.js";
 
 const registryParamsType = Type.Tuple([Type.String(), Type.Number()]);
 const treasuryParamsType = Type.Tuple([Type.String()]);
 const bansParamsType = Type.Tuple([
   Type.String(),
-  Type.String(),
+  Type.Array(Type.String()),
+  Type.Number(),
+  Type.Number(),
+  Type.Number(),
   Type.String(),
   Type.Number(),
 ]);
@@ -108,7 +118,14 @@ export function parameterizeScripts(
     bansParamsType,
     [
       registry.hash(),
-      faultVerifier.hash(),
+      [
+        faultVerifier.hash(),
+        DEMO_UNUSED_FAULT_POLICY_ID_1,
+        DEMO_UNUSED_FAULT_POLICY_ID_2,
+      ],
+      DEMO_BASE_BAN_DURATION_MS,
+      DEMO_MAX_FAULTS_BEFORE_PERMANENT,
+      DEMO_MAX_BAN_VALIDITY_WINDOW_MS,
       bootstrapNonces.bans.txHash,
       bootstrapNonces.bans.outputIndex,
     ],

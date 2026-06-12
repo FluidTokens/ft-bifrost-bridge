@@ -68,12 +68,11 @@ export function unitOf(policyId: string, assetName: string): string {
   return `${policyId}${assetName}`;
 }
 
-export function faultProofTokenName(poolId: string, epoch: number): string {
-  if (epoch < 0 || epoch > 0xffffffff) {
-    throw new Error(`FaultProof epoch does not fit in 4 bytes: ${epoch}`);
-  }
-
-  return `${poolId}${epoch.toString(16).padStart(8, "0")}`;
+export function faultProofTokenName(
+  poolId: string,
+  evidenceHash: string,
+): string {
+  return Core.blake2b_256(Core.HexBlob(`${poolId}${evidenceHash}`));
 }
 
 export function banNodeTokenName(poolId: string): string {

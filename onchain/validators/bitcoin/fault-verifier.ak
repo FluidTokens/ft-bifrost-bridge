@@ -1,5 +1,6 @@
 use aiken/collection/dict
 use aiken/collection/list
+use aiken/crypto
 use aiken/primitive/bytearray
 use bifrost/types/fault_verifier as fault_verifier_types
 use bifrost/utils
@@ -11,16 +12,19 @@ fn is_pool_id(token_name: ByteArray) -> Bool {
   bytearray.length(token_name) == 28
 }
 
-fn is_fault_epoch(epoch: Int) -> Bool {
-  epoch >= 0
+fn is_evidence_hash(evidence_hash: ByteArray) -> Bool {
+  bytearray.length(evidence_hash) == 32
 }
 
 fn is_fault_token_name(token_name: ByteArray) -> Bool {
   bytearray.length(token_name) == 32
 }
 
-fn fault_token_name(accused_pool_id: ByteArray, epoch: Int) -> ByteArray {
-  bytearray.concat(accused_pool_id, bytearray.from_int_big_endian(epoch, 4))
+fn fault_token_name(
+  accused_pool_id: ByteArray,
+  evidence_hash: ByteArray,
+) -> ByteArray {
+  crypto.blake2b_256(bytearray.concat(accused_pool_id, evidence_hash))
 }
 
 validator fault_verifier {
@@ -30,8 +34,8 @@ validator fault_verifier {
     self: Transaction,
   ) {
     when redeemer is {
-      fault_verifier_types.PublishProof { input_ref, accused_pool_id, epoch, fault } -> {
-        let token_name = fault_token_name(accused_pool_id, epoch)
+      fault_verifier_types.PublishProof { input_ref, accused_pool_id, fault } -> {
+        let token_name = fault_token_name(accused_pool_id, fault.evidence_hash)
 
         expect Some(_input_present) = find_input(self.inputs, input_ref)
 
@@ -45,8 +49,9 @@ validator fault_verifier {
         and {
           utils.quantity_of_policy_id(self.mint, policy_id) == 1,
           is_pool_id(accused_pool_id),
-          is_fault_epoch(epoch),
+          is_evidence_hash(fault.evidence_hash),
           is_fault_token_name(token_name),
+          fault.accused_pool_id == accused_pool_id,
           quantity_of(self.mint, policy_id, token_name) == 1,
           verifier_output.datum == InlineDatum(fault),
         }

@@ -7,6 +7,7 @@ pub type FaultKind {
 
 pub type FaultProofDatum {
   kind: FaultKind,
+  accused_pool_id: ByteArray,
   namespace_hash: ByteArray,
   evidence_hash: ByteArray,
 }
@@ -15,7 +16,6 @@ pub type FaultProofMintRedeemer {
   PublishProof {
     input_ref: OutputReference,
     accused_pool_id: ByteArray,
-    epoch: Int,
     fault: FaultProofDatum,
   }
   BurnProof

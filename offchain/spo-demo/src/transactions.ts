@@ -1,9 +1,12 @@
 import { Blockfrost, Core, HotWallet, makeValue } from "@blaze-cardano/sdk";
 
 import {
+  DEMO_BAN_TX_VALIDITY_WINDOW_MS,
+  DEMO_BAN_TX_VALIDITY_LOWER_SLACK_MS,
+  DEMO_BASE_BAN_DURATION_MS,
+  DEMO_FAULT_EVIDENCE_HASH,
   BAN_ROOT_TOKEN_NAME,
   BOOTSTRAP_NONCE_LOVELACE,
-  DEMO_FAULT_EPOCH,
   EMPTY_MPF_ROOT,
   REGISTRY_ROOT_TOKEN_NAME,
   TREASURY_BOOTSTRAP_LOVELACE,
@@ -58,6 +61,36 @@ import type {
   DemoState,
   ParameterizedScripts,
 } from "./types.js";
+
+function slotNumber(slot: Core.Slot): number {
+  return Number(slot.valueOf());
+}
+
+function banValidityTiming(provider: Blockfrost): {
+  validFrom: Core.Slot;
+  validUntil: Core.Slot;
+  banStartTime: number;
+} {
+  const nowMs = Date.now();
+  const validFromMs = nowMs - DEMO_BAN_TX_VALIDITY_LOWER_SLACK_MS;
+  const validUntilMs = nowMs + DEMO_BAN_TX_VALIDITY_WINDOW_MS;
+  const validFrom = Core.Slot(
+    Math.floor(slotNumber(provider.unixToSlot(validFromMs))),
+  );
+  let validUntil = Core.Slot(
+    Math.ceil(slotNumber(provider.unixToSlot(validUntilMs))),
+  );
+
+  if (slotNumber(validUntil) <= slotNumber(validFrom)) {
+    validUntil = Core.Slot(slotNumber(validFrom) + 1);
+  }
+
+  return {
+    validFrom,
+    validUntil,
+    banStartTime: provider.slotToUnix(validUntil) - 1,
+  };
+}
 
 export async function createBootstrapNonceUtxos(
   blaze: BlazeInstance,
@@ -420,7 +453,7 @@ export async function publishMockFaultProof(
   const inputRef = utxoRef(fundingUtxo);
   const faultTokenName = faultProofTokenName(
     state.demoPoolId,
-    DEMO_FAULT_EPOCH,
+    DEMO_FAULT_EVIDENCE_HASH,
   );
   const faultProofUnit = unitOf(faultProofPolicyId, faultTokenName);
 
@@ -435,20 +468,18 @@ export async function publishMockFaultProof(
       faultProofPublishRedeemer({
         inputRef,
         poolId: state.demoPoolId,
-        epoch: DEMO_FAULT_EPOCH,
       }),
     )
     .payAssets(
       wallet.address,
       makeValue(TREASURY_BOOTSTRAP_LOVELACE, [faultProofUnit, 1n]),
-      Core.Datum.newInlineData(faultProofDatum()),
+      Core.Datum.newInlineData(faultProofDatum(state.demoPoolId)),
     )
     .complete();
   const signedTx = await blaze.signTransaction(tx);
   const txHash = String(await blaze.submitTransaction(signedTx));
 
   state.faultProofTxHash = txHash;
-  state.faultProofEpoch = DEMO_FAULT_EPOCH;
   state.faultProofRef = outputRefWithAsset(
     signedTx,
     txHash,
@@ -490,7 +521,7 @@ export async function applyFirstBan(
   const bansAddress = scriptAddress(bansPolicyId);
   const faultTokenName = faultProofTokenName(
     state.demoPoolId,
-    state.faultProofEpoch ?? DEMO_FAULT_EPOCH,
+    DEMO_FAULT_EVIDENCE_HASH,
   );
   const banNodeName = banNodeTokenName(state.demoPoolId);
   const banNodeUnit = unitOf(bansPolicyId, banNodeName);
@@ -511,14 +542,17 @@ export async function applyFirstBan(
     state.faultProofRef,
     state.banRootRef,
   ];
+  const banTiming = banValidityTiming(provider);
   const banIndexes = {
     faultInputIndex: ledgerInputIndex(inputRefs, state.faultProofRef),
     registrationRefInputIndex: 0,
+    accusedPoolId: state.demoPoolId,
+    evidenceHash: DEMO_FAULT_EVIDENCE_HASH,
     banAnchorInputIndex: ledgerInputIndex(inputRefs, state.banRootRef),
     banAnchorOutputIndex: 0,
     banNodeOutputIndex: 1,
-    currentEpoch: DEMO_FAULT_EPOCH,
   };
+  const banUntilTime = banTiming.banStartTime + DEMO_BASE_BAN_DURATION_MS;
 
   const buildTx = async (withdrawRedeemerIndex: number) => {
     return blaze
@@ -529,6 +563,8 @@ export async function applyFirstBan(
       .addReferenceInput(registrationNodeUtxo)
       .addPreCompleteHook(addPreEvaluationChange())
       .addPreCompleteHook(capPlaceholderExUnits)
+      .setValidFrom(banTiming.validFrom)
+      .setValidUntil(banTiming.validUntil)
       .provideScript(scripts.bans)
       .provideScript(scripts.faultVerifier)
       .addMint(
@@ -557,13 +593,15 @@ export async function applyFirstBan(
       .lockAssets(
         bansAddress,
         makeValue(TREASURY_BOOTSTRAP_LOVELACE, [banNodeUnit, 1n]),
-        Core.Datum.newInlineData(banNodeDatum(1, banIndexes.currentEpoch + 1)),
+        Core.Datum.newInlineData(
+          banNodeDatum(1, banUntilTime, false, [DEMO_FAULT_EVIDENCE_HASH]),
+        ),
       )
       .complete();
   };
 
   // Showcase: burn the FaultProof and insert the first ban node.
-  const tx = await buildTx(1);
+  const tx = await buildTx(3);
   const signedTx = await blaze.signTransaction(tx);
   const txHash = String(await blaze.submitTransaction(signedTx));
 

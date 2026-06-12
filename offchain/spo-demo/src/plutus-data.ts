@@ -57,8 +57,26 @@ function optionSomeInt(value: number): Core.PlutusData {
   return constrData(0, [intData(value)]);
 }
 
+function listData(items: Core.PlutusData[]): Core.PlutusData {
+  const list = new Core.PlutusList();
+
+  for (const item of items) {
+    list.add(item);
+  }
+
+  return Core.PlutusData.newList(list);
+}
+
 function emptyListData(): Core.PlutusData {
-  return Core.PlutusData.newList(new Core.PlutusList());
+  return listData([]);
+}
+
+function boolData(value: boolean): Core.PlutusData {
+  return constrData(value ? 1 : 0, []);
+}
+
+function bytesListData(values: string[]): Core.PlutusData {
+  return listData(values.map(bytesData));
 }
 
 function linkedListRootDatum(
@@ -194,10 +212,17 @@ export function continuedBanRootDatum(poolId: string): Core.PlutusData {
 
 export function banNodeDatum(
   banCounter: number,
-  banUntilEpoch: number,
+  banUntilTime: number,
+  permanent: boolean,
+  evidenceHashes: string[],
 ): Core.PlutusData {
   return linkedListNodeDatum(
-    constrData(0, [intData(banCounter), intData(banUntilEpoch)]),
+    constrData(0, [
+      intData(banCounter),
+      intData(banUntilTime),
+      boolData(permanent),
+      bytesListData(evidenceHashes),
+    ]),
   );
 }
 
@@ -220,28 +245,31 @@ export function banSpendRedeemer(
 export function banWithdrawRedeemer(args: {
   faultInputIndex: number;
   registrationRefInputIndex: number;
+  accusedPoolId: string;
+  evidenceHash: string;
   banAnchorInputIndex: number;
   banAnchorOutputIndex: number;
   existingBanInputIndex?: number;
   banNodeOutputIndex: number;
-  currentEpoch: number;
 }): Core.PlutusData {
   return constrData(0, [
     intData(args.faultInputIndex),
     intData(args.registrationRefInputIndex),
+    bytesData(args.accusedPoolId),
+    bytesData(args.evidenceHash),
     intData(args.banAnchorInputIndex),
     intData(args.banAnchorOutputIndex),
     args.existingBanInputIndex === undefined
       ? optionNoneData()
       : optionSomeInt(args.existingBanInputIndex),
     intData(args.banNodeOutputIndex),
-    intData(args.currentEpoch),
   ]);
 }
 
-export function faultProofDatum(): Core.PlutusData {
+export function faultProofDatum(poolId: string): Core.PlutusData {
   return constrData(0, [
     constrData(0, []),
+    bytesData(poolId),
     bytesData(DEMO_FAULT_NAMESPACE_HASH),
     bytesData(DEMO_FAULT_EVIDENCE_HASH),
   ]);
@@ -250,13 +278,11 @@ export function faultProofDatum(): Core.PlutusData {
 export function faultProofPublishRedeemer(args: {
   inputRef: OutputRef;
   poolId: string;
-  epoch: number;
 }): Core.PlutusData {
   return constrData(0, [
     outputRefData(args.inputRef),
     bytesData(args.poolId),
-    intData(args.epoch),
-    faultProofDatum(),
+    faultProofDatum(args.poolId),
   ]);
 }
 

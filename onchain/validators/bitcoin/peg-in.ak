@@ -8,12 +8,12 @@ use aiken/primitive/bytearray
 use bifrost/bitcoin
 use bifrost/types/general.{ChainState}
 use bifrost/types/peg_in.{
-  ActionType, Cancel, CompletePegIn, PegInDatum, PegInMintRedeemer, PegInRequest,
+  Cancel, CompletePegIn, PegInDatum, PegInMintRedeemer, PegInRequest,
   PegInWithdrawRedeemer,
 }
 use bifrost/types/treasury_movement.{Confirmed}
 use bifrost/utils
-use cardano/address.{Address, Credential, Inline, Script, StakeCredential}
+use cardano/address.{Address, Credential, Script}
 use cardano/assets.{AssetName, PolicyId, quantity_of, tokens, without_lovelace}
 use cardano/script_context.{ScriptContext}
 use cardano/transaction.{
