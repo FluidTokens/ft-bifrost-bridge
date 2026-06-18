@@ -577,7 +577,7 @@ flowchart LR
 | Role | Content |
 |------|---------|
 | **Inputs** | Current Treasury BTC UTxO + all confirmed peg-in UTxOs (identified by `peg_in_utxo_id` in each PegInRequest) |
-| **Outputs** | New Treasury UTxO at the new roster's $Q_{treasury}$ + one payment output per PegOut (pays `btc_destination_scriptPubKey` with `amount`) |
+| **Outputs** | New Treasury UTxO at the new roster's $Q_{treasury}$ + one payment output per PegOut (pays `btc_destination_scriptPubKey` with `amount` minus the per-peg-out protocol fee — see *Amounts and fees*) |
 | **Witness** | FROST aggregated Schnorr signature(s) per the chosen variant |
 | **Validity** | CSV timelock enforced on inputs only in the federation variant |
 | **Size (est.)** | **Hard-capped at ~15 KB raw bytes** — the signed TM is carried in the Cardano Post-TM datum, which must fit the 16 KB Cardano tx limit. Per-variant max batch: ~100 peg-ins + ~100 peg-outs (51% key-path, ~107 B/input); ~57+57 (federation — script-path + CSV on every input, ~213 B/input). Beyond these, SPOs split across multiple TMs (see line above). |
@@ -595,7 +595,7 @@ flowchart LR
 
 * The batch covers exactly the frozen set of PegInRequests and PegOuts for this epoch (determinism — every honest SPO must build the same unsigned tx).
 * Each peg-in input is spendable via a path the signer actually controls.
-* Each PegOut payment matches the destination and amount in its datum.
+* Each PegOut payment matches the destination in its datum and pays that `amount` minus the per-peg-out protocol fee (see *Amounts and fees*).
 
 If the TM is malformed or omits a peg-out, recovery paths on Cardano unwind the state in the next epoch.
 
@@ -769,7 +769,7 @@ flowchart LR
 **Checks enforced on-chain**
 
 * Referenced `Confirmed TM tx` UTxO carries a legitimate TM NFT.
-* The selected `fulfilled_peg_outs` entry matches `PegOutDatum.btc_destination_scriptPubKey` with an amount equal to the fBTC held in the PegOut UTxO.
+* The selected `fulfilled_peg_outs` entry matches `PegOutDatum.btc_destination_scriptPubKey` with an amount equal to the fBTC held in the PegOut UTxO **minus the per-peg-out protocol fee** (the BTC output is net of fee; see *Treasury Movement → Amounts and fees*). The burned fBTC is the full gross (next line); only the BTC payout is net.
 * Burned fBTC quantity equals the fBTC held in the PegOut UTxO.
 * MIN_ADA is returned to the original withdrawer.
 
