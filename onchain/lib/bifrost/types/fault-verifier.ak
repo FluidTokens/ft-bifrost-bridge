@@ -26,7 +26,11 @@ pub type FaultProofMintRedeemer {
   // accused's bifrost_id_pk. No ZK — the double-signature is the misbehavior.
   EquivocationProof {
     input_ref: OutputReference,
-    // The accused's x-only bifrost identity key both signatures verify under.
+    // Index of the accused's spos_registry node in `reference_inputs` — used to
+    // bind `bifrost_id_pk` to `accused_pool_id`.
+    registration_ref_input_index: Int,
+    // The accused's x-only bifrost identity key both signatures verify under
+    // (checked == the key registered for accused_pool_id).
     bifrost_id_pk: ByteArray,
     fault: FaultProofDatum,
     // The two conflicting canonical payloads (the signed message preimages;

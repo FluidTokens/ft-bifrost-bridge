@@ -2,11 +2,14 @@ use aiken/collection/dict
 use aiken/collection/list
 use aiken/crypto
 use aiken/primitive/bytearray
+use aiken_design_patterns/linked_list
 use bifrost/types/fault_verifier as fault_verifier_types
+use bifrost/types/spos_registry.{RegistrationListDatum}
 use bifrost/utils
+use cardano/address.{Script}
 use cardano/assets.{PolicyId, quantity_of, tokens}
 use cardano/script_context.{ScriptContext}
-use cardano/transaction.{InlineDatum, Transaction, find_input}
+use cardano/transaction.{InlineDatum, Input, Transaction, find_input}
 
 fn is_pool_id(token_name: ByteArray) -> Bool {
   bytearray.length(token_name) == 28
@@ -60,7 +63,34 @@ fn equivocation_evidence_hash(a: ByteArray, b: ByteArray) -> ByteArray {
   crypto.blake2b_256(combined)
 }
 
-validator fault_verifier {
+// The accused pool's registered `bifrost_id_pk`, read from its `spos_registry`
+// node supplied as a read-only reference input. Binds the redeemer-supplied key
+// to `accused_pool_id` so an equivocation cannot be forged with an attacker's
+// own key bearing a victim's pool_id. Mirrors `spo-bans.ak`'s
+// `validate_registered_pool_ref` (the node key is the registry NFT asset name).
+fn registered_bifrost_id_pk(
+  ref_input: Input,
+  registration_script_hash: ByteArray,
+  pool_id: ByteArray,
+) -> ByteArray {
+  expect Script(script_hash) = ref_input.output.address.payment_credential
+  expect Pair(asset_name, 1) =
+    utils.get_singleton_asset_with_policy(
+      ref_input.output.value,
+      registration_script_hash,
+    )
+  expect InlineDatum(raw_datum) = ref_input.output.datum
+  expect datum: RegistrationListDatum = raw_datum
+  expect linked_list.Node { data } = datum.data
+  expect script_hash == registration_script_hash
+  expect asset_name == pool_id
+  data.bifrost_id_pk
+}
+
+// Parameterized by the `spos_registry` policy id (script hash) — the registry is
+// the only authority on `pool_id → bifrost_id_pk`, so the EquivocationProof
+// branch references the accused's registration node to bind the key.
+validator fault_verifier(registration_script_hash: ByteArray) {
   mint(
     redeemer: fault_verifier_types.FaultProofMintRedeemer,
     policy_id: PolicyId,
@@ -97,17 +127,12 @@ validator fault_verifier {
 
       // Direct equivocation fault (technical_documentation §9.2). Real check,
       // no ZK: two distinct canonical payloads for the same namespace, each
-      // BIP-340-signed by the accused's bifrost_id_pk.
-      //
-      // NOTE (residual, same class as §5a): this trusts the redeemer-supplied
-      // `bifrost_id_pk`. Full soundness additionally requires binding it to
-      // `accused_pool_id` via an spos_registry reference input (the registry is
-      // the only authority on pool_id → bifrost_id_pk). That binding — and the
-      // accompanying registry-policy parameterization — is deliberately left
-      // out here, matching the documentation's §9.2 which takes the accused key
-      // as given.
+      // BIP-340-signed by the accused's bifrost_id_pk — and that key is bound to
+      // `accused_pool_id` via the accused's spos_registry node (referenced as a
+      // read-only input), so it cannot be forged with an attacker's own key.
       fault_verifier_types.EquivocationProof {
         input_ref,
+        registration_ref_input_index,
         bifrost_id_pk,
         fault,
         payload_a,
@@ -118,6 +143,9 @@ validator fault_verifier {
         let token_name = fault_token_name(fault.accused_pool_id, fault.evidence_hash)
 
         expect Some(_input_present) = find_input(self.inputs, input_ref)
+
+        let registration_ref_input =
+          utils.safe_list_at(self.reference_inputs, registration_ref_input_index)
 
         expect [verifier_output] =
           list.filter(
@@ -140,6 +168,14 @@ validator fault_verifier {
           // accused pool.
           namespace_header(payload_a) == namespace_header(payload_b),
           payload_pool_id(payload_a) == fault.accused_pool_id,
+          // Key binding — bifrost_id_pk must be the key registered for
+          // accused_pool_id in spos_registry (the registration node referenced
+          // as a read-only input). Closes the forge-with-own-key gap.
+          bifrost_id_pk == registered_bifrost_id_pk(
+            registration_ref_input,
+            registration_script_hash,
+            fault.accused_pool_id,
+          ),
           // §9.2.2 — both BIP-340 signatures verify under bifrost_id_pk over
           // sha2_256(canonical payload) (the sign-the-hash scheme).
           crypto.verify_schnorr_signature(
