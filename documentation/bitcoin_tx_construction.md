@@ -162,3 +162,19 @@ Output 1 scriptPubKey : 6a2342465265ebd441bb9cb02321d0c4f7c522bc39fe45af64b80a1a
 If your code reproduces `output key` / `Output 0 address` from `Y_fed`, `D`, and `refund_timeout =
 720`, your peg-in P2TR construction is correct. (A second independent confirmation: the live demo
 deposit `e3adb511…` paid the analogous P2TR derived from depositor `karl`.)
+
+---
+
+## 4. Reference implementation
+
+`pegin_deposit.py` (this directory) is a ~220-line **pure-stdlib** Python implementation of §1 — it
+derives the peg-in P2TR, builds the deposit, signs the P2WPKH input (BIP143), and broadcasts it. It
+was validated against this document: it reproduces bob's `tb1pd9t8dzz…` address, and its signed
+transaction passes `bitcoind testmempoolaccept` (`allowed: true`).
+
+```sh
+python3 pegin_deposit.py --wif-file your.wif --amount 3000 --fee 1000 --test    # build + validate, no broadcast
+python3 pegin_deposit.py --wif-file your.wif --amount 3000 --fee 1000 --submit  # broadcast
+```
+
+Edit the constants at the top (`Y_FED`, `RPC_URL`/creds, `HRP`) for a different deployment/network.
