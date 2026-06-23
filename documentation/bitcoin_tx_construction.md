@@ -12,17 +12,48 @@ implementation byte-for-byte before broadcasting.
 
 ---
 
-## 0. Network constants (this demo deployment)
+## 0. Deployment values (this bridge instance — Cardano preprod / Bitcoin testnet4)
+
+### 0.1 Bitcoin side — all you need for the peg-in deposit (§1)
 
 | name | value | notes |
 |---|---|---|
 | Bitcoin network | **testnet4** | bech32m HRP `tb` |
-| **Y_fed** (federation x-only pubkey) | `0ce472ae5d8993e7609ee4ef33b344f6b8499a1259374bdf528f82240985bf03` | the Taproot **internal key** of every peg-in P2TR. Demo key (derived from the all-`0xfe` seed); in production it comes from the on-chain treasury oracle. |
+| **Y_fed** (federation x-only pubkey) | `0ce472ae5d8993e7609ee4ef33b344f6b8499a1259374bdf528f82240985bf03` | Taproot **internal key** of every peg-in P2TR. Demo key (all-`0xfe` seed); in production it comes from the on-chain treasury oracle. |
 | `refund_timeout` | **720** | relative-timelock (blocks) of the depositor's refund leaf |
 | beacon tag | `BFR` = `0x42 0x46 0x52` | marks a peg-in to the watchtower |
+| BTC treasury (Y_fed P2TR) | `368db61794c3930be20d2194f47afcbec072c62b5207a4297e7b30fb40d4bb75:0` | where your deposit is swept |
 
-You do **not** need any Cardano value (config-NFT policy/asset name, fBTC policy, etc.) to build the
-Bitcoin transaction — those live only on the Cardano side and are irrelevant here.
+The §1 deposit needs **only** the Bitcoin-side values above.
+
+### 0.2 Cardano side — for the peg-in Cardano txs (PegInRequest → pegin-complete)
+
+A party without binocular builds these with a Cardano SDK (e.g. **Mesh**); they need every script
+hash / policy id / asset name / address below. (Aiken multi-purpose validators: policy id == script
+hash == validator hash — one hash per contract. These are the **applied** hashes, i.e. on-chain.)
+
+| contract / value | hash · policy id | asset name (hex) | script address |
+|---|---|---|---|
+| oracle `BitcoinValidator` | `9d2eaf5737f7552c3e38cabc0f7d0e9b4258c0ee9e913dfbbc51dd85` | — | — |
+| `config.config` (bridge identity) | `d15dfdeb263cb49a386a42c0072129638f8d0ab311e1790c1de301af` | `424946434647` (BIFCFG) | `addr_test1wrg4ml0tyc7tfx3cdfpvqpep993clrg2kvg7z7gvrh3srtc8d4099` |
+| `bridged_token` (fBTC) | `2a8be579950b9df37fa611daeaecedd0ebb69b40278ff01e6fc5763a` | `66425443` (fBTC) | — |
+| `peg_in_validator` | `d4104c6acc86c39378058dbd207df49c2ad84bb8d926db8034f2e628` | NFT = `sha2_256(serialiseData(input_ref))` | `addr_test1wr2pqnr2ejrv8ymcqkxm6gra7jwz4kzthrvjdkuqxnewv2qqrj525` |
+| `peg_out_validator` | `5ab900beafc455418076a6c41f08db2271f9dfb2c8b1d6fa419fa799` | — | — |
+| peg-out produced-verifier | `015c0539b554593ffcccb9678ebf5d37940d05df466a6ce2892b301e` | — | — |
+| `completed_peg_ins_merkle_tree` | `53911d1a926314f3071dc047d13eba1d56b08fc8fe0a25c4f70071a1` | `08b9c5306ecbd482aa444d557a0d9e4c4349698bd8998fbb40683887bb1bc1e2` | `addr_test1wpfez8g6jf33fuc8rhqy05f7hgw4dvy0erlq5fwy7uq8rggeznz75` |
+| `completed_peg_outs_merkle_tree` | `a2cecef8314bfbed5c55c96c37390728a9ca541bba68faf076d9cbd1` | `302950984b9116b8380618f0b74d3ddaaca9ba67088f46c330736e97968caba3` | `addr_test1wz3vanhcx99lhm2u2hykcdeequ52njj5rwax37hswmvuh5gnzx3l7` |
+| `treasury_movement` (TM NFT) | `4c40ffd5746c87c6fc84fa7785e20c36ac87c948fea009baa7b2154b` | — | — |
+| `tm_control` | `9cfb3edc2da0d77bbca40bb441b566fa7f3db2c2b72a42518154dc10` | `544d4354524c` (TMCTRL) | — |
+
+**CIP-33 reference-script UTxOs** (attach as reference inputs instead of inlining the scripts):
+`peg_in 0250b6c3199c421de92d3d3fb949f55c3da73df6f8e625f28e8fe6358aecac86#0` ·
+`bridged_token 909b17d198a233182d6d4afff0452facf1aba19bc032093ae68a5899826d372c#0` ·
+`completed_peg_ins 3a50e643e482b84bbe471b0691bf545095017da82933b77c66bbd270c36a762d#0` ·
+`peg_out 6cded3ffae43813d8b883eff264924c792ac63f50bb758653ee8d0b6a79d32b9#0` ·
+`completed_peg_outs 1c3f3abafb6ddd69e9f9143a9290b7c7fd068b08833755d894f08f5ab47b1ada#0`
+
+**MPF one-shot seeds** (parameterize the two MPF policies; their NFT asset name =
+`sha2_256(serialiseData(outpoint))`): `completed_peg_ins 84478f05…#3` · `completed_peg_outs deaf1c33…#1`.
 
 ---
 
@@ -178,3 +209,33 @@ python3 pegin_deposit.py --wif-file your.wif --amount 3000 --fee 1000 --submit  
 ```
 
 Edit the constants at the top (`Y_FED`, `RPC_URL`/creds, `HRP`) for a different deployment/network.
+
+---
+
+## 5. Example transactions (this deployment — inspect real ones)
+
+Explorers: Bitcoin `https://mempool.space/testnet4/tx/<hash>` · Cardano
+`https://preprod.cardanoscan.io/transaction/<hash>`.
+
+### Peg-in
+| step | chain | txid | status |
+|---|---|---|---|
+| deposit (§1) | testnet4 | `e3adb511c105f5b9a82ba13b0420e30408bebe2f4873d9c7d063a0f27b0ebeca` | ✅ confirmed (2,500 sat to peg-in P2TR + BFR beacon) |
+| PegInRequest mint | preprod | `← pending (deposit maturing, 40 confs)` | |
+| sweep Treasury Movement | testnet4 | `← pending` | |
+| pegin-complete (fBTC mint) | preprod | `← pending` | |
+
+### Peg-out
+| step | chain | txid | status |
+|---|---|---|---|
+| peg-out-request (lock fBTC) | preprod | `← pending` | |
+| payout Treasury Movement | testnet4 | `← pending` | |
+| peg-out-complete (burn fBTC) | preprod | `← pending` | |
+
+### Bridge setup (for reference)
+Config NFT mint `1bd21ea5baf2dc98dfd026c895af72d12acd01aa40bab1d40371827028186103` (the deploy); the
+fBTC/peg-in/peg-out/MPF policies and the 5 CIP-33 reference-script UTxOs are listed in §0.2. Full
+11-tx setup ledger: see the internal runbook `2026-06-23-pegin-create-runbook.md`.
+
+> The `← pending` rows fill in as the live run clears each maturation gate; the deposit above is a
+> complete, inspectable peg-in §1 example today.
