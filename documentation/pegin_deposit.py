@@ -6,7 +6,8 @@ documentation/bitcoin_tx_construction.md §1. Transaction layout:
 
     in  : your P2WPKH funding UTXO (one, auto-selected via the node)
     out0: peg-in P2TR (value = --amount sat)          # Taproot(Y_fed, refund tapleaf)
-    out1: OP_RETURN "BFR" || depositor_xonly           # the watchtower beacon
+    out1: OP_RETURN "BFR" || depositor_auth_outputkey  # beacon: the depositor's key-path Taproot
+                                                       #   output key = the BIP-322 completion key
     out2: P2WPKH change (omitted if below dust)
 
 Usage:
@@ -132,6 +133,13 @@ def pegin_outputkey(xonly):
     t = int.from_bytes(tagged("TapTweak", Y_FED + leafhash), "big")
     Q = add(lift_x(int.from_bytes(Y_FED, "big")), mul(t))
     return Q[0].to_bytes(32, "big")
+def taproot_keypath_output_key(xonly):
+    # Depositor's own key-path-only Taproot output key (BIP-341 / BIP-86, empty script tree):
+    #   Q = P + H_TapTweak(P)*G.  This is the key the completion's BIP-322 signature verifies
+    #   against, so it (NOT the raw internal x-only) is what goes in the BFR beacon.
+    t = int.from_bytes(tagged("TapTweak", xonly), "big")
+    Q = add(lift_x(int.from_bytes(xonly, "big")), mul(t))
+    return Q[0].to_bytes(32, "big")
 
 # ---- tx serialization --------------------------------------------------------
 def varint(n):
@@ -160,7 +168,9 @@ def build(wif, amount, fee):
     okey = pegin_outputkey(xonly)
     pegin_spk = b"\x51\x20" + okey
     pegin_addr = segwit_addr(1, okey)
-    beacon_spk = b"\x6a\x23\x42\x46\x52" + xonly
+    auth_outputkey = taproot_keypath_output_key(xonly)   # depositor's key-path Taproot output key
+    auth_addr = segwit_addr(1, auth_outputkey)           # sign the BIP-322 completion from here
+    beacon_spk = b"\x6a\x23\x42\x46\x52" + auth_outputkey
 
     unspents = rpc("scantxoutset", ["start", [f"addr({p2wpkh})"]]).get("unspents", [])
     need = amount + fee
@@ -192,7 +202,7 @@ def build(wif, amount, fee):
            varint(1) + outpoint + b"\x00" + seq +       # 1 input, empty scriptSig
            varint(len(outs)) + b"".join(ser_out(v, s) for v, s in outs) +
            witness + b"\x00\x00\x00\x00")
-    return raw.hex(), pegin_addr, p2wpkh, change
+    return raw.hex(), pegin_addr, p2wpkh, change, auth_addr
 
 def main():
     ap = argparse.ArgumentParser(description="Build a Bifrost peg-in deposit (testnet4).")
@@ -204,8 +214,9 @@ def main():
     ap.add_argument("--test", action="store_true", help="validate via testmempoolaccept (no broadcast)")
     a = ap.parse_args()
     wif = a.wif if a.wif else open(a.wif_file).read().strip()
-    raw, pegin_addr, p2wpkh, change = build(wif, a.amount, a.fee)
+    raw, pegin_addr, p2wpkh, change, auth_addr = build(wif, a.amount, a.fee)
     print(f"depositor P2WPKH : {p2wpkh}")
+    print(f"auth P2TR (sign) : {auth_addr}")
     print(f"peg-in P2TR      : {pegin_addr}")
     print(f"deposit / fee    : {a.amount} / {a.fee} sat   change {change} sat")
     print(f"raw tx           : {raw}")

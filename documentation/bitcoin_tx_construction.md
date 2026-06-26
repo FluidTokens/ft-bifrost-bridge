@@ -8,7 +8,8 @@ A worked example with every intermediate value is given at the end so you can va
 implementation byte-for-byte before broadcasting.
 
 > **Standards used:** BIP141 (segwit v0 funding inputs), BIP340 (Schnorr), BIP341 (Taproot output
-> key tweak), BIP342 (tapscript), BIP112 (`OP_CHECKSEQUENCEVERIFY`), BIP350 (bech32m addresses).
+> key tweak), BIP342 (tapscript), BIP112 (`OP_CHECKSEQUENCEVERIFY`), BIP350 (bech32m addresses),
+> BIP322 (simple message signing — depositor authorization at completion).
 
 ---
 
@@ -74,15 +75,26 @@ outputs in the order above (the reference depositor does).
 
 ### 1.1 The depositor key
 
-Pick a secp256k1 keypair you control; let `D` = its 32-byte **x-only** public key. The **same** key
-is used in three places, so keep its private key — you will need it again to complete the peg-in:
+Pick a secp256k1 keypair you control. Let `D` = its 32-byte **x-only** public key, and let `Q_auth`
+= the **key-path Taproot output key** of that key (BIP341/BIP86 tweak, empty script tree):
 
-1. the refund leaf (below),
-2. the OP_RETURN beacon (below),
-3. a BIP340 signature at completion time (the bridge operator gives you a 32-byte digest to sign;
-   the message is `sha256("BFR-mint-v1" ‖ tm_txid ‖ peg_in_utxo_id ‖ recipient)`).
+```
+t       = taggedHash("TapTweak", D)
+Q_auth  = x_only( lift_x(D) + t·G )      # the witness program of your tb1p… Taproot address
+```
 
-The funding inputs may use any P2WPKH key(s); only `D` must match across the three places above.
+Keep the private key — you will need it to complete the peg-in. It is used in three places:
+
+1. the refund leaf (below) — uses **`D`** (the raw x-only key);
+2. the OP_RETURN beacon (below) — carries **`Q_auth`** (the Taproot output key);
+3. a **BIP-322** signature at completion time, made **from your Taproot address whose output key is
+   `Q_auth`** (e.g. UniSat's `signMessage(text, "bip322-simple")`). The bridge operator gives you the
+   exact text to sign — of the form `BFR-mint-v1:<64-hex>`, where the hex is
+   `sha256("BFR-mint-v1" ‖ tm_txid ‖ peg_in_utxo_id ‖ recipient)`. The contract verifies that
+   BIP-322 signature against `Q_auth` (read from the beacon). No raw-key access needed — any wallet
+   that signs BIP-322 for a Taproot address works.
+
+The funding inputs may use any P2WPKH key(s); only `D` / `Q_auth` must match across the places above.
 
 ### 1.2 Output 0 — the peg-in P2TR
 
@@ -122,13 +134,15 @@ output_key = x_only(Q)                                            # 32 bytes
 ### 1.3 Output 1 — the OP_RETURN beacon
 
 ```
-scriptPubKey = OP_RETURN OP_PUSHBYTES_35 ("BFR" ‖ D)
-             = 6a 23 42 46 52 ‖ D            (37 bytes)
+scriptPubKey = OP_RETURN OP_PUSHBYTES_35 ("BFR" ‖ Q_auth)
+             = 6a 23 42 46 52 ‖ Q_auth       (37 bytes)
 value        = 0
 ```
 
-`23` = 35 = 3 ("BFR") + 32 (the depositor x-only key). This is how the watchtower finds the peg-in
-and learns `D`.
+`23` = 35 = 3 ("BFR") + 32 (the depositor **Taproot output key** `Q_auth`). This is how the watchtower
+finds the peg-in and learns the key that must authorize completion (via BIP-322). Note the beacon
+carries `Q_auth`, while the refund leaf above carries the raw x-only `D` — both are derived from
+your one private key.
 
 ### 1.4 Inputs, change, fee
 
@@ -139,8 +153,9 @@ remainder minus fee to a change output. Keep `deposit_amount + fee ≤ inputs`.
 
 1. Wait until the deposit block is **40-confirmations matured** in the binocular oracle (the bridge's
    challenge window). 2. The bridge operator mints the Cardano `PegInRequest`, an SPO sweeps your
-deposit into the treasury, the sweep matures, and the operator asks you for the BIP340 signature
-(§1.1). fBTC equal to your deposit (minus protocol fee) is then minted to your Cardano address.
+deposit into the treasury, the sweep matures, and the operator asks you for the BIP-322 signature
+(§1.1) — `signMessage("BFR-mint-v1:<64-hex>", "bip322-simple")` from your `Q_auth` Taproot address.
+fBTC equal to your deposit (minus protocol fee) is then minted to your Cardano address.
 
 ---
 
@@ -187,12 +202,15 @@ output key            : 6956768857b4d72e146afafd9f2835210dd558788ca50933431af274
 
 Output 0 scriptPubKey : 51206956768857b4d72e146afafd9f2835210dd558788ca50933431af27488ab5162
 Output 0 address      : tb1pd9t8dzzhkntju9r2lt7e72p4yyxa2krc3jjsjv6rrte8fz9t293qerys8g
-Output 1 scriptPubKey : 6a2342465265ebd441bb9cb02321d0c4f7c522bc39fe45af64b80a1a51a454735b2d06740f
+auth output key Q_auth: 0f8ace03f92db5cc44e558e350278cda0917a02d968bcac801f89d9e000fd164
+auth P2TR address     : tb1pp79vuqle9k6uc389tr34qfuvmgy30gpdj69u4jqplzweuqq069jqh4zu8n
+Output 1 scriptPubKey : 6a234246520f8ace03f92db5cc44e558e350278cda0917a02d968bcac801f89d9e000fd164
 ```
 
 If your code reproduces `output key` / `Output 0 address` from `Y_fed`, `D`, and `refund_timeout =
-720`, your peg-in P2TR construction is correct. (A second independent confirmation: the live demo
-deposit `e3adb511…` paid the analogous P2TR derived from depositor `karl`.)
+720` — and `Q_auth` / the beacon from `D` — your peg-in construction is correct. `Q_auth` is the
+key-path tweak of bob's `D`; the depositor signs the BIP-322 completion from `auth P2TR address`.
+(The earlier live demo deposit `e3adb511…` carried the legacy raw-`D` beacon, before BIP-322.)
 
 ---
 
