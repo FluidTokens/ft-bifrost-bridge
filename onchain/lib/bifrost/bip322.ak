@@ -22,9 +22,12 @@ use aiken/crypto
 use aiken/primitive/bytearray
 
 // ASCII bytes of the two hash tags.
-const bip0322_tag: ByteArray = #"424950303332322d7369676e6564"
+// NB: the de-facto BIP-322 message tag is "BIP0322-signed-message" — what bip322-js,
+// UniSat and other wallets actually use — NOT the "BIP0322-signed" written in the BIP-322
+// spec text. Confirmed by verifying a real UniSat signature (see bip322_unisat_vector).
+const bip0322_tag: ByteArray = #"424950303332322d7369676e65642d6d657373616765"
 
-// "BIP0322-signed"
+// "BIP0322-signed-message"
 const tapsighash_tag: ByteArray = #"54617053696768617368"
 
 // "TapSighash"
@@ -131,37 +134,39 @@ pub fn verify_keypath(
   )
 }
 
-// ── Cross-check vs. the Python reference (scratchpad/poll … pure-hashlib model) ──────────
+// ── Cross-check vs. a pure-hashlib reference (tag "BIP0322-signed-message") ───────────────
 // message = "hello" (#"68656c6c6f"), output_key Q = 0x11*32.
 
 test bip322_tagged_hash_empty() {
-  tagged_hash(bip0322_tag, #"") == #"888bab9b0d983d5058a18821fa257f99d05105d3fa0a01f162666e905c4cebc1"
+  tagged_hash(bip0322_tag, #"") == #"c90c269c4f8fcbe6880f72a721ddfbf1914268a794cbb21cfafee13770ae19f1"
 }
 
 test bip322_message_hash_hello() {
-  tagged_hash(bip0322_tag, #"68656c6c6f") == #"01c50d7013be7867908b15ba83876c4bb9dc8f1cbd28b9c16ebfc2228cd31e31"
+  tagged_hash(bip0322_tag, #"68656c6c6f") == #"528e990bccf82644773d67eff12fb504e84b42c8396475da8c939404f4a32385"
 }
 
 test bip322_to_spend_txid_sample() {
   to_spend_txid(
     tagged_hash(bip0322_tag, #"68656c6c6f"),
     #"1111111111111111111111111111111111111111111111111111111111111111",
-  ) == #"bc7a67c933751585fbc7dd661bc7b8401182bdd1be71df3d0eaf3a62ce3cf6f4"
+  ) == #"dca379b8992e984a7671d2a44fd92c4f73c8240cfb5756ac715c0067fdf155ee"
 }
 
 test bip322_keypath_message_hash_sample() {
   keypath_message_hash(
     #"68656c6c6f",
     #"1111111111111111111111111111111111111111111111111111111111111111",
-  ) == #"e9a119d942f4da1bfc14a99c941cdb353e45d7c3300045c90eb6e5ccffff9b3d"
+  ) == #"b31652fca4ab51235384ade30e3cfe3b5bee8364eced7251aa5d8fccd38aaea0"
 }
-// ── Ground-truth end-to-end (fill from a real UniSat bip322-simple signature) ────────────
-// Sign a known string with a known Taproot address, then assert verify_keypath == True:
-//
-// test bip322_unisat_vector() {
-//   verify_keypath(
-//     #"<32-byte taproot output key Q of the signing address>",
-//     #"<utf8 hex of the exact signed message string>",
-//     #"<64-byte schnorr sig extracted from the bip322-simple witness>",
-//   )
-// }
+// ── Ground-truth end-to-end: a real UniSat `signMessage("hello","bip322-simple")` ────────
+// addr = tb1pndljy8st8rdhvvafgt28qn8nh6jnuyvuhq4uxtp6sds55vmlp5eql7edl6
+//   → output key Q = 9b7f221e…337f0d32 ; message "hello" = #"68656c6c6f"
+//   → witness 0140<64B>, sig = the 64-byte key-path schnorr signature (SIGHASH_DEFAULT).
+// This passing proves the on-chain sighash matches UniSat's BIP-322 implementation.
+test bip322_unisat_vector() {
+  verify_keypath(
+    #"9b7f221e0b38db7633a942d4704cf3bea53e119cb82bc32c3a83614a337f0d32",
+    #"68656c6c6f",
+    #"c3b2f35164f020cc3ac5d173c1fe86ccee121b2189af705a7a075cc8f1069200d2876939d577f0bac632451155a903c406c31f23a509ee060ffdcb407d6c49fd",
+  )
+}
