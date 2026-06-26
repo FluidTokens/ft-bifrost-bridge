@@ -158,7 +158,7 @@ def rpc(method, params):
     return r["result"]
 
 # ---- build -------------------------------------------------------------------
-def build(wif, amount, fee):
+def build(wif, amount, fee, auth_output_key=None):
     priv = wif_to_priv(wif)
     pub = priv_to_pub_compressed(priv)
     xonly = pub[1:]                                   # x-only = x coordinate
@@ -168,7 +168,15 @@ def build(wif, amount, fee):
     okey = pegin_outputkey(xonly)
     pegin_spk = b"\x51\x20" + okey
     pegin_addr = segwit_addr(1, okey)
-    auth_outputkey = taproot_keypath_output_key(xonly)   # depositor's key-path Taproot output key
+    # Beacon carries the BIP-322 completion key: the WIF's own key-path Taproot output key by
+    # default, or --auth-output-key to authorize the mint from a DIFFERENT wallet (e.g. UniSat).
+    # The refund leaf + funding stay with the WIF; only the mint authorization moves.
+    if auth_output_key:
+        auth_outputkey = bytes.fromhex(auth_output_key)
+        if len(auth_outputkey) != 32:
+            raise SystemExit("--auth-output-key must be 32 bytes (64 hex chars)")
+    else:
+        auth_outputkey = taproot_keypath_output_key(xonly)
     auth_addr = segwit_addr(1, auth_outputkey)           # sign the BIP-322 completion from here
     beacon_spk = b"\x6a\x23\x42\x46\x52" + auth_outputkey
 
@@ -212,9 +220,12 @@ def main():
     ap.add_argument("--fee", type=int, default=1000)
     ap.add_argument("--submit", action="store_true", help="broadcast via sendrawtransaction")
     ap.add_argument("--test", action="store_true", help="validate via testmempoolaccept (no broadcast)")
+    ap.add_argument("--auth-output-key", help="32-byte hex Taproot output key for the BFR beacon "
+                    "(default: derived from --wif); set to another wallet's output key (e.g. UniSat) "
+                    "to authorize the BIP-322 completion from there")
     a = ap.parse_args()
     wif = a.wif if a.wif else open(a.wif_file).read().strip()
-    raw, pegin_addr, p2wpkh, change, auth_addr = build(wif, a.amount, a.fee)
+    raw, pegin_addr, p2wpkh, change, auth_addr = build(wif, a.amount, a.fee, a.auth_output_key)
     print(f"depositor P2WPKH : {p2wpkh}")
     print(f"auth P2TR (sign) : {auth_addr}")
     print(f"peg-in P2TR      : {pegin_addr}")

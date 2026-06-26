@@ -96,6 +96,11 @@ Keep the private key — you will need it to complete the peg-in. It is used in 
 
 The funding inputs may use any P2WPKH key(s); only `D` / `Q_auth` must match across the places above.
 
+> **Decoupling auth from funding.** By default `Q_auth` is the funding key's own Taproot output key.
+> To authorize the mint from a *different* wallet (e.g. a UniSat Taproot you'll BIP-322-sign with),
+> pass its output key: `pegin_deposit.py --auth-output-key <Q_auth-hex>`. The beacon then carries
+> that key (so completion is signed by that wallet), while the refund leaf + funding stay with `D`.
+
 ### 1.2 Output 0 — the peg-in P2TR
 
 A Taproot output with internal key **Y_fed** and a single tapleaf = your refund script.
