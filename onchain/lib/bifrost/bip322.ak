@@ -134,8 +134,30 @@ pub fn verify_keypath(
   )
 }
 
+const hex_chars: ByteArray = #"30313233343536373839616263646566"
+
+// "0123456789abcdef"
+
+/// Lowercase-hex ASCII encoding of `bytes` (n input bytes → 2n ASCII output bytes).
+/// Lets a binary binding digest be carried in a wallet's text `signMessage` call.
+pub fn hex_lower(bytes: ByteArray) -> ByteArray {
+  bytearray.foldl(
+    bytes,
+    #"",
+    fn(byte, acc) {
+      acc
+        |> bytearray.concat(bytearray.push(#"", bytearray.at(hex_chars, byte / 16)))
+        |> bytearray.concat(bytearray.push(#"", bytearray.at(hex_chars, byte % 16)))
+    },
+  )
+}
+
 // ── Cross-check vs. a pure-hashlib reference (tag "BIP0322-signed-message") ───────────────
 // message = "hello" (#"68656c6c6f"), output_key Q = 0x11*32.
+
+test bip322_hex_lower() {
+  hex_lower(#"00ff1a") == #"303066663161" && hex_lower(#"") == #""
+}
 
 test bip322_tagged_hash_empty() {
   tagged_hash(bip0322_tag, #"") == #"c90c269c4f8fcbe6880f72a721ddfbf1914268a794cbb21cfafee13770ae19f1"

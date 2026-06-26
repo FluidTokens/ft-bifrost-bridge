@@ -5,6 +5,7 @@ use aiken/crypto
 use aiken/merkle_patricia_forestry as mpf
 use aiken/option
 use aiken/primitive/bytearray
+use bifrost/bip322
 use bifrost/bitcoin
 use bifrost/types/general.{ChainState}
 use bifrost/types/peg_in.{
@@ -244,7 +245,14 @@ validator peg_in_validator(
         //    with the datum's user_source_chain_pub_key. `btc_txid` comes from the referenced
         //    Confirmed datum, so the signed TM is provably the confirmed one. Binding `recipient`
         //    into the message + the fBTC output (step 4) makes a leaked signature non-replayable.
-        let message = crypto.sha2_256(
+        // Depositor authorization via BIP-322 (taproot key-path), so a normal Bitcoin wallet's
+        // signMessage(msg,"bip322-simple") suffices — no raw-key access. The depositor signs the
+        // ASCII text  "BFR-mint-v1:" ++ hex(binding_digest)  where binding_digest is the same
+        // sha256(mint_tag ‖ btc_txid ‖ peg_in_utxo_id ‖ recipient) as before; binding recipient +
+        // the confirmed-TM btc_txid + the deposit outpoint keeps a leaked signature non-replayable.
+        // user_source_chain_pub_key is the depositor wallet's taproot OUTPUT key (the address's
+        // witness program); deposit_binding_ok ties it to the deposit's OP_RETURN beacon.
+        let binding_digest = crypto.sha2_256(
           bytearray.concat(
             mint_tag,
             bytearray.concat(
@@ -256,11 +264,16 @@ validator peg_in_validator(
             ),
           ),
         )
-        let depositor_authorized = crypto.verify_schnorr_signature(
-          datum.user_source_chain_pub_key,
-          message,
-          depositor_signature,
-        )
+        let signed_message =
+          mint_tag
+            |> bytearray.concat(#"3a")
+            |> bytearray.concat(bip322.hex_lower(binding_digest))
+        let depositor_authorized =
+          bip322.verify_keypath(
+            datum.user_source_chain_pub_key,
+            signed_message,
+            depositor_signature,
+          )
 
         // 4. Recipient-binding: the minted fBTC goes to `recipient` in exactly peg_in_amount.
         let fbtc_output = utils.safe_list_at(self.outputs, fbtc_output_index)
