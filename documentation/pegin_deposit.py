@@ -18,6 +18,11 @@ Usage:
 import sys, json, hashlib, urllib.request, base64, argparse
 
 # ---- bridge / network constants (this demo deployment) -----------------------
+# Y_federation x-only = peg-in P2TR internal key. MUST equal heimdall's RUNTIME federation key:
+# heimdall.toml `y_fed_seed_hex = fe*32` -> 0ce472ae… (verified by deriving the x-only pubkey).
+# WARNING: demo_simplifications.md AND the on-chain deposit badb6b79… use a DIFFERENT key
+# b1e15a53… (02b1e15a…) — those are stale and NOT sweepable by the current heimdall config.
+# Keep this constant in sync with heimdall.toml. (see 2026-06-30-d8bed7d4-pegin-request-analysis.md)
 Y_FED = bytes.fromhex("0ce472ae5d8993e7609ee4ef33b344f6b8499a1259374bdf528f82240985bf03")
 REFUND_TIMEOUT = 720
 HRP = "tb"                          # testnet4 bech32 human-readable part
