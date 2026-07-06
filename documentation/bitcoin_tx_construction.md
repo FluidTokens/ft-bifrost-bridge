@@ -20,12 +20,15 @@ implementation byte-for-byte before broadcasting.
 | name | value | notes |
 |---|---|---|
 | Bitcoin network | **testnet4** | bech32m HRP `tb` |
-| **Y_fed** (federation x-only pubkey) | `0ce472ae5d8993e7609ee4ef33b344f6b8499a1259374bdf528f82240985bf03` | Taproot **internal key** of every peg-in P2TR. Demo key (all-`0xfe` seed); in production it comes from the on-chain treasury oracle. |
+| **Y_51** (FROST group x-only pubkey) | `b1e15a532a4e816ec75af608256b0808e36fb7d22560605178850885e53f2854` | Taproot **internal key** of every peg-in P2TR — the bridge's FROST group key, read from the on-chain treasury state. (Future: the internal key becomes a `Y_fed`/`Y_51` multisig — still published as one aggregate key.) |
 | `refund_timeout` | **720** | relative-timelock (blocks) of the depositor's refund leaf |
 | beacon tag | `BFR` = `0x42 0x46 0x52` | marks a peg-in to the watchtower |
-| BTC treasury (Y_fed P2TR) | `368db61794c3930be20d2194f47afcbec072c62b5207a4297e7b30fb40d4bb75:0` | where your deposit is swept |
+| BTC treasury | `Taproot(Y_51, Y_fed fallback leaf)` | where the federation sweeps your deposit — *informational*; not needed to build the deposit |
 
-The §1 deposit needs **only** the Bitcoin-side values above.
+The §1 deposit needs **only** the Bitcoin-side values above. Note `Y_fed` (the federation
+fallback key) is **not** among them: a depositor builds the peg-in and PegInRequest from `Y_51` +
+their own key alone — `Y_fed` is federation-side only (it appears solely as the treasury fallback
+leaf in §2).
 
 ### 0.2 Cardano side — for the peg-in Cardano txs (PegInRequest → pegin-complete)
 
@@ -70,7 +73,7 @@ Output 1    : OP_RETURN beacon  (value = 0)                     ← marks it as 
 Output 2    : change back to you  (optional)
 ```
 
-The watchtower identifies your deposit by the **BFR beacon** and the **federation P2TR**; build the
+The watchtower identifies your deposit by the **BFR beacon** and the **Y_51 peg-in P2TR**; build the
 outputs in the order above (the reference depositor does).
 
 ### 1.1 The depositor key
@@ -103,7 +106,9 @@ The funding inputs may use any P2WPKH key(s); only `D` / `Q_auth` must match acr
 
 ### 1.2 Output 0 — the peg-in P2TR
 
-A Taproot output with internal key **Y_fed** and a single tapleaf = your refund script.
+A Taproot output with internal key **Y_51** (the bridge's FROST group key) and a single tapleaf =
+your refund script. (Today the internal key is `Y_51` alone; a future revision makes it a
+`Y_fed`/`Y_51` multisig, published as one aggregate internal key — so this construction is unchanged.)
 
 **Refund leaf script** (lets *you* reclaim the funds after `refund_timeout` blocks if the federation
 never sweeps them):
@@ -126,8 +131,8 @@ Encoded (leaf version **0xc0**, tapscript):
 
 ```
 leaf_hash = taggedHash("TapLeaf",  0xc0 ‖ compactSize(len(leaf)) ‖ leaf)
-t         = taggedHash("TapTweak", Y_fed ‖ leaf_hash)             # 32 bytes, as scalar
-Q         = lift_x(Y_fed) + t·G                                   # output point
+t         = taggedHash("TapTweak", Y_51 ‖ leaf_hash)              # 32 bytes, as scalar
+Q         = lift_x(Y_51) + t·G                                    # output point
 output_key = x_only(Q)                                            # 32 bytes
 ```
 
@@ -174,9 +179,9 @@ FROST-signs that both rolls the treasury forward and pays every pending peg-out.
 payout:
 
 ```
-Input  0    : current treasury UTXO — P2TR(Y_fed), spent KEY-PATH (BIP341 key spend, FROST Schnorr)
+Input  0    : current treasury UTXO — Taproot(Y_51, Y_fed fallback leaf), spent KEY-PATH under Y_51 (FROST Schnorr)
             : (+ any peg-in deposits being swept in the same TM)
-Output 0    : new treasury  P2TR(Y_fed)   ← change; absorbs the Bitcoin miner fee
+Output 0    : new treasury  Taproot(Y_51, Y_fed fallback leaf)   ← change; absorbs the Bitcoin miner fee
 Output 1..k : one per peg-out:  <destination_scriptPubKey>  value = gross − per_pegout_protocol_fee
 ```
 
@@ -197,22 +202,22 @@ it; the fBTC burn + completion happen on Cardano.
 Demo depositor `bob`, refund_timeout 720, testnet4:
 
 ```
-Y_fed (internal key)  : 0ce472ae5d8993e7609ee4ef33b344f6b8499a1259374bdf528f82240985bf03
+Y_51 (internal key)   : b1e15a532a4e816ec75af608256b0808e36fb7d22560605178850885e53f2854
 depositor key  D      : 65ebd441bb9cb02321d0c4f7c522bc39fe45af64b80a1a51a454735b2d06740f
 
 refund leaf script    : 02d002b2752065ebd441bb9cb02321d0c4f7c522bc39fe45af64b80a1a51a454735b2d06740fac
 TapLeaf hash (= root) : cf3d9b05de39d0d25323fc4991eabcb5bb7ffbc40c6ad5b0dd553d6a8a818888
-TapTweak  t           : 4657d3f908b7bce83b0ca8c823fd94d07ce0ee62263331dca934ae7df4d916e9
-output key            : 6956768857b4d72e146afafd9f2835210dd558788ca50933431af27488ab5162
+TapTweak  t           : 0aff914a006659e2fd4df5097289d01aa0f344a6c56ea804d1b05fdf240af070
+output key            : 86d66ec42088de122a3b2b8d28eac3fc6bd629b214964a37bb63d6ac55efde32
 
-Output 0 scriptPubKey : 51206956768857b4d72e146afafd9f2835210dd558788ca50933431af27488ab5162
-Output 0 address      : tb1pd9t8dzzhkntju9r2lt7e72p4yyxa2krc3jjsjv6rrte8fz9t293qerys8g
+Output 0 scriptPubKey : 512086d66ec42088de122a3b2b8d28eac3fc6bd629b214964a37bb63d6ac55efde32
+Output 0 address      : tb1psmtxa3pq3r0py23m9wxj36krl34av2djzjty5damv0t2c400mceqhw5r3y
 auth output key Q_auth: 0f8ace03f92db5cc44e558e350278cda0917a02d968bcac801f89d9e000fd164
 auth P2TR address     : tb1pp79vuqle9k6uc389tr34qfuvmgy30gpdj69u4jqplzweuqq069jqh4zu8n
 Output 1 scriptPubKey : 6a234246520f8ace03f92db5cc44e558e350278cda0917a02d968bcac801f89d9e000fd164
 ```
 
-If your code reproduces `output key` / `Output 0 address` from `Y_fed`, `D`, and `refund_timeout =
+If your code reproduces `output key` / `Output 0 address` from `Y_51`, `D`, and `refund_timeout =
 720` — and `Q_auth` / the beacon from `D` — your peg-in construction is correct. `Q_auth` is the
 key-path tweak of bob's `D`; the depositor signs the BIP-322 completion from `auth P2TR address`.
 (The earlier live demo deposit `e3adb511…` carried the legacy raw-`D` beacon, before BIP-322.)
@@ -231,7 +236,8 @@ python3 pegin_deposit.py --wif-file your.wif --amount 3000 --fee 1000 --test    
 python3 pegin_deposit.py --wif-file your.wif --amount 3000 --fee 1000 --submit  # broadcast
 ```
 
-Edit the constants at the top (`Y_FED`, `RPC_URL`/creds, `HRP`) for a different deployment/network.
+Edit the constants at the top (the internal-key constant — set it to the **Y_51** group key —
+`RPC_URL`/creds, `HRP`) for a different deployment/network.
 
 ---
 
