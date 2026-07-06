@@ -18,12 +18,12 @@ Usage:
 import sys, json, hashlib, urllib.request, base64, argparse
 
 # ---- bridge / network constants (this demo deployment) -----------------------
-# Y_federation x-only = peg-in P2TR internal key. MUST equal heimdall's RUNTIME federation key:
-# heimdall.toml `y_fed_seed_hex = fe*32` -> 0ce472ae… (verified by deriving the x-only pubkey).
-# WARNING: demo_simplifications.md AND the on-chain deposit badb6b79… use a DIFFERENT key
-# b1e15a53… (02b1e15a…) — those are stale and NOT sweepable by the current heimdall config.
-# Keep this constant in sync with heimdall.toml. (see 2026-06-30-d8bed7d4-pegin-request-analysis.md)
-Y_FED = bytes.fromhex("0ce472ae5d8993e7609ee4ef33b344f6b8499a1259374bdf528f82240985bf03")
+# Y_51 x-only = peg-in P2TR internal key — the FROST group key from the on-chain treasury
+# state (heimdall's parse_pegin_request tweaks it; the 51% quorum sweeps via the key path).
+# This is the LIVE bridge key: every swept deposit's peg-in P2TR (47e8a68a…) is keyed to it.
+# (An earlier demo shortcut used the y_fed_seed key 0ce472ae…; heimdall's Y_51 restoration
+# made Y_51 the internal key again — keep this in sync with the on-chain treasury state.)
+Y_51 = bytes.fromhex("b1e15a532a4e816ec75af608256b0808e36fb7d22560605178850885e53f2854")
 REFUND_TIMEOUT = 720
 HRP = "tb"                          # testnet4 bech32 human-readable part
 RPC_URL, RPC_USER, RPC_PASS = "http://127.0.0.1:48332", "bitcoin", "bitcoin"
@@ -135,8 +135,8 @@ def _pushnum(n):                     # minimal CScriptNum push of a small positi
 def pegin_outputkey(xonly):
     leaf = _pushnum(REFUND_TIMEOUT) + bytes([0xb2, 0x75, 0x20]) + xonly + bytes([0xac])
     leafhash = tagged("TapLeaf", bytes([0xc0, len(leaf)]) + leaf)   # len(leaf) < 253
-    t = int.from_bytes(tagged("TapTweak", Y_FED + leafhash), "big")
-    Q = add(lift_x(int.from_bytes(Y_FED, "big")), mul(t))
+    t = int.from_bytes(tagged("TapTweak", Y_51 + leafhash), "big")
+    Q = add(lift_x(int.from_bytes(Y_51, "big")), mul(t))
     return Q[0].to_bytes(32, "big")
 def taproot_keypath_output_key(xonly):
     # Depositor's own key-path-only Taproot output key (BIP-341 / BIP-86, empty script tree):
