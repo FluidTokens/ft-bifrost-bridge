@@ -1,4 +1,4 @@
-# bifrost-bridge
+# Bifrost Bridge
 
 Bitcoin desperately needs a safe and expressive DeFi layer. Cardano, thanks to its properties such as the eUTxO architecture and being highly decentralised, is strongly well-positioned to become the best BTC Defi Layer among the top 10 blockchains.
 
@@ -26,3 +26,13 @@ If you already cloned without `--recurse-submodules`, initialize them with:
 ```bash
 git submodule update --init --recursive
 ```
+## Regarding Milestone 3 Proof of Achievement
+
+Initially, we aimed to submit "Code of Zero Knowledge logic to prove the Bitcoin transactions". During the development of Bifrost, we discovered that Zero Knowledge proofs were not needed to prove Bitcoin transactions. Instead we use a more efficient system of Merkle Tree Proof Inclusions/Exclusions, basically proving that a Bitcoin transaction has happened only if its hash has been added to the Merkle Tree of Bitcoin Transactions.
+
+Merkle Tree proofs are much more easy to understand, a standard in the crypto industry and require less resources than any possible Zero Knowledge proof.
+
+We still do use Zero Knowledge proofs to prove SPOs bad behaviour and to punish them accordingly.
+
+This is NOT a change of the scope of Catalyst project, it's a design choice. ZK proofs and Merkle Tree inclusion proofs are in this case equivalent, except that MerkleTree proofs are much more efficient and fast. The output is the same to what was promised, and as said we still use ZK proofs in another part of the protocol.
+Therefore NO Change Request is necessary.
