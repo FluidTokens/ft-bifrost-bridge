@@ -263,6 +263,67 @@ These are the steps to execute a correct peg-in:
   * **After depositor timeout reclaim**: the creator provides a Binocular inclusion proof of a confirmed Bitcoin transaction that spends the peg-in txid+vout via the **depositor refund script leaf** (not the federation leaf, not the key path). The on-chain validator parses the Bitcoin transaction witness to verify it is a script-path spend using the depositor refund script specifically, not a key-path spend (which would be an SPO sweep) or a federation script-path spend (which would also be a legitimate sweep). This ensures closure cannot grief a depositor whose funds were legitimately swept by either SPOs or the federation.
   * **Duplicate PegInRequest**: the creator provides a **trie inclusion proof** showing the peg-in is already in the completed peg-ins Merkle Patricia Trie in the Treasury UTxO. This means fBTC was already minted via another PegInRequest for the same deposit, so this one is redundant.
 
+### End-to-end peg-in sequence
+
+The diagram below shows the full peg-in lifecycle across the depositor, the Bitcoin network, the watchtower program, the Cardano contracts, and the SPO program. Each numbered phase corresponds to a step in the flow above; the per-transaction details are specified in the **Transaction catalog**.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Dep as Depositor
+    participant BTC as Bitcoin network
+    participant WT as Watchtower program
+    participant Bin as Binocular Oracle<br/>(Cardano)
+    participant PIN as peg_in.ak<br/>(Cardano)
+    participant TMC as treasury_movement.ak<br/>(Cardano)
+    participant TRE as treasury.ak / bridged_asset.ak<br/>(Cardano)
+    participant SPO as SPO program<br/>(current roster)
+
+    Note over Dep,TRE: Phase 1 — Bitcoin deposit
+    Dep->>TRE: Read current Y₅₁ and Y_federation from treasury.ak
+    Dep->>Dep: Derive peg-in Taproot address Q<br/>(Y₅₁ key path · Y_fed+CSV leaf · depositor refund leaf)
+    Dep->>BTC: Send BTC to Q with OP_RETURN "BFR" ‖ depositor_pubkey_hash
+
+    Note over BTC,Bin: Phase 2 — Bitcoin state relayed to Cardano
+    loop Continuous, competitive block relay
+        WT->>BTC: Follow the chain tip
+        WT->>Bin: Post 80-byte block headers (PoW validated on-chain,<br/>forks resolved by cumulative chainwork)
+    end
+    Note over Bin: Deposit block becomes confirmed after<br/>100 BTC confirmations + 200-min challenge window
+
+    Note over Dep,PIN: Phase 3 — PegInRequest creation (permissionless — anyone)
+    alt Typically a watchtower
+        WT->>BTC: Detect deposit by scanning for "BFR" OP_RETURN outputs
+        WT->>PIN: Create PegInRequest UTxO — mint PegInRequest NFT,<br/>datum = raw BTC peg-in tx, redeemer = Merkle proof (tx ∈ block)<br/>+ Binocular inclusion proof (block ∈ confirmed chain)
+    else Depositor self-service (censorship resistance)
+        Dep->>PIN: Create PegInRequest UTxO for their own deposit<br/>(same NFT mint and proofs)
+    end
+    PIN-->>Bin: Verify both proofs against the confirmed-chain root<br/>(Binocular read via reference input)
+
+    Note over PIN,SPO: Phase 4 — Treasury Movement build and signing (per TM batch)
+    SPO->>PIN: Read confirmed PegInRequest UTxOs (pegs snapshot, FIFO)
+    SPO->>SPO: Verify peg-in Taproot address off-chain, then<br/>deterministically build the unsigned TM<br/>(sweep peg-ins, pay peg-outs, move treasury)
+    SPO->>SPO: FROST signing cascade over bifrost_url pull model:<br/>Round 1 nonce commitments → Round 2 partial signatures<br/>(51% key path — federation script path on failure)
+    SPO->>TMC: Elected leader posts signed TM as Unconfirmed TM tx<br/>(mints TM NFT)
+
+    Note over BTC,TMC: Phase 5 — Relay and Bitcoin confirmation
+    WT->>TMC: Pick up signed TM from the datum
+    WT->>BTC: Broadcast TM — the deposit is swept into the treasury
+    WT->>Bin: Keep relaying headers until the TM block is confirmed
+    WT->>TMC: Confirm TM tx with a Binocular inclusion proof —<br/>datum becomes { btc_txid, epoch, swept_peg_in_utxo_ids, fulfilled_peg_outs }
+
+    Note over Dep,TRE: Phase 6 — Completion: mint fBTC (single Cardano tx)
+    Dep->>PIN: Spend PegInRequest UTxO (burn PegInRequest NFT)
+    Dep->>TRE: Reference Confirmed TM tx — provide Schnorr signature over<br/>"BFR-mint-v1" ‖ btc_txid ‖ peg_in_utxo_id ‖ chosen_address<br/>+ MPT non-inclusion proof, insert peg-in into completed-peg-ins trie
+    TRE-->>Dep: fBTC minted to the depositor-chosen Cardano address<br/>(one output pays the leader reward)
+
+    alt Peg-in missed by this TM (e.g. arrived after the pegs snapshot)
+        Note over Dep,SPO: Rolls over to a later TM batch / next epoch
+    else Treasury key rotated before sweep
+        Dep->>BTC: Reclaim BTC via the depositor refund leaf<br/>after ~30 days (4320 blocks), then retry
+    end
+```
+
 ### Taproot address construction
 
 The Treasury address and peg-in addresses use different Taproot trees following BIP341 [4]. Both use $Y_{51}$ as the key-path internal key, making the 51% FROST threshold the main-line operating mode. The federation appears as a timelock-gated fallback script leaf in both trees.
@@ -383,6 +444,48 @@ These are the steps to execute a correct peg-out:
 * Wait for the peg-out to be included in the Treasury Movement transaction at the next epoch boundary. In the normal 51% mode, SPOs sign this transaction with FROST and post it to Cardano (`treasury_movement.ak`); in the emergency mode, the federation satisfies the $Y_{federation}$ fallback script path instead. Watchtowers then relay the signed transaction to Bitcoin. At this point, the withdrawer has received BTC at their specified Bitcoin address.
 * Once the Treasury Movement transaction is confirmed on Bitcoin (100 Bitcoin blocks for Binocular confirmation), anyone can complete the peg-out on Cardano by providing a Binocular inclusion proof of the Treasury Movement transaction. This burns the locked fBTC and the peg-out NFT, returning the MIN_ADA to the withdrawer.
 * If for unexpected reasons the Treasury Movement transaction did not include the peg-out payment, the withdrawer can use a Binocular exclusion proof to unlock their fBTC and try again in the next epoch.
+
+### End-to-end peg-out sequence
+
+The diagram below shows the full peg-out lifecycle across the withdrawer, the Cardano contracts, the SPO program, the watchtower program, and the Bitcoin network. The per-transaction details are specified in the **Transaction catalog**.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Wdr as Withdrawer
+    participant BTC as Bitcoin network
+    participant WT as Watchtower program
+    participant Bin as Binocular Oracle<br/>(Cardano)
+    participant POUT as peg_out.ak<br/>(Cardano)
+    participant TMC as treasury_movement.ak<br/>(Cardano)
+    participant SPO as SPO program<br/>(current roster)
+
+    Note over Wdr,POUT: Phase 1 — Lock fBTC on Cardano
+    Wdr->>POUT: Create PegOut UTxO — lock fBTC + MIN_ADA, mint PegOut NFT,<br/>datum = { btc_destination_scriptPubKey, owner_auth }
+
+    Note over POUT,SPO: Phase 2 — Treasury Movement build and signing (per TM batch)
+    SPO->>POUT: Read pending PegOut UTxOs (pegs snapshot, FIFO,<br/>past the Cardano stability window)
+    SPO->>SPO: Deterministically build the unsigned TM — one output per<br/>peg-out paying btc_destination_scriptPubKey<br/>(amount − per-peg-out protocol fee)
+    SPO->>SPO: FROST signing cascade over bifrost_url pull model:<br/>Round 1 nonce commitments → Round 2 partial signatures<br/>(51% key path — federation script path on failure)
+    SPO->>TMC: Elected leader posts signed TM as Unconfirmed TM tx<br/>(mints TM NFT)
+
+    Note over Wdr,TMC: Phase 3 — Relay and Bitcoin payout
+    WT->>TMC: Pick up signed TM from the datum
+    WT->>BTC: Broadcast TM
+    BTC-->>Wdr: BTC arrives at the requested destination address
+    loop Continuous, competitive block relay
+        WT->>Bin: Post block headers until the TM block is confirmed<br/>(100 BTC confirmations + 200-min challenge window)
+    end
+    WT->>TMC: Confirm TM tx with a Binocular inclusion proof —<br/>datum becomes { btc_txid, epoch, swept_peg_in_utxo_ids, fulfilled_peg_outs }
+
+    Note over Wdr,TMC: Phase 4 — Completion on Cardano (fully permissionless)
+    WT->>POUT: Anyone spends the PegOut UTxO referencing the Confirmed TM tx —<br/>burns the locked fBTC and the PegOut NFT
+    POUT-->>Wdr: MIN_ADA returned to the withdrawer
+
+    alt TM did not include the peg-out payment
+        Wdr->>POUT: Unlock fBTC with a Binocular exclusion proof<br/>and retry in the next epoch
+    end
+```
 
 ## Transaction catalog
 
