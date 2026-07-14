@@ -271,8 +271,19 @@ downstream script (including the fBTC policy), **the Config NFT is the identity 
 instance**: a different Config UTxO implies a different fBTC policy — a new, non-fungible
 instance.
 
-**ConfigDatum.** Two sections: *wiring* (immutable for the life of the instance) and *parameters*
-(governance-updatable).
+**ConfigDatum.** The datum holds two different kinds of content:
+
+* **Wiring** — *identities*: script hashes and `(policy id, asset name)` pairs that let the
+  contracts and off-chain programs find each other. Wiring defines the instance, so it is
+  immutable for the instance's life.
+* **Parameters** — *tunable values*: plain integers governing the bridge's economic and security
+  behaviour (minimum stake, fees, minimum peg-out size). They are data, not identity, so
+  governance may change them over time. Some are enforced by validators on-chain
+  (`per_pegout_fee`, `min_peg_out_fbtc`); others are **never checked by any validator** and live
+  here purely so that every off-chain actor shares one unquestionable consensus value
+  (`min_stake`, `fee_rate_sat_per_vb`) — an SPO reading such a value from local configuration
+  could silently disagree with its peers and break TM determinism; reading it from the Config
+  UTxO cannot.
 
 Wiring — fixed at mint; the update path must preserve them byte-for-byte:
 
@@ -292,12 +303,29 @@ Wiring — fixed at mint; the update path must preserve them byte-for-byte:
 
 Parameters — governance-updatable:
 
-| Field | Type | Purpose |
-|-------|------|---------|
-| `min_stake` | Int (lovelace) | minimum delegated stake to enter the DKG candidate set |
-| `fee_rate_sat_per_vb` | Int (sat/vB) | Bitcoin miner fee rate used in deterministic TM construction |
-| `per_pegout_fee` | Int (satoshi) | per-peg-out protocol fee, deducted from each peg-out output (the BTC payout is gross − fee) |
-| `min_peg_out_fbtc` | Int (satoshi) | minimum fBTC a PegOut lock may hold; must exceed `per_pegout_fee` + Bitcoin dust (330 sat) |
+| Field | Type | Purpose | Read by |
+|-------|------|---------|---------|
+| `min_stake` | Int (lovelace) | minimum delegated stake to enter the DKG candidate set | off-chain only: DKG candidate enumeration (§Candidate Set and Ordering) |
+| `fee_rate_sat_per_vb` | Int (sat/vB) | Bitcoin miner fee rate used in deterministic TM construction | off-chain only: every SPO's TM builder (`miner fee = vsize × rate`) |
+| `per_pegout_fee` | Int (satoshi) | per-peg-out protocol fee, deducted from each peg-out output (the BTC payout is gross − fee) | off-chain: TM builder (output amounts); on-chain: the peg-out completion verifier (`paid == amount − fee`, see §Complete peg-out) |
+| `min_peg_out_fbtc` | Int (satoshi) | minimum fBTC a PegOut lock may hold; must exceed `per_pegout_fee` + Bitcoin dust (330 sat) | on-chain: `peg_out.ak` at lock time; off-chain: TM builder sub-dust skip guard |
+
+**Reading the Config (how a value is retrieved).** The Config UTxO carries the config NFT and an
+**inline datum**. The NFT is the authenticity mark: anyone can send a UTxO with an arbitrary datum
+to the `config.ak` address, but exactly one UTxO in existence holds the NFT (one-shot mint) — a
+reader trusts a datum only if the UTxO's value contains the NFT.
+
+* **On-chain**: a transaction lists the Config UTxO as a **reference input** — read without being
+  spent, so there is no contention and any number of transactions can read it in the same block.
+  The consuming validator is parameterized by `(config_nft_policy_id, config_nft_asset_name)`; it
+  locates the reference input whose value holds exactly that NFT (typically via an index passed in
+  the redeemer) and decodes the inline datum **positionally** — a Plutus datum is a `Constr`, so
+  field *n* in the tables above is element *n*. Example: `peg_out.ak` reads fields 11 (its
+  withdraw script) and 13 (the completion verifier).
+* **Off-chain**: query the ledger for the UTxO holding the asset `(config_nft_policy_id,
+  config_nft_asset_name)` (any chain indexer resolves an NFT to its UTxO), read its inline datum,
+  decode `ConfigDatum`. The SPO program reads the fee parameters this way when building a TM —
+  pinned to the batch snapshot slot per the determinism rule below.
 
 **Governance update (`config.ak` spend branch).** The Config UTxO may be spent only by a
 *parameter update* transaction (see *Update Config parameters* in the Transaction catalog):
