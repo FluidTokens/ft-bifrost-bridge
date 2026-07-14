@@ -285,30 +285,29 @@ instance.
   could silently disagree with its peers and break TM determinism; reading it from the Config
   UTxO cannot.
 
-Wiring — fixed at mint; the update path must preserve them byte-for-byte:
+One field list; **immutable** marks wiring the update path must preserve byte-for-byte,
+**updatable** marks the governance-tunable parameters:
 
-| # | Field | Purpose |
-|---|-------|---------|
-| 0–1 | `bridged_token_policy_id` / `..._asset_name` | fBTC (bridged asset) identity |
-| 2–3 | `source_chain_merkle_tree_policy_id` / `..._asset_name` | source-chain state tree identity |
-| 4–5 | `block_header_merkle_tree_policy_id` / `..._asset_name` | block-header tree identity |
-| 6–7 | `completed_peg_ins_merkle_tree_policy_id` / `..._asset_name` | completed-peg-ins tree identity |
-| 8–9 | `completed_peg_outs_merkle_tree_policy_id` / `..._asset_name` | completed-peg-outs tree identity |
-| 10 | `peg_in_withdraw_script_hash` | peg-in spend logic (withdraw-script pattern) |
-| 11 | `peg_out_withdraw_script_hash` | peg-out spend logic (withdraw-script pattern) |
-| 12 | `legit_treasury_movement_and_peg_in_spent_verifier_script_hash` | peg-in close verifier |
-| 13 | `legit_treasury_movement_and_peg_out_produced_verifier_script_hash` | peg-out completion verifier (see §Complete peg-out) |
-| 14 | `legit_treasury_movement_and_peg_out_not_produced_verifier_script_hash` | peg-out cancel verifier |
-| 15–16 | `treasury_nft_policy_id` / `..._asset_name` | Treasury state UTxO identity |
+| # | Field | Type | Description |
+|---|-------|------|-------------|
+| 0–1 | `bridged_token_policy_id` / `..._asset_name` | PolicyId / AssetName | **immutable** — fBTC (bridged asset) identity |
+| 2–3 | `source_chain_merkle_tree_policy_id` / `..._asset_name` | PolicyId / AssetName | **immutable** — source-chain state tree identity |
+| 4–5 | `block_header_merkle_tree_policy_id` / `..._asset_name` | PolicyId / AssetName | **immutable** — block-header tree identity |
+| 6–7 | `completed_peg_ins_merkle_tree_policy_id` / `..._asset_name` | PolicyId / AssetName | **immutable** — completed-peg-ins tree identity |
+| 8–9 | `completed_peg_outs_merkle_tree_policy_id` / `..._asset_name` | PolicyId / AssetName | **immutable** — completed-peg-outs tree identity |
+| 10 | `peg_in_withdraw_script_hash` | ByteArray (script hash) | **immutable** — peg-in spend logic (withdraw-script pattern) |
+| 11 | `peg_out_withdraw_script_hash` | ByteArray (script hash) | **immutable** — peg-out spend logic (withdraw-script pattern) |
+| 12 | `legit_treasury_movement_and_peg_in_spent_verifier_script_hash` | ByteArray (script hash) | **immutable** — peg-in close verifier |
+| 13 | `legit_treasury_movement_and_peg_out_produced_verifier_script_hash` | ByteArray (script hash) | **immutable** — peg-out completion verifier (see §Complete peg-out) |
+| 14 | `legit_treasury_movement_and_peg_out_not_produced_verifier_script_hash` | ByteArray (script hash) | **immutable** — peg-out cancel verifier |
+| 15–16 | `treasury_nft_policy_id` / `..._asset_name` | PolicyId / AssetName | **immutable** — Treasury state UTxO identity |
+| 17 | `min_stake` | Int (lovelace) | **updatable** — minimum delegated stake to enter the DKG candidate set; read off-chain only, at DKG candidate enumeration (§Candidate Set and Ordering) |
+| 18 | `fee_rate_sat_per_vb` | Int (sat/vB) | **updatable** — Bitcoin miner fee rate for deterministic TM construction (`miner fee = vsize × rate`); read off-chain only, by every SPO's TM builder |
+| 19 | `per_pegout_fee` | Int (satoshi) | **updatable** — per-peg-out protocol fee deducted from each peg-out output (BTC payout = gross − fee); read off-chain by the TM builder and on-chain by the peg-out completion verifier (`paid == amount − fee`, §Complete peg-out) |
+| 20 | `min_peg_out_fbtc` | Int (satoshi) | **updatable** — minimum fBTC a PegOut lock may hold (> `per_pegout_fee` + 330-sat dust); enforced on-chain by `peg_out.ak` at lock time, and used off-chain as the TM builder's sub-dust skip guard |
 
-Parameters — governance-updatable:
-
-| Field | Type | Purpose | Read by |
-|-------|------|---------|---------|
-| `min_stake` | Int (lovelace) | minimum delegated stake to enter the DKG candidate set | off-chain only: DKG candidate enumeration (§Candidate Set and Ordering) |
-| `fee_rate_sat_per_vb` | Int (sat/vB) | Bitcoin miner fee rate used in deterministic TM construction | off-chain only: every SPO's TM builder (`miner fee = vsize × rate`) |
-| `per_pegout_fee` | Int (satoshi) | per-peg-out protocol fee, deducted from each peg-out output (the BTC payout is gross − fee) | off-chain: TM builder (output amounts); on-chain: the peg-out completion verifier (`paid == amount − fee`, see §Complete peg-out) |
-| `min_peg_out_fbtc` | Int (satoshi) | minimum fBTC a PegOut lock may hold; must exceed `per_pegout_fee` + Bitcoin dust (330 sat) | on-chain: `peg_out.ak` at lock time; off-chain: TM builder sub-dust skip guard |
+Fields 18–20 are appended after the implemented datum's last field (`min_stake`, #17), so the
+positions of all existing fields are preserved.
 
 **Reading the Config (how a value is retrieved).** The Config UTxO carries the config NFT and an
 **inline datum**. The NFT is the authenticity mark: anyone can send a UTxO with an arbitrary datum
@@ -320,7 +319,7 @@ reader trusts a datum only if the UTxO's value contains the NFT.
   The consuming validator is parameterized by `(config_nft_policy_id, config_nft_asset_name)`; it
   locates the reference input whose value holds exactly that NFT (typically via an index passed in
   the redeemer) and decodes the inline datum **positionally** — a Plutus datum is a `Constr`, so
-  field *n* in the tables above is element *n*. Example: `peg_out.ak` reads fields 11 (its
+  field *n* in the table above is element *n*. Example: `peg_out.ak` reads fields 11 (its
   withdraw script) and 13 (the completion verifier).
 * **Off-chain**: query the ledger for the UTxO holding the asset `(config_nft_policy_id,
   config_nft_asset_name)` (any chain indexer resolves an NFT to its UTxO), read its inline datum,
@@ -330,14 +329,14 @@ reader trusts a datum only if the UTxO's value contains the NFT.
 **Governance update (`config.ak` spend branch).** The Config UTxO may be spent only by a
 *parameter update* transaction (see *Update Config parameters* in the Transaction catalog):
 
-* the config NFT returns to the same `config.ak` address with a datum whose **wiring fields are
-  byte-identical** to the spent datum — only the parameters section may change;
+* the config NFT returns to the same `config.ak` address with a datum whose **immutable fields
+  (#0–16) are byte-identical** to the spent datum — only the updatable fields (#17–20) may change;
 * the update is authorized by a BIP340 Schnorr signature under the **current treasury group key**,
-  read from the Treasury state UTxO (located via wiring fields 15–16) as a reference input. In
+  read from the Treasury state UTxO (located via fields #15–16) as a reference input. In
   Phase 1 that key is $Y_{federation}$, so governance passes from the federation to the 51%-stake
   roster automatically as the bridge decentralizes;
 * the signed message commits to the spent Config outpoint (replay protection) and the full new
-  parameters section.
+  set of updatable fields (#17–20).
 
 **Determinism rule (parameter reads).** Off-chain consumers — deterministic TM construction above
 all — read the Config state **as of the relevant TM batch's snapshot slot**, so every SPO uses
@@ -345,8 +344,8 @@ identical values even if an update lands mid-epoch: an update takes effect from 
 never retroactively. On-chain consumers read the current Config UTxO as a reference input.
 
 > **Implementation status.** The deployed `config.ak` has `spend = False` (immutable) and its
-> datum carries the wiring fields plus `min_stake` only — no fee fields. This section is the
-> normative target; adding the parameters section and the governance spend branch is a contract
+> datum carries fields #0–17 only — no fee fields. This section is the normative
+> target; adding the parameter fields #18–20 and the governance spend branch is a contract
 > change request tracked upstream (heimdall `technical_questions.md` §2, resolution items b/c).
 > The third verifier field is mirrored as `pegInCloseVerifierScriptHash` in the binocular Scalus
 > types — the Aiken name above is normative.
