@@ -248,6 +248,57 @@ Peg-out completion is authorized by the peg-out's `owner_auth` — but the withd
 
 ![Bifrost UTxO Flow](./images/utxo_flow.png)
 
+<!-- G36: new section — drafted from the implemented deployment (binocular deploy-bridge /
+     deploy-script-refs). OPEN(Gn) marks decisions still pending in the gap review. -->
+## Bridge instance creation flow
+
+A **bridge instance** is the complete set of on-chain state that one bridged asset (e.g. fBTC for
+Bitcoin) runs on. Creation is a one-time deployment; each state UTxO is authenticated by a
+one-shot NFT minted here, and those NFTs identify the instance for its whole life. The deploying
+operator performs:
+
+1. **Deploy or locate the Binocular oracle instance.** The oracle policy id is the instance's
+   source of Bitcoin truth — every inclusion proof in the protocol verifies against this oracle's
+   confirmed-chain root (see [1]).
+2. **Choose the one-shot UTxOs.** Pick distinct pure-ADA wallet UTxOs, one per one-shot mint below.
+   Every state-NFT policy is parameterized by its one-shot outpoint, which makes each NFT unique
+   and every script hash deterministically computable *before* anything is submitted.
+   (Reference-script UTxOs must be excluded from this selection — spending one destroys a deployed
+   reference script.)
+3. **Compute the contract set.** From the validator blueprint, the oracle policy id, and the chosen
+   one-shot outpoints, compute all cross-referenced script hashes: the fBTC (`bridged_asset`)
+   policy, `peg_in` / `peg_out` (+ their withdraw scripts), the completion verifier scripts, the
+   completed-peg-ins / completed-peg-outs tree policies, and the TM policy with its mint gate.
+4. **Mint the Config NFT** (`config.ak`), creating the Config UTxO whose datum is the spine of the
+   instance: it records every cross-referenced script hash and token identity (bridged token,
+   block-header tree, completed-peg-ins/-outs trees, peg-in/peg-out withdraw scripts, the peg-out
+   completion verifiers, the treasury NFT identity) plus protocol parameters (`min_stake` today).
+   In the current implementation `config.ak` is immutable, so every entry must be final at mint
+   time — **the Config NFT is the identity of the instance**: a different Config UTxO implies a
+   different fBTC policy, i.e. a *new*, non-fungible bridge instance.
+   OPEN(G2): governance-updatable Config; adding the fee parameters (`fee_rate_sat_per_vb`,
+   `per_pegout_fee`, `min_peg_out_fbtc`) to the datum.
+5. **Mint the completed-peg-ins tree NFT** — its UTxO carries the MPF root, initialized to the
+   empty root (32 zero bytes).
+6. **Mint the completed-peg-outs tree NFT** — likewise with the empty root.
+7. **Mint the TM-control UTxO** — records the authority allowed to mint TM NFTs (the identity
+   carried through the Unconfirmed → Confirmed TM lifecycle).
+   OPEN(G17/G21): authorized-minter singleton vs the on-chain leader-election rule.
+8. **Bootstrap the SPO-side state** (see §SPO Bootstrap Flow): the Treasury state NFT + UTxO at
+   `treasury.ak` (initial keys and an empty `bifrost_identity_root`), the registration-list root
+   (`reg-root`), and the ban-list root (`ban-root`).
+   OPEN(G24): the pre-DKG treasury/peg-in internal key (no $Y_{51}$ exists yet) and the initial
+   TreasuryDatum values; OPEN(G16): the TreasuryDatum field layout.
+9. **Deploy reference scripts (CIP-33)** for the large validators, so user transactions reference
+   them instead of carrying the script bytes.
+10. **Publish the instance parameters** — the Config NFT policy id + asset name and the fBTC
+    policy id — to client software. Wallets, watchtowers, and SPO programs locate all other state
+    UTxOs through the Config datum's cross-references.
+11. **Open for use.** Registration opens immediately; deposits become safe once the treasury key
+    the depositors derive addresses from is live.
+    OPEN(G24): Phase-1 operation before the first DKG — which key backs peg-in addresses, and the
+    first TM's shape (there is no prior treasury outpoint to spend as Input 0).
+
 ## User peg-in flow
 
 Let's use Bitcoin as example.
@@ -852,6 +903,50 @@ The epoch lifecycle above shows generous time windows for the signing cascade (5
 - **Multiple TM batches**: the roster processes peg requests in multiple batches throughout the epoch, each cycling through build → sign → broadcast → Bitcoin confirmation.
 
 The bottleneck is Bitcoin confirmation: each Treasury Movement requires ~100 Bitcoin blocks (~16.7 hours) for Binocular to promote the containing block to `confirmed` state. With a 5-day Cardano epoch, 4–5 TM batches fit sequentially, each handling its own set of peg-in sweeps and peg-out fulfillments. The final TM of the epoch moves the treasury to the new roster's Taproot address.
+
+<!-- G37: new section — end-to-end roster-rotation narrative; OPEN(Gn) marks pending decisions. -->
+### Periodic consensus change flow (epoch roster rotation)
+
+The phases above, told once as a single end-to-end flow. Actors: the **current roster** (controls
+the treasury), the **candidates** (registered SPOs for the next epoch), **watchtowers** (relay).
+
+1. **Continuous: registration.** SPOs register (and voluntarily deregister) at
+   `spos_registry.ak` — a one-time cold-key ceremony per pool (see §SPO Registration).
+   OPEN(G12): the exact validity window for registration/revocation transactions.
+2. **Epoch boundary — snapshots.** The candidate set is frozen: the registration linked-list minus
+   the active ban list, with the stake distribution read from the previous epoch. The `min_stake`
+   filter is applied off-chain at candidate enumeration. OPEN(G13): stake-check mechanism wording.
+3. **Candidate ordering and threshold.** Candidates are ordered lexicographically by
+   `bifrost_id_pk` and indexed $1..n$; the threshold $t$ is computed by the bottom-$k$ stake rule
+   (§Threshold Calculation) and frozen for the epoch's DKG instance.
+4. **DKG (off-chain, incoming roster).** Round 1 (commitments + proofs of knowledge), Round 2
+   (encrypted share distribution), finalization — producing $Y_{51}'$ and per-participant shares.
+   Non-participation shrinks the qualified subset deterministically; cryptographic faults are
+   punishable via the fault-verifier/ban path (§Misbehavior Handling).
+   OPEN(G20): the concrete Round 1 / Round 2 deadline schedule.
+5. **Update-Y (on-chain).** The current roster publishes $Y_{51}'$ to `treasury.ak`, authorized by
+   a FROST group signature under the *current* group key; the posting SPO is selected by the
+   leader rule with `tm_sequence = "dkg"`. From this point depositors derive peg-in addresses from
+   $Y_{51}'$.
+   OPEN(G5): the Update-Y transaction is not yet specified in the Transaction catalog, and the
+   implemented `treasury.ak` has no key-rotating spend path.
+6. **Pegs snapshot.** At the Cardano stability window ($3k/f$, see next section) the final TM
+   batch of the epoch is frozen.
+7. **Final Treasury Movement.** The current roster deterministically builds the final TM: sweeps
+   the frozen peg-ins, pays the frozen peg-outs, and sends the treasury change to the **new**
+   roster's Taproot address (derived from $Y_{51}'$ + $Y_{federation}$). The signing cascade runs
+   (51% key path, federation script path as fallback); the leader posts the signed TM to
+   `treasury_movement.ak`; watchtowers relay it to Bitcoin.
+8. **Handoff complete.** Once the final TM is Binocular-confirmed, the new roster controls the
+   treasury; the old roster's duties end. The next epoch's cycle begins at step 2.
+9. **Failure branches.**
+   - **DKG fails** (qualified subset below $t$): $Y_{51}$ is not rotated and the SPO threshold
+     mode is unavailable for the epoch; the federation path remains the emergency fallback.
+     OPEN(G25): roster continuity and recovery at the next boundary.
+   - **Final TM unconfirmed at the boundary** (Bitcoin congestion, fee spike): OPEN(G25/G29) —
+     re-sign/fee-bump procedure and the handoff's timing relative to the next epoch's snapshots.
+   - **Federation latency**: a freshly created treasury output cannot be spent via the federation
+     leaf until it ages `timeout_federation` blocks (CSV). OPEN(G23).
 
 ### Cardano stability window and peg finality
 
