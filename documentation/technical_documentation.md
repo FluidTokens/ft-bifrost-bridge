@@ -30,6 +30,32 @@ Once big amounts of liquidity have been bridged to Cardano, for this type of sma
 
 The security of Bifrost is guaranteed by SPOs participation: for a strong and reliable bridge, most of the top SPOs by delegation must participate in the protocol.
 
+<!-- (e), ratified 2026-07-15: this document is the normative source of truth; scope defined. -->
+## Scope and normativity
+
+**Normativity.** This document is the normative specification of the Bifrost protocol. Where an
+implementation and this document disagree, **this document wins**, and the divergence is a
+tracked contract/implementation change request (the *implementation status* notes throughout
+record the currently known divergences).
+
+**In scope** — the consensus and interoperability surface: everything two independent
+implementations must agree on to interoperate, and everything a user needs to verify the
+protocol's trust claims. Concretely: on-chain validator checks, datum and redeemer layouts,
+Bitcoin transaction shapes and address derivation, canonical byte layouts and signing messages,
+the deterministic construction and skip rules, the protocol schedule, and the flows.
+
+**Out of scope — with named owners** (an out-of-scope statement in this document must always
+point to the document that owns the topic): participant internals. The SPO program's
+implementation (heimdall documentation), the watchtower and oracle internals (the Binocular
+whitepaper [1]), and the federation's internal signing procedure (the federation's operational
+documentation). Each must satisfy the interfaces defined here.
+
+**Per-instance data.** Parameter values, deployed policy ids and script hashes, the genesis
+treasury outpoint, and the **federation charter** are not protocol content — but every instance
+MUST publish them. The federation charter's minimum contents: the number of federation entities,
+the internal signing threshold, and the custody/accountability claims for the key behind
+$Y_{federation}$ (see §Federation).
+
 ## Definitions and Abbreviations
 
 This section collects the acronyms, protocol terms, on-chain validators, mathematical symbols, and named lifecycle labels used throughout the rest of the document. Sub-sections are alphabetized for quick lookup; cross-references point to the body sections where each concept is fully specified.
@@ -428,6 +454,7 @@ both the Treasury and peg-in Taproot addresses (see *Taproot address constructio
 | Deregister / voluntary revoke | `bifrost_identity_root` (remove) | #1–3 |
 | Update-Y (key rotation — see the Transaction catalog) | `current_spos_frost_key` | #0, #2–3 |
 | Federation-key rotation (rare; an Update-Y variant) | `y_federation`, `federation_csv_blocks` | #0–1 — note: this changes every derived address; in-flight peg-ins against old addresses must be swept or refunded first |
+| Federation reset (guarded Update-Y variant — see *Update-Y*) | `current_spos_frost_key` → `y_federation` **only** | #0, #2–3 — requires a Binocular proof that the treasury tip was spent via the federation CSV leaf (roster provably dead) |
 
 **Reading the Treasury state.** As with the Config UTxO: on-chain readers take it as a reference
 input and verify the NFT; off-chain readers resolve the NFT to its UTxO and decode the inline
@@ -488,19 +515,21 @@ operator performs:
    `treasury.ak` (initial keys and an empty `bifrost_identity_root`), the registration-list root
    (`reg-root`), and the ban-list root (`ban-root`).
    The initial TreasuryDatum seeds `current_spos_frost_key` with $Y_{federation}$, so Phase-1
-   address derivation and governance work with no special cases (see §Treasury state UTxO).
-   OPEN(G24): who creates and funds the genesis treasury outpoint, and the Phase-1 sweep
-   operation details.
+   address derivation, signing (federation as key-path signer), and governance work with no
+   special cases (see §Treasury state UTxO and §Rollout Phases); the genesis treasury outpoint
+   is created by the deployer before step 4 (see step 11).
 9. **Deploy reference scripts (CIP-33)** for the large validators, so user transactions reference
    them instead of carrying the script bytes.
 10. **Publish the instance parameters** — the Config NFT policy id + asset name and the fBTC
     policy id — to client software. Wallets, watchtowers, and SPO programs locate all other state
     UTxOs through the Config datum's cross-references.
-11. **Open for use.** Registration opens immediately; deposits become safe once the treasury key
-    the depositors derive addresses from is live.
-    OPEN(G24): Phase-1 operation before the first DKG — which key backs peg-in addresses, and who
-    creates and funds the genesis treasury outpoint (the first TM's Input 0 is the Config's
-    `genesis_treasury_utxo_id`; see *Post signed TM*).
+11. **Open for use.** Registration opens immediately, and deposits are safe from the start:
+    peg-in addresses derive from the K1 datum key — $Y_{federation}$ in Phase 1 (see §Rollout
+    Phases), with no special cases. The **genesis treasury outpoint** was created by the deployer
+    *before* step 4: derive the Phase-1 treasury address (ordinary derivation, internal key = the
+    K1 datum key), fund it on Bitcoin with a minimal anchor amount (its value is
+    protocol-irrelevant — it exists to anchor the TM chain), wait for confirmation, then record
+    the outpoint as Config field #18. The first TM spends it as Input 0 (see *Post signed TM*).
 
 ## User peg-in flow
 
@@ -526,7 +555,7 @@ The Treasury address and peg-in addresses use different Taproot trees following 
 #### Keys
 
 - $Y_{51}$ is the FROST group public key produced by DKG with a threshold ensuring any signing subset controls more than 51% of delegated stake. It is stored in `treasury.ak`.
-- $Y_{federation}$ is a known protocol parameter — a public key controlled by a federation of trusted entities, used only as a last-resort spending path.
+- $Y_{federation}$ is a known protocol parameter — a public key controlled by a federation of trusted entities, used only as a last-resort spending path (interface, charter, and CSV analysis: see §Federation).
 
 #### Treasury Taproot tree
 
@@ -635,7 +664,7 @@ A user who wants to move his BTC from Cardano to Bitcoin is called a withdrawer.
 These are the steps to execute a correct peg-out:
 
 * Check the status of Bifrost: if the bridge is correctly operational and we are not too near the end of the current Cardano epoch, the peg-out can be done.
-* On Cardano, lock the correct amount of fBTC plus MIN_ADA at the peg_out.ak spend script (a plain payment to the script address — nothing is minted). The datum contains the Bitcoin destination address where BTC should be sent (`source_chain_destination_address`) and the current Bitcoin treasury outpoint (`source_chain_treasury_utxo_id`) that the paying Treasury Movement must spend — known from the previous TM's treasury change output. Naming a stale outpoint makes the peg-out unfulfillable (it can only be cancelled), so the peg-out must be created against the current treasury state. Request-building software must validate before submitting (see *Create PegOut request* — client-side checks): two mistakes — an undecodable datum, a nonexistent treasury outpoint — are permanently unrecoverable.
+* On Cardano, lock the correct amount of fBTC plus MIN_ADA at the peg_out.ak spend script (a plain payment to the script address — nothing is minted). The datum contains the Bitcoin destination address where BTC should be sent (`source_chain_destination_address`) and the current Bitcoin treasury outpoint (`source_chain_treasury_utxo_id`) that the paying Treasury Movement must spend — known from the previous TM's new treasury output (output 0, the TM-chain tip). Naming a stale outpoint makes the peg-out unfulfillable (it can only be cancelled), so the peg-out must be created against the current treasury state. Request-building software must validate before submitting (see *Create PegOut request* — client-side checks): two mistakes — an undecodable datum, a nonexistent treasury outpoint — are permanently unrecoverable.
 * Wait for the peg-out to be included in the Treasury Movement transaction at the next epoch boundary. In the normal 51% mode, SPOs sign this transaction with FROST and post it to Cardano (`treasury_movement.ak`); in the emergency mode, the federation satisfies the $Y_{federation}$ fallback script path instead. Watchtowers then relay the signed transaction to Bitcoin. At this point, the withdrawer has received BTC at their specified Bitcoin address.
 * Once the Treasury Movement transaction is confirmed on Bitcoin (100 Bitcoin blocks for Binocular confirmation), the withdrawer (per `owner_auth`) completes the peg-out on Cardano by providing the raw TM transaction, a Binocular inclusion proof of its confirmation, and a non-membership proof against the completed-peg-outs tree. This burns the locked fBTC, records the completion, and returns the MIN_ADA to the withdrawer.
 * If the Treasury Movement did not include the peg-out payment, the withdrawer cancels: once the transaction that spent the named treasury outpoint is Binocular-confirmed, they present it together with proof that it contains no output paying their destination (see *Cancel PegOut request*), unlocking their fBTC to try again against the new treasury outpoint.
@@ -856,7 +885,7 @@ flowchart LR
 | Role | Content |
 |------|---------|
 | **Inputs** | Current Treasury BTC UTxO + all confirmed peg-in UTxOs (identified by `peg_in_utxo_id` in each PegInRequest) |
-| **Outputs** | New Treasury UTxO at the new roster's $Q_{treasury}$ + one payment output per PegOut (pays `btc_destination_scriptPubKey` with `amount` minus the per-peg-out protocol fee — see *Amounts and fees*) |
+| **Outputs** | The **new treasury output** (output 0) — the treasury's self-payment to the address derived from the current TreasuryDatum key at the batch snapshot slot (after Update-Y this is the new roster's address: the handoff) + one payment output per PegOut (pays `btc_destination_scriptPubKey` with `amount` minus that peg-out's datum-pinned fee — see *Amounts and fees*) |
 | **Witness** | FROST aggregated Schnorr signature(s) per the chosen variant |
 | **Validity** | CSV timelock enforced on inputs only in the federation variant |
 | **Size (est.)** | **Hard-capped at ~15 KB raw bytes** — the signed TM is carried in the Cardano Post-TM datum, which must fit the 16 KB Cardano tx limit. Per-variant max batch: ~100 peg-ins + ~100 peg-outs (51% key-path, ~107 B/input); ~57+57 (federation — script-path + CSV on every input, ~213 B/input). Beyond these, SPOs split across multiple TMs (see line above). |
@@ -1280,12 +1309,29 @@ sig_msg = sha2_256("bifrost-update-y" ‖ spent_treasury_outpoint (36 B: txid �
 > key). Same principle as the TM chain: oracle- or signature-backed payloads need no submitter
 > authorization. The leader convention exists only to avoid duplicate fee spending.
 
+<!-- G25 (d), ratified 2026-07-15: the guarded recovery from a permanently dead roster. -->
+**Federation reset (Update-Y variant).** Ordinary Update-Y requires the *current* key's
+signature — so a permanently dead roster would deadlock the datum key forever. The reset branch
+breaks the deadlock with two guards:
+
+* it is authorized by a BIP340 signature under **`y_federation`** (datum field #2) — but may set
+  `current_spos_frost_key` **only to `y_federation` itself**, never to an arbitrary key; and
+* it requires a **Binocular-confirmed proof that the treasury tip was spent via the federation
+  CSV leaf** (witness-parsed script-path check, the same machinery as PegInRequest closure).
+
+The second guard is the objective deadness evidence: the CSV leaf only becomes spendable after
+the tip sat unmoved for `federation_csv_blocks` — a live roster's coins never age that far, so
+the proof **cannot exist for a live bridge** (see §Federation). Effect: the bridge returns to
+Phase 1 (federation as key-path signer), the roster rebuilds, and the federation signs a fresh
+first-handoff per §Rollout Phases. The signed message is the Update-Y layout with the domain tag
+`"bifrost-update-y-reset"`.
+
 > **Implementation status.** The implemented `treasury.ak` has no spend branch that changes
 > `current_spos_frost_key` (every registry branch preserves it) — this entry is the normative
-> target; adding the branch is part of the standing contract change request and gates heimdall's
-> K2 (`PublishKeys`). If the epoch's DKG fails, no Update-Y is posted: the old key remains and
-> the federation path is the epoch's fallback (degraded-epoch handling: see the consensus-change
-> flow).
+> target; adding the branch (and the reset variant) is part of the standing contract change
+> request and gates heimdall's K2 (`PublishKeys`). If the epoch's DKG fails, no Update-Y is
+> posted: the old key remains and the roster carries over (degraded-epoch handling: see the
+> consensus-change flow).
 
 ## Guaranteeing censor-resistant peg-ins and peg-outs
 
@@ -1303,9 +1349,62 @@ Therefore, the potential additional trust assumptions in Bifrost are the Cardano
 
 Bifrost supports a phased rollout from federated to fully decentralized operation:
 
-**Phase 1 — Federation Launch**: The bridge launches with the federation as the only signing entity. SPOs begin registering. The federation key is the $Y_{federation}$ used in the Taproot fallback path. During this phase, all Treasury Movement transactions are signed via the federation script path with timelock.
+**Phase 1 — Federation Launch**: The bridge launches with the federation as the only signing
+entity; SPOs begin registering. The K1 bootstrap seeds the Treasury state's
+`current_spos_frost_key` with $Y_{federation}$, so in Phase 1 the federation is the **key-path**
+signer — TMs are signed exactly like Phase-2 TMs, cheaply, with no CSV wait; the federation
+script leaf (with timelock) exists in the trees but is redundant while the key path is the same
+key. Address derivation, batches, and all flows work with no special cases.
 
-**Phase 2 — 51% SPO Participation**: Once sufficient SPOs have registered and completed DKG, the 51% FROST threshold becomes operational. SPOs sign via key path ($Y_{51}$), and the federation becomes an emergency-only fallback. This is the "main line" operating mode — the protocol's terminal steady-state.
+**Phase 2 — 51% SPO Participation**: There is **no phase flag anywhere** — the transition *is*
+the first **Update-Y**: once enough SPOs have registered and completed a DKG, the federation
+(holding the current datum key) signs the rotation to $Y_{51}$. Whether the roster is strong
+enough to hand control to is therefore explicitly the federation's accountable judgment, made
+once, in public, on-chain. After that signature the roster is the key-path signer, the federation
+becomes the emergency-only CSV fallback, and it cannot reclaim control (subsequent rotations
+require the roster's key) — except through the guarded *federation reset* (see *Update-Y* in the
+Transaction catalog), which can only fire on a provably dead roster. This is the "main line"
+operating mode — the protocol's terminal steady-state.
+
+<!-- G23, ratified 2026-07-15: interface normative here; trust parameters in the required
+     per-instance federation charter; internal ceremony owned by federation ops docs. -->
+## Federation
+
+**Interface (normative).** On-chain and on Bitcoin, the federation is exactly one thing: an
+x-only public key, $Y_{federation}$, whose signatures verify as plain BIP340. It is set at the K1
+bootstrap (Treasury state datum field #2, together with `federation_csv_blocks`, #3) and appears
+as the timelock-gated script leaf of both Taproot trees. How the federation produces signatures
+internally — a single custodian, MuSig2, FROST among its members — is indistinguishable on-chain
+and is owned by the federation's operational documentation (see §Scope and normativity).
+Recommended practice: a threshold scheme among independent entities with no single point of
+custody.
+
+**Charter (required per-instance data).** The bridge's advertised trust model depends on what
+"a federation of trusted entities" means for a given instance, so every instance MUST publish a
+federation charter: the number of entities, the internal signing threshold, and the
+custody/accountability claims. Without it, the fallback path's trust assumption is unverifiable.
+
+**CSV timing (the exclusivity window).** The federation leaf requires the spent UTxO to be at
+least `federation_csv_blocks` old (see the *CSV* acronym and the leaf scripts under *Taproot
+address construction*). Consequences, all deliberate:
+
+* a functioning roster can never be raced by the federation — every TM re-creates the treasury as
+  a fresh output, resetting the federation's clock;
+* the federation's emergency latency is bounded: it can act on any treasury or peg-in UTxO that
+  has sat unmoved for `federation_csv_blocks`;
+* a federation-leaf spend is therefore an **unforgeable, Bitcoin-enforced proof that the roster
+  failed to act** for that long — which is what the *federation reset* (see *Update-Y*) uses as
+  its deadness evidence.
+
+Constraint (spec-owned): `0 < federation_csv_blocks < 4320` — the federation must be able to
+sweep a peg-in before the depositor refund leaf opens (~30 days). Example (non-normative):
+144 blocks ≈ 1 day.
+
+**Signing in emergencies.** Under exact reconstruction (Model A′) the federation computes the
+same frozen batch as everyone else — the federation variant differs only in sequence numbers
+(CSV-enabling) and witness structure. Its internal coordination is off-protocol; posting the
+signed TM on Cardano is permissionless like any other post. In Phase 1 the federation is the
+key-path signer and none of this machinery is exercised (see §Rollout Phases).
 
 ## Flow of Bitcoin over epochs, ceremonies
 
@@ -1432,20 +1531,30 @@ the treasury), the **candidates** (registered SPOs for the next epoch), **watcht
 6. **Final batch.** The last batch opportunity before `final_tm_cutoff` freezes the epoch's final
    TM batch, under the per-batch stability cutoff (see *TM batches and the protocol schedule*).
 7. **Final Treasury Movement.** The current roster deterministically builds the final TM: sweeps
-   the frozen peg-ins, pays the frozen peg-outs, and sends the treasury change to the **new**
+   the frozen peg-ins, pays the frozen peg-outs, and pays the new treasury output to the **new**
    roster's Taproot address (derived from $Y_{51}'$ + $Y_{federation}$). The signing cascade runs
    (51% key path, federation script path as fallback); the leader posts the signed TM to
    `treasury_movement.ak`; watchtowers relay it to Bitcoin.
 8. **Handoff complete.** Once the final TM is Binocular-confirmed, the new roster controls the
    treasury; the old roster's duties end. The next epoch's cycle begins at step 2.
-9. **Failure branches.**
-   - **DKG fails** (qualified subset below $t$): $Y_{51}$ is not rotated and the SPO threshold
-     mode is unavailable for the epoch; the federation path remains the emergency fallback.
-     OPEN(G25): roster continuity and recovery at the next boundary.
-   - **Final TM unconfirmed at the boundary** (Bitcoin congestion, fee spike): OPEN(G25/G29) —
-     re-sign/fee-bump procedure and the handoff's timing relative to the next epoch's snapshots.
-   - **Federation latency**: a freshly created treasury output cannot be spent via the federation
-     leaf until it ages `timeout_federation` blocks (CSV). OPEN(G23).
+9. **Failure branches (the degraded-epoch state machine).** <!-- G25, ratified 2026-07-15 -->
+   - **DKG fails** (qualified subset below $t$): no Update-Y is posted; the old key stays in the
+     Treasury state and the **old roster simply carries over** — batches continue under it, and
+     the next epoch boundary takes fresh snapshots and retries the DKG. No halt, no special
+     state.
+   - **Late Update-Y or late final TM**: nothing breaks at the boundary — the output-0 address
+     rule is state-derived, so the handoff is simply whichever batch first runs after Update-Y
+     lands; the TM chain crosses epochs, and batches resume at the first grid slot after the tip
+     confirms (stuck TMs: *Stuck-TM recovery*).
+   - **Roster loses signing liveness**: per-batch 51% signing fails at its bounded deadlines;
+     deposits and peg-outs keep accumulating (delayed, not lost). Once the treasury tip ages past
+     `federation_csv_blocks`, the **federation services the same frozen batches** via the CSV
+     leaf (see §Federation) — the bridge limps but liveness is preserved.
+   - **Permanent roster death**: the datum key would be locked forever (Update-Y needs the dead
+     roster's signature) — recovered by the guarded **federation reset** (see *Update-Y*): reset
+     to `y_federation` only, gated on a Binocular proof of a federation-leaf spend of the tip
+     (the CSV aging is the unforgeable deadness evidence). The bridge returns to Phase 1 and the
+     roster rebuilds.
 
 ### Cardano stability window and peg finality
 
@@ -2314,7 +2423,7 @@ All SPOs independently construct the same Treasury Movement (TM) transaction fro
 
 - Confirmed **PegInRequest** UTxOs — each contains the raw Bitcoin peg-in transaction from which the SPO extracts the Bitcoin txid+vout being swept.
 - Pending **PegOut** UTxOs — each specifies a destination Bitcoin address (as `scriptPubKey` bytes), an amount, and the treasury outpoint it expects the TM to spend (`source_chain_treasury_utxo_id`). Peg-outs whose named outpoint differs from this TM's treasury input are excluded from the batch — they could never be validly completed against it.
-- The current **treasury Bitcoin UTxO** (txid+vout), known from the previous TM's change output or from protocol bootstrap.
+- The current **treasury Bitcoin UTxO** (txid+vout), known from the previous TM's new treasury output (output 0) or, for the first movement, the Config's genesis outpoint.
 
 **Transaction version and locktime.**
 
@@ -2331,9 +2440,13 @@ All SPOs independently construct the same Treasury Movement (TM) transaction fro
 
 **Outputs (deterministic ordering).**
 
-- Output 0: treasury change — remaining balance sent to the Treasury Taproot address.
-  - For intermediate TMs within the epoch: the current roster's Treasury address.
-  - For the **final TM of the epoch**: the new roster's Treasury address (derived from the new DKG group key).
+- Output 0: the **new treasury output** — the treasury's self-payment to its own next address:
+  the Treasury Taproot address derived from the **current TreasuryDatum key at the batch snapshot
+  slot**. (Not "change": the treasury's continuation is the purpose of the transaction, and this
+  output is the next TM-chain tip.) The rule is state-derived, not positional: before the epoch's
+  Update-Y lands, batches pay the old key's address; the first batch after Update-Y pays the new
+  roster's address — that self-payment **is** the treasury handoff, with no "final TM"
+  bookkeeping.
 - Outputs 1..$m$: peg-out payments, ordered lexicographically by raw `scriptPubKey` bytes. Each output pays the requested amount minus **that peg-out's datum-pinned `per_pegout_fee`** (see below).
 
 <!-- G3: the deterministic skip rule is the actual griefing defense — no creation-time check exists. -->
@@ -2356,7 +2469,7 @@ creation-time check, is the bridge's defense against that.
 - Bitcoin miner fee: `fee = tx_vsize × fee_rate_sat_per_vb` (integer division, rounded up). The transaction vsize is deterministic since all SPOs build the same transaction.
 - Per-peg-out protocol fee: pinned in each `PegOutDatum` at lock time (covering the miner fee share and protocol operating costs); the Operational-params `per_pegout_fee` is only the **floor** the skip rule enforces.
 - Each peg-out output: the fBTC amount locked in the PegOut UTxO minus that peg-out's datum `per_pegout_fee`.
-- Treasury change: sum of all input values − sum of peg-out output values − Bitcoin miner fee.
+- New treasury output (output 0): sum of all input values − sum of peg-out output values − Bitcoin miner fee.
 
 **Witness (empty at construction time).**
 
@@ -2364,7 +2477,7 @@ The transaction is constructed unsigned — every input carries an empty witness
 
 **Multiple TMs per epoch.**
 
-The roster may process **multiple TM transactions** within an epoch, each cycling through build → sign → broadcast → Bitcoin confirmation (see **Realistic epoch timeline**). The batch grid, membership rules, FIFO order, and capacity/split rules are normative in **TM batches and the protocol schedule**. Each TM's treasury input is the previous TM's treasury change output (the TM-chain tip). The final TM of the epoch sends the treasury change to the new roster's Taproot address.
+The roster may process **multiple TM transactions** within an epoch, each cycling through build → sign → broadcast → Bitcoin confirmation (see **Realistic epoch timeline**). The batch grid, membership rules, FIFO order, and capacity/split rules are normative in **TM batches and the protocol schedule**. Each TM's treasury input is the previous TM's new treasury output (the TM-chain tip); the output-0 address rule above makes the first batch after Update-Y the treasury handoff.
 
 The signing namespace is identified by the tuple `(epoch, txid, mode, attempt)` where:
 - `mode ∈ {67, 51}` selects the active SPO threshold path;
