@@ -265,6 +265,17 @@ The signing cascade tries the SPO threshold first, then falls back to the federa
 1. **51% quorum ($Y_{51}$, main line)**: SPOs sign via the $Y_{51}$ key path — the cheapest spending path. This is the primary operating mode.
 2. **Federation ($Y_{federation}$, emergency)**: if the 51% mode does not yield a usable signature within its bounded setup and signing phases, the federation signs via the $Y_{federation}$ script leaf with timelock.
 
+> **Why a single 51% threshold.** An earlier design had a 67% tier above the 51% one (two DKGs
+> per epoch, an extra script leaf in every tree). It was removed because a cascade's safety
+> equals its **weakest available path**: an adversary holding 51% of stake can always make the
+> higher tier "fail to sign" (withholding participation is indistinguishable from ordinary
+> liveness failure and unpunishable) and then spend via the 51% path — so the effective theft
+> threshold was 51% with or without the higher tier. Moreover, 51% of delegated stake is already
+> the host chain's trust floor: all bridge authority (registry, bans, Config, Treasury state)
+> lives on Cardano, whose consensus assumes an honest stake majority — no signing threshold can
+> make the bridge safer than the L1 it reads its state from. The 67% tier bought no security and
+> cost two DKG ceremonies per epoch, larger control blocks, and a slower emergency path.
+
 If the resulting transaction would be too large, SPOs may split it into multiple transactions.
 
 In the 51% mode, the SPOs sign this transaction using FROST group signing and post the serialized signed transaction to Cardano (treasury_movement.ak). In the federation mode, the federation signs via the $Y_{federation}$ script path with timelock and the resulting signed transaction is posted to Cardano the same way. Watchtowers monitor treasury_movement.ak, pick up the signed transaction, and broadcast it to the source blockchain network.
@@ -994,7 +1005,7 @@ flowchart LR
 
 **Checks enforced on-chain**
 
-* `blake2b(Unconfirmed.signed_btc_tx) == btc_txid` (identifies the tx we're confirming).
+* `btc_txid == sha256d(strip_witness(Unconfirmed.signed_btc_tx))` — the Bitcoin txid is double-SHA256 over the **witness-stripped** serialization; the stored TM is witness-complete, so the validator strips witnesses before hashing (this is what makes the txid match the one committed in Bitcoin block Merkle trees; cf. the B1 note under *Complete peg-in*).
 * `btc_txid` is Merkle-included in the supplied block header.
 * That block header is in Binocular's confirmed-chain root.
 * `Confirmed` datum fields (`swept_peg_in_utxo_ids`, `fulfilled_peg_outs`) are populated by parsing the inputs and outputs of `Unconfirmed.signed_btc_tx` respectively. The old treasury input and the new treasury output are included in these lists — they are inert, because no PegInRequest can satisfy the depositor Schnorr-sig check against the TM tx's inputs (no `BFR` OP_RETURN), and no PegOut will match the new treasury destination + amount.
