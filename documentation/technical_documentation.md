@@ -2520,7 +2520,7 @@ The transaction is constructed unsigned — every input carries an empty witness
 The roster may process **multiple TM transactions** within an epoch, each cycling through build → sign → broadcast → Bitcoin confirmation (see **Realistic epoch timeline**). The batch grid, membership rules, FIFO order, and capacity/split rules are normative in **TM batches and the protocol schedule**. Each TM's treasury input is the previous TM's new treasury output (the TM-chain tip); the output-0 address rule above makes the first batch after Update-Y the treasury handoff.
 
 The signing namespace is identified by the tuple `(epoch, txid, mode, attempt)` where:
-- `mode ∈ {67, 51}` selects the active SPO threshold path;
+- `mode ∈ {51}` selects the active SPO threshold path — a single value today; the field is kept in the namespace and the canonical layouts so that adding a future threshold mode does not change any byte layout. The **federation mode has no signing namespace at all**: it uses no SPO endpoints and no FROST rounds;
 - `attempt` is reserved for exceptional reruns of the same mode for the same TM; in the normal protocol flow it remains `0`; and
 - every namespace requires **fresh nonce commitments**. A signer must never reuse FROST nonces across different `(epoch, txid, mode, attempt)` tuples, even if the unsigned Bitcoin transaction is unchanged.
 
@@ -2596,7 +2596,7 @@ Where:
 **Canonical byte layout**:
 
 ```
-"bifrost-sign-r1" || epoch (8B BE) || txid (32B) || mode (8B BE, 67 or 51) || attempt (8B BE) || pool_id (28B)
+"bifrost-sign-r1" || epoch (8B BE) || txid (32B) || mode (8B BE, 51) || attempt (8B BE) || pool_id (28B)
   || D_{i,0} (33B) || E_{i,0} (33B) || D_{i,1} (33B) || E_{i,1} (33B) || ...
 ```
 
@@ -2640,7 +2640,7 @@ Where:
 **Canonical byte layout**:
 
 ```
-"bifrost-sign-r2" || epoch (8B BE) || txid (32B) || mode (8B BE, 67 or 51) || attempt (8B BE) || pool_id (28B)
+"bifrost-sign-r2" || epoch (8B BE) || txid (32B) || mode (8B BE, 51) || attempt (8B BE) || pool_id (28B)
   || [sighash_j (32B) || z_{i,j} (32B)] × (k+1) || poseidon_commit (32B)
 ```
 
@@ -2648,9 +2648,9 @@ Entries are concatenated in input-index order. JSON is for transport; the signat
 
 ### Threshold failover
 
-There is no separate timeout for the transitions `67 -> 51 -> federation`. Instead, each DKG and signing round has its own bounded submission deadline, and a lower-threshold mode becomes eligible immediately once the higher mode's bounded setup/signing phases finish unsuccessfully.
+There is no separate timeout for the transition `51 -> federation`. Instead, each DKG and signing round has its own bounded submission deadline, and a lower-threshold mode becomes eligible immediately once the higher mode's bounded setup/signing phases finish unsuccessfully.
 
-For a given TM and mode (`67` or `51`), all honest SPOs derive the same signing state:
+For a given TM in the `51` mode, all honest SPOs derive the same signing state:
 
 1. Start from the **current roster** stored on-chain for the active treasury.
 2. Remove any SPOs with an active on-chain ban entry.
@@ -2736,7 +2736,7 @@ The SPO program must classify peers as:
 
 Communication follows a **replicated pull model**: each namespace defines one public payload per sender at a well-known URL path, and every SPO polls every other SPO's endpoint to fetch the same bytes. There is no coordinator, no push notifications, and no peer-specific delivery path. In particular, DKG Round 2 publishes the full encrypted-share vector as one public blob, so if a sender publishes Round 2 at all, any SPO can retrieve the same payload.
 
-URL path conventions (`<threshold>` is `67` or `51` — two DKGs run concurrently):
+URL path conventions (`<threshold>` is `51` — one DKG per epoch):
 
 * **DKG Round 1**: `<bifrost_url>/dkg/<epoch>/<threshold>/<attempt>/round1/<pool_id>.json`
 * **DKG Round 2**: `<bifrost_url>/dkg/<epoch>/<threshold>/<attempt>/round2/<pool_id>.json`
