@@ -961,7 +961,7 @@ flowchart LR
 |------|---------|
 | **Inputs** | Poster's UTxO — fees + MIN_ADA |
 | **Reference inputs** | Config UTxO — supplies `genesis_treasury_utxo_id` (#18) and the TM policy identities; predecessor `Confirmed TM tx` UTxO (omitted for the first movement) |
-| **Mint** | +1 TM NFT — identity carried through the Unconfirmed → Confirmed → drained lifecycle; minting is permissionless, gated by the linkage check |
+| **Mint** | +1 TM NFT — identity carried through the Unconfirmed → Confirmed lifecycle (records are permanent, see *Confirm TM tx*); minting is permissionless, gated by the linkage check |
 | **Outputs** | `Unconfirmed TM tx` UTxO @ `treasury_movement.ak`; datum = `{ signed_btc_tx, epoch, tm_sequence, poster }` (`poster` = the reward identity, see *Leader reward*) |
 | **Validity interval** | unconstrained (a stale or out-of-turn post is inert — it can never confirm) |
 | **Required signers** | poster (fee spend) — permissionless |
@@ -988,7 +988,8 @@ flowchart LR
 > or indexing Confirmed records from the genesis value), and read the current treasury **value**
 > from the tip record's parsed `outputs[0]`. Stale posts — a second genesis-linked TM, a fork from
 > an already-extended predecessor — are permitted on Cardano but can never confirm on Bitcoin;
-> they remain inert `Unconfirmed` garbage for garbage collection. Duplicate Confirmed records for
+> they simply remain inert `Unconfirmed` records forever (see the permanence note under *Confirm
+> TM tx*). Duplicate Confirmed records for
 > the same `btc_txid` (the same signed TM posted twice) are possible and harmless — both carry
 > identical content; tooling deduplicates by `btc_txid`.
 
@@ -1029,7 +1030,12 @@ flowchart LR
 * `Confirmed` datum fields (`swept_peg_in_utxo_ids`, `fulfilled_peg_outs`) are populated by parsing the inputs and outputs of `Unconfirmed.signed_btc_tx` respectively. The old treasury input and the new treasury output are included in these lists — they are inert, because no PegInRequest can satisfy the depositor Schnorr-sig check against the TM tx's inputs (no `BFR` OP_RETURN), and no PegOut will match the new treasury destination + amount.
 * TM NFT is carried from the Unconfirmed input to the Confirmed output (preserving identity), together with the `epoch`, `tm_sequence`, and `poster` datum fields — the Confirmed record thereby becomes a link of the **TM chain** (see *Post signed TM*): its `btc_txid` is the txid of the current treasury outpoint until the next record extends the chain.
 
-Confirmed UTxOs are drained (and can eventually be garbage-collected) once every claimable peg-in in `swept_peg_in_utxo_ids` has been minted and every peg-out in `fulfilled_peg_outs` has been burned.
+<!-- G17ii, ratified 2026-07-15: records are permanent; no GC path. -->
+TM records are **permanent** — there is deliberately no garbage-collection path. Reclaiming a
+record's min-ADA would require on-chain claim tracking ("has every swept peg-in been minted?")
+for negligible recovery, and the Confirmed records double as the TM chain's on-chain history.
+Likewise a stale `Unconfirmed` record — a dead fork, a genesis-linked repost, a superseded
+fee-bump loser — simply remains inert forever; its min-ADA is the cost of posting.
 
 ### Complete peg-in / mint fBTC (Cardano)
 
@@ -2608,7 +2614,7 @@ a collective act with no special roles:
 
 The replacement and the stuck original both chain from the same predecessor and spend the same
 treasury outpoint; RBF is signaled on all inputs, and Bitcoin confirms exactly one — the loser
-remains inert `Unconfirmed` garbage (see *The TM chain*). No un-freezing or batch reshuffling is
+remains an inert `Unconfirmed` record forever (see *The TM chain*). No un-freezing or batch reshuffling is
 allowed during recovery: only the fee rate may differ between the two builds.
 
 #### Preprocess
