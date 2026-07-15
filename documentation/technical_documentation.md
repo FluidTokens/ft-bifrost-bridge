@@ -71,7 +71,7 @@ This section collects the acronyms, protocol terms, on-chain validators, mathema
 * **fBTC**: Bridged Bitcoin (Cardano-native token representing locked BTC).
 * **FROST**: Flexible Round-Optimized Schnorr Threshold Signatures (RFC 9591 [2]).
 * **HASH160**: RIPEMD160(SHA256(·)).
-* **HKDF**: HMAC-based Key Derivation Function.
+* **Poseidon**: ZK-friendly algebraic hash, used for payload self-commitments and the Round-2 share KDF (cheap inside ZK circuits, never computed on-chain).
 * **L2**: Layer 2.
 * **MIN_ADA / min_utxo**: Minimum ADA required to keep a UTxO alive.
 * **MPT**: Merkle Patricia Trie.
@@ -2114,6 +2114,7 @@ Where `<threshold>` is `51` (one DKG per epoch), and `<attempt>` is the DKG name
 {
   "commitment": ["<hex, 33 bytes>", ...],
   "sigma_i": "<hex, 64 bytes>",
+  "poseidon_commit": "<hex, 32 bytes>",
   "signature": "<hex, 64 bytes>"
 }
 ```
@@ -2121,16 +2122,19 @@ Where `<threshold>` is `51` (one DKG per epoch), and `<attempt>` is the DKG name
 Where:
 - `commitment` is an array of $t$ compressed Secp256k1 points (33 bytes each).
 - `sigma_i` is the Schnorr proof of knowledge (challenge || response, 64 bytes).
+- `poseidon_commit` is the payload's **self-commitment**: `Poseidon(structured_fields)` computed
+  by the publisher over the same fields (see *Authentication* — self-committing payloads).
 - `signature` is a BIP340 Schnorr signature over `SHA256(canonical_bytes)` using `bifrost_id_sk`.
 
 **Canonical byte layout** (for authentication and on-chain misbehavior proofs):
 
 ```
 "bifrost-dkg-r1" || epoch (8B BE) || threshold (8B BE, 51) || attempt (8B BE) || pool_id (28B)
-  || φ_{i0} (33B) || ... || φ_{i(t-1)} (33B) || σ_i (64B)
+  || φ_{i0} (33B) || ... || φ_{i(t-1)} (33B) || σ_i (64B) || poseidon_commit (32B)
 ```
 
-JSON is for transport; the signature covers `SHA256(canonical_bytes)`.
+JSON is for transport; the signature covers `SHA256(canonical_bytes)`; `poseidon_commit` is the
+final 32 bytes of the layout (a fixed-offset trailer, slicable on-chain).
 
 ##### 6.2 Round 1 Verification
 
@@ -2154,7 +2158,10 @@ For each recipient $P_l$:
 
 1. Generate ephemeral Secp256k1 keypair $(e_i, E_i)$.
 2. Compute shared secret: `ss = ECDH(e_i, bifrost_id_pk_l)`.
-3. Derive symmetric key: `k = HKDF(ss, info = "bifrost-dkg-share")`.
+3. Derive symmetric key: `k = Poseidon("bifrost-dkg-share" ‖ ss.x ‖ recipient_pool_id)` — a
+   **ZK-friendly KDF**, chosen so the Round-2 fault circuit can prove the
+   ciphertext↔plaintext relation in-circuit at negligible cost (see §9.2); an HMAC-based KDF
+   would force SHA256 chains into the circuit.
 4. Encrypt share: `ciphertext = f_i(l) XOR k` (32 bytes).
 
 The share is a 32-byte Secp256k1 scalar, encrypted with the derived key.
@@ -2180,6 +2187,7 @@ Where `<threshold>` is `51` (one DKG per epoch), and `<attempt>` is the same nam
       "ciphertext": "<hex, 32 bytes>"
     }
   ],
+  "poseidon_commit": "<hex, 32 bytes>",
   "signature": "<hex, 64 bytes>"
 }
 ```
@@ -2196,6 +2204,7 @@ Where:
 ```
 "bifrost-dkg-r2" || epoch (8B BE) || threshold (8B BE, 51) || attempt (8B BE) || pool_id (28B)
   || [recipient_pool_id (28B) || ephemeral_pk (33B) || ciphertext (32B)] × m
+  || poseidon_commit (32B)
 ```
 
 Shares are ordered by `recipient_pool_id` (lexicographic) for determinism. Here `m` is the number of other participants in the current attempt's provisional Round 1 subset. JSON is for transport; the signature covers `SHA256(canonical_bytes)`. Because the full encrypted-share vector is published as one public payload, publishing Round 2 at all makes the sender's whole Round 2 state retrievable by every SPO.
@@ -2207,7 +2216,7 @@ Each recipient $P_l$:
 1. Fetch Round 2 payload from each sender $P_i$.
 2. Find the entry where `recipient_pool_id == pool_id_l`.
 3. Compute shared secret: `ss = ECDH(bifrost_id_sk_l, ephemeral_pk)`.
-4. Derive key `k = HKDF(ss, info = "bifrost-dkg-share")` and decrypt: `f_i(l) = ciphertext XOR k`.
+4. Derive key `k = Poseidon("bifrost-dkg-share" ‖ ss.x ‖ recipient_pool_id)` and decrypt: `f_i(l) = ciphertext XOR k`.
 5. Verify the share against sender's Round 1 commitment:
 
    $f_i(l) · G = \sum_{j=0}^{t-1} (l^j · φ_{ij})$
@@ -2313,15 +2322,46 @@ Direct proofs are permissionless and do not require roster consensus.
 - **DKG Round 2 — share inconsistent with commitment**: the circuit verifies that $f_i(l) · G ≠ \sum l^j · φ_{ij}$, i.e., the decrypted share does not match the Round 1 commitment polynomial.
 - **FROST signing — invalid partial signature**: the circuit verifies that $z_i$ is inconsistent with the nonce commitment and group parameters.
 
+<!-- G6, ratified 2026-07-15 (Option B): the proof↔signature binding via payload
+     self-commitments. On-chain uses only existing builtins; Poseidon runs in-circuit and in
+     peers' fetch-time validation, never on-chain. -->
 **Invalid payload proof structure:**
 
-1. The prover submits `message_hash` (32B) + accused SPO signature (64B) + Halo2 proof + public inputs.
-2. The appropriate fault verifier policy verifies the signature via `verifySchnorrSecp256k1Signature(bifrost_id_pk, message_hash, signature)`.
-3. The verifier policy verifies the Halo2 proof.
-4. The ZK circuit proves that the signed payload hashing to `message_hash` contains the specific invalidity.
+1. The prover submits the accused's **full canonical payload bytes** + the accused's signature
+   (64 B) + the Halo2 proof + public inputs.
+2. The fault verifier policy recomputes `message_hash = sha2_256(canonical_bytes)` (builtin) and
+   verifies `verifySchnorrSecp256k1Signature(bifrost_id_pk, message_hash, signature)` — the
+   accused vouched for exactly these bytes.
+3. It slices `poseidon_commit` — the **final 32 bytes** of the canonical bytes — and requires the
+   ZK proof's public input to equal it.
+4. It verifies the Halo2 proof, whose statement is: *"I know fields `F` with `Poseidon(F) =
+   public_input`, and `F` exhibits the claimed invalidity."*
 5. On success, the verifier policy mints a `FaultProof` token for `kind = InvalidPayload`.
 
-**Size**: the on-chain transaction carries the message hash, signature, Halo2 proof, and public inputs. The verifier cost depends on the configured proof system and generated verifier.
+> **Why this binds (and why framing is impossible).** The signature pins the commitment to the
+> accused; the circuit pins the invalidity to the commitment's preimage; Poseidon's collision
+> resistance welds the two — whatever fields the prover reasoned about *are* the fields the
+> accused committed to, because exhibiting different ones would require a second preimage. To
+> frame an honest SPO one would need a valid invalidity proof about their *actual honest
+> fields* — which does not exist. The one residual freedom — publishing a commitment that does
+> not match the plaintext fields — is neutralized at transport level (fetch-time rule, see
+> *Authentication*): such a payload never enters the protocol and its publisher is excluded
+> exactly as if silent (non-publication was never bannable anyway). The on-chain verifier never
+> computes Poseidon — it only slices bytes and compares 32-byte strings.
+
+For the **Round 2 (invalid share)** circuit, the prover is the recipient, and the statement
+additionally binds decryption to the published ciphertext: witness `sk_l` with
+`pk_l = sk_l · G` (the recipient's registered `bifrost_id_pk`), `ss = sk_l · E_i`,
+`k = Poseidon("bifrost-dkg-share" ‖ ss.x ‖ recipient_pool_id)`, `f_i(l) = ciphertext XOR k`, and
+`f_i(l) · G ≠ Σ l^j · φ_{ij}` — where `ciphertext`, `E_i`, and the `φ_{ij}` are bound through the
+accused's `poseidon_commit` (Round 2 and Round 1 payloads respectively). The Poseidon KDF
+(§7.2) is what keeps this affordable: the only heavy in-circuit operations are the two secp256k1
+scalar multiplications.
+
+**Size**: the on-chain transaction carries the full canonical payload (up to ~10 KB for a
+large-roster Round 2), the signature, the Halo2 proof, and public inputs. Fault proofs are rare,
+so the byte cost is acceptable; the verifier cost depends on the configured proof system and
+generated verifier.
 
 **Equivocation proofs** are direct and do not use ZK. The prover submits two distinct signed payloads from the same accused SPO for the same namespace. The equivocation verifier policy verifies:
 
@@ -2586,6 +2626,7 @@ After computing all $z_{i,j}$:
   "partial_signatures": [
     { "sighash": "<hex, 32 bytes>", "z_i": "<hex, 32 bytes>" }
   ],
+  "poseidon_commit": "<hex, 32 bytes>",
   "signature": "<hex, 64 bytes>"
 }
 ```
@@ -2600,7 +2641,7 @@ Where:
 
 ```
 "bifrost-sign-r2" || epoch (8B BE) || txid (32B) || mode (8B BE, 67 or 51) || attempt (8B BE) || pool_id (28B)
-  || [sighash_j (32B) || z_{i,j} (32B)] × (k+1)
+  || [sighash_j (32B) || z_{i,j} (32B)] × (k+1) || poseidon_commit (32B)
 ```
 
 Entries are concatenated in input-index order. JSON is for transport; the signature covers `SHA256(canonical_bytes)`.
@@ -2713,6 +2754,17 @@ Every payload published by an SPO is authenticated with a **sign-the-hash** sche
 **Why sign-the-hash instead of signing JSON?** The signature must be verifiable both off-chain (SPO-to-SPO) and on-chain (misbehavior proofs via Cardano validators). Cardano validators cannot parse JSON but can verify `verifySchnorrSecp256k1Signature(bifrost_id_pk, message_hash, signature)` where `message_hash = SHA256(canonical_bytes)`. The canonical byte layout for each message type is defined in the DKG and signing sections below.
 
 This prevents impersonation — an attacker who compromises a `bifrost_url` DNS record or HTTP server cannot produce valid payloads without the corresponding `bifrost_id_sk`.
+
+**Self-committing payloads.** <!-- G6 --> Every payload subject to InvalidPayload fault proofs
+(DKG Round 1, DKG Round 2, signing Round 2) additionally carries `poseidon_commit =
+Poseidon(structured_fields)` as the final 32 bytes of its canonical layout — computed by the
+publisher over its own fields, and covered by the payload signature like everything else. The
+commitment is what welds the ZK fault circuits to the signed bytes (see §9.2). **Fetch-time
+rule**: on fetching a payload, a peer recomputes `Poseidon(fields)` and compares it with the
+embedded commitment; on mismatch the payload is **malformed transport — treated exactly as if
+never published** (deterministic exclusion, like silence). Consequently every payload that
+actually enters the protocol has a matching commitment, and is therefore bindable by a fault
+proof.
 
 ### Failure handling
 
