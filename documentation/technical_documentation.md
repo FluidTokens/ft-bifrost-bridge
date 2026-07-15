@@ -741,8 +741,8 @@ A single tx may create **N PegInRequests at once** (batching). The mint redeemer
 flowchart LR
   creator["Creator UTxO<br/>fees + N × MIN_ADA"] --> tx{{"Create PegInRequests<br/>MINT: +N PegInRequest NFTs"}}
   oracle[["Binocular Oracle<br/>(reference)"]] -. ref .-> tx
-  tx --> pir1["PegInRequest UTxO #1<br/>datum: { raw_btc_tx, owner_auth }"]
-  tx --> pirN["PegInRequest UTxO #N<br/>datum: { raw_btc_tx, owner_auth }"]
+  tx --> pir1["PegInRequest UTxO #1<br/>datum: PegInDatum (7 fields)"]
+  tx --> pirN["PegInRequest UTxO #N<br/>datum: PegInDatum (7 fields)"]
   tx --> change["Change → creator"]
 ```
 
@@ -753,7 +753,7 @@ flowchart LR
 | **Inputs** | Creator UTxO — fees + N × MIN_ADA |
 | **Reference inputs** | Binocular Oracle state — supplies the confirmed-chain root |
 | **Mint** | +N PegInRequest NFTs (one per request; each with a unique on-chain identity) |
-| **Outputs** | N × PegInRequest UTxO — each holds one NFT + MIN_ADA; datum = `{ raw BTC peg-in tx, owner_auth }` |
+| **Outputs** | N × PegInRequest UTxO — each holds one NFT + MIN_ADA; datum = the 7-field `PegInDatum` below |
 | **Witness data (redeemer)** | for each of the N requests: Merkle proof BTC tx ∈ block header; Merkle proof block header ∈ Binocular confirmed-chain root |
 | **Validity interval** | unconstrained |
 | **Size (est.)** | ~2 KB for N=1; up to ~16 KB for N=10 (batch ceiling). See **Size estimation and batch ceiling** below. |
@@ -762,6 +762,10 @@ flowchart LR
 
 * The supplied BTC tx is Merkle-included in the supplied BTC block header.
 * That block header is included in Binocular's confirmed-chain root.
+* **Deposit binding** (`deposit_binding_ok`): the datum's `peg_in_utxo_id` is an output of the
+  supplied deposit tx; that output is a P2TR paying exactly `peg_in_amount`; and
+  `user_source_chain_pub_key` matches the key committed in the deposit's beacon output. This is
+  what pins the datum's claim fields to the real Bitcoin deposit.
 * The NFT is minted uniquely and paired with exactly one output carrying the declared datum.
 
 **Checks delegated to SPOs off-chain** (Plutus V3 cannot do secp256k1 point arithmetic, so these are verified before signing the TM)
@@ -772,12 +776,22 @@ flowchart LR
 
 If any off-chain check fails, SPOs skip this PegInRequest. No fund risk, no theft risk — griefing cost = NFT minting fee + MIN_ADA.
 
-**PegInDatum**
+**PegInDatum** <!-- G9: field list matches the implemented bifrost/types/peg-in.ak (constructor
+order is normative); the previous 2-field table disagreed with the fields §Complete peg-in reads. -->
 
-| Field | Type | Purpose |
-|-------|------|---------|
-| `owner_auth` | `AuthorizationMethod` | authority that can later `Cancel` this request |
-| `source_chain_peg_in_raw_tx` | `ByteArray` | raw BTC peg-in tx bytes — SPOs parse everything they need (output UTxO, amount, depositor pubkey) from here |
+| # | Field | Type | Purpose |
+|---|-------|------|---------|
+| 0 | `owner_auth` | `AuthorizationMethod` | authority that can later `Cancel` (close) this request |
+| 1 | `source_chain_peg_in_raw_tx` | `ByteArray` | raw (witness-stripped) BTC peg-in deposit tx bytes |
+| 2 | `source_chain_peg_in_raw_tx_index` | `Int` | the deposit tx's index in its block (for the Merkle proof) |
+| 3 | `peg_in_utxo_id` | `ByteArray` (txid ‖ vout LE) | the deposit outpoint on Bitcoin — the UTxO the TM sweeps; key of the completed-peg-ins tree |
+| 4 | `source_chain_treasury_utxo_id` | `ByteArray` | the treasury outpoint current when the request was created — identifies the key era the deposit address was derived against (used by SPO off-chain address reconstruction) |
+| 5 | `peg_in_amount` | `Int` (satoshi) | the deposit amount — the fBTC quantity minted at completion |
+| 6 | `user_source_chain_pub_key` | `ByteArray` (32 B x-only) | the depositor's Bitcoin key — the key the completion signature must verify under |
+
+Fields 3–6 are **bound to the real deposit at mint time** by the `deposit_binding_ok` check below —
+that binding is what later makes the depositor (not a watchtower) the only party able to claim the
+fBTC (see the B1 note under *Complete peg-in*).
 
 **Size estimation and batch ceiling**
 
@@ -2834,7 +2848,7 @@ Beyond maintaining general Bitcoin state, watchtowers perform specialized duties
 * Once a peg-in transaction reaches the required confirmation threshold (100 Bitcoin blocks plus 200 minutes of Binocular challenge period), watchtowers create a PegInRequest UTxO on Cardano (peg_in.ak) by:
   * Minting a PegInRequest NFT.
   * Providing a transaction inclusion proof consisting of: the raw Bitcoin transaction data, a Merkle proof linking the transaction to the block's Merkle root, and an inclusion proof of the confirmed block in the Binocular Oracle.
-  * Setting the datum with: the raw Bitcoin peg-in transaction bytes and the creator's Cardano pubkey hash (for PegInRequest closure authorization).
+  * Setting the datum with: the creator's `owner_auth` (for PegInRequest closure authorization), the raw Bitcoin peg-in transaction bytes, and the deposit-binding fields — the deposit outpoint, amount, depositor key, and the current treasury outpoint (the full `PegInDatum`, see the Transaction catalog).
 * The on-chain `peg_in.ak` validator verifies the Binocular inclusion proof and confirmation depth (100 Bitcoin blocks + challenge period) but does not parse the Bitcoin transaction. SPO programs parse the raw transaction off-chain to extract deposit data (txid, vout, amount, depositor pubkey hash from OP_RETURN, Taproot output key $Q$) and validate it before including the peg-in in the Treasury Movement transaction. The raw peg-in transaction is parsed on-chain only at mint time (by `bridged_asset.ak`) to extract the depositor_pubkey_hash and deposit amount. Taproot address correctness is **not** verified on-chain (Plutus V3 lacks secp256k1 point arithmetic builtins); instead, SPOs verify off-chain (see **Taproot address verification**).
 
 **Treasury Movement Relay**
