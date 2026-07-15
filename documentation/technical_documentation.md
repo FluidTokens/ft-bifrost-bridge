@@ -354,6 +354,7 @@ recorded in the Config wiring (#19–20), which is how off-chain readers find it
 | 1 | `fee_rate_sat_per_vb` | Int (sat/vB) | the **exact** Bitcoin miner fee rate for deterministic TM construction (`miner fee = vsize × rate`); read off-chain by every SPO's TM builder; the roster tracks the fee market by group-signing updates (see the signing-model note and *Stuck-TM recovery*) |
 | 2 | `per_pegout_fee` | Int (satoshi) | the **floor** for the per-peg-out protocol fee. The *effective* fee of each peg-out is pinned in its own `PegOutDatum` at lock time; the TM builder skips any peg-out whose datum fee is below this floor at the batch snapshot slot |
 | 3 | `min_peg_out_fbtc` | Int (satoshi) | minimum fBTC a PegOut request may lock (> `per_pegout_fee` + 330-sat dust); a client-side check at request creation and the TM builder's skip threshold |
+| 4… | schedule parameters | Int (slots) | the epoch/TM schedule — deadlines, batch grid, recovery window (normative table in *TM batches and the protocol schedule*); **effect from the next epoch boundary**, never mid-epoch |
 
 **Update (group-signed).** The params UTxO may be spent only by an *Update operational
 parameters* transaction (see the Transaction catalog):
@@ -1205,11 +1206,14 @@ flowchart LR
   over a message committing to the spent params outpoint (replay protection) and the full new
   datum.
 * Parameter sanity: `min_peg_out_fbtc > per_pegout_fee + 330` (Bitcoin P2TR dust); all values
-  non-negative.
+  non-negative; the schedule invariants of the constrained rows in *TM batches and the protocol
+  schedule* (e.g. `stability_window` never below the host chain's `3k/f`, deadline ordering,
+  `tm_recovery_window` above normal confirmation latency).
 
-Off-chain effect: per the determinism rule, the new values apply from the **next** TM batch
-snapshot — never to a batch already frozen or in signing. Because no on-chain validator reads
-this UTxO, the update invalidates **no** in-flight transaction.
+Off-chain effect: per the determinism rules, new fee values apply from the **next** TM batch
+snapshot and new schedule values from the **next epoch boundary** — never to a batch already
+frozen or in signing. Because no on-chain validator reads this UTxO, the update invalidates
+**no** in-flight transaction.
 
 <!-- G5: new catalog entry — the Update-Y transaction existed only as narrative (epoch phase,
      DKG finalization step 5, "Key publication"). Requires the key-rotation spend branch in
@@ -1313,11 +1317,11 @@ The diagram above shows two consecutive Cardano epochs with roster handoff from 
 2. **Peg-in / peg-out requests open** — users submit bridging requests during the first ~36 hours of the epoch.
 3. **DKG** (new roster, off-chain) — the incoming roster runs distributed key generation to produce the group key $Y_{51}$, running concurrently with the request window.
 4. **Previous-epoch peg-in completion** — peg-ins from the prior epoch's Treasury Movement complete as Bitcoin confirmations arrive (17–40 hours after epoch start).
-5. **Peg deadline + Pegs Snapshot** — at the Cardano stability window (3k/f), all bridging requests are frozen for inclusion in the Treasury Movement.
+5. **Per-batch pegs cutoffs** — there is no single epoch-wide snapshot: each TM batch `B_i` freezes the requests created at least one stability window (3k/f) before it (see *TM batches and the protocol schedule*).
 6. **Update Y** — the current roster publishes the new roster's group public keys to `treasury.ak`.
 7. **Build Treasury Movement Tx** — the current roster constructs the Bitcoin transaction that sweeps peg-in UTxOs, fulfils peg-out payments, and moves the treasury to the new Taproot address.
 8. **Threshold signing cascade** — the current roster attempts 51% threshold signing. The federation path opens immediately once 51% setup/signing has finished unsuccessfully. The first mode to succeed wins.
-9. **TM submission deadline** — the signed transaction must be posted to `treasury_movement.ak` before the epoch ends.
+9. **TM submission deadline** — the last batch opportunity is `final_tm_cutoff`, leaving signing, posting, Bitcoin confirmation, and recovery margin before the boundary (see *TM batches and the protocol schedule*).
 10. **New peg requests** — after the pegs snapshot, new requests accumulate for the next epoch's batch.
 
 ### Realistic epoch timeline (happy path)
@@ -1331,6 +1335,73 @@ The epoch lifecycle above shows generous time windows for the signing cascade (5
 - **Multiple TM batches**: the roster processes peg requests in multiple batches throughout the epoch, each cycling through build → sign → broadcast → Bitcoin confirmation.
 
 The bottleneck is Bitcoin confirmation: each Treasury Movement requires ~100 Bitcoin blocks (~16.7 hours) for Binocular to promote the containing block to `confirmed` state. With a 5-day Cardano epoch, 4–5 TM batches fit sequentially, each handling its own set of peg-in sweeps and peg-out fulfillments. The final TM of the epoch moves the treasury to the new roster's Taproot address.
+
+<!-- G26/G20: new section — the batch-assignment rules and the protocol schedule. Supersedes the
+     single epoch-wide "Pegs Snapshot": each batch has its own stability cutoff. Schedule values
+     are formulas/constraints; concrete numbers are non-normative examples. -->
+### TM batches and the protocol schedule
+
+**Batch grid.** TM batch opportunities occur on a fixed slot grid:
+
+```
+B_i = epoch_start + i × tm_batch_interval        (i = 1, 2, …; B_i ≤ final_tm_cutoff)
+```
+
+At each `B_i`, every SPO evaluates the same gate: if the TM-chain tip is Binocular-confirmed and
+no TM is currently in flight, the batch is frozen and built; otherwise the opportunity passes
+unused (or, if the in-flight TM has exceeded `tm_recovery_window`, the *Stuck-TM recovery*
+procedure runs instead). The grid — rather than event-driven triggering ("freeze when the
+previous TM confirms") — is deliberate: slot numbers are absolute and rollback-immune, whereas a
+Confirm-transaction's inclusion slot can waver during Cardano rollbacks, and any wobble in the
+freeze anchor flips boundary items in or out of the batch, breaking byte-determinism.
+
+**Batch membership (deterministic).** Each batch has its own stability cutoff
+`C_i = B_i − stability_window`:
+
+* **Peg-ins**: every PegInRequest created at or before `C_i`, whose deposit is
+  Binocular-confirmed, not yet swept, and passing SPO off-chain validation. Peg-ins **roll over**
+  freely — one not taken by batch `i` is a candidate for batch `i+1`.
+* **Peg-outs**: every PegOut UTxO created at or before `C_i`, **naming this TM's treasury input**
+  (`source_chain_treasury_utxo_id` = the current tip), and passing the deterministic skip rule.
+  The outpoint pinning makes peg-out membership self-selecting.
+
+Note `C_1 = epoch_start − stability_window + tm_batch_interval` reaches back into the previous
+epoch: the first batch naturally includes the prior epoch's unswept leftovers — rollover needs no
+special case.
+
+**Ordering, capacity, and the split rule.** Within a batch, items are ordered FIFO by the total
+order `(creation slot, creating txid, output index)`. The batch takes the first at most
+`max_pegins_per_tm` peg-ins and `max_pegouts_per_tm` peg-outs (derived from the ~15 KB raw-TM
+ceiling: ≈100 + 100 in the 51% key-path variant, ≈57 + 57 in the federation variant). Overflow
+**peg-ins** wait for the next batch. Overflow **peg-outs are dead**: once this TM spends their
+named tip, no future TM can ever pay them — they recover their fBTC via the race-free *Cancel
+PegOut request*. This asymmetry is the honest price of outpoint pinning.
+
+**Wallet guidance (peg-out targeting).** Before locking, request-building software SHOULD check
+the pending peg-out queue depth against the remaining batch capacity, and choose the treasury
+outpoint to name as follows: the confirmed tip if no TM is in flight; the **posted** TM's
+`out[0]` (readable from its `Unconfirmed` record — the tip-to-be) while one is. A peg-out created
+against an about-to-be-spent tip lands in the dead-on-arrival case above.
+
+**The schedule.** All protocol deadlines are slot arithmetic from the epoch boundary `E`. The
+normative content is each parameter's **kind and constraint** — concrete values are non-normative
+examples for a mainnet-parameter instance:
+
+| Parameter | Kind | Normative definition / constraint | Example |
+|---|---|---|---|
+| `stability_window` | **derived** | `= 3k/f` of the host Cardano network (see *Cardano stability window*); the params-update validator MUST reject smaller values — it is fund-safety-critical, tunable only upward | 129 600 slots (36 h) |
+| `dkg_r1_deadline`, `dkg_r2_deadline` | free | E-relative; `0 < r1 < r2 < update_y_deadline` | E + 1 h / E + 2 h |
+| `update_y_deadline` | constrained | `> dkg_r2_deadline`; early enough that depositors get the new key before meaningful deposit traffic | E + 3 h |
+| `tm_batch_interval` | free | `> sign_r1_window + sign_r2_window +` posting margin | 6 h |
+| `sign_r1_window`, `sign_r2_window` | free | per-TM FROST round deadlines, measured from `B_i` | 30 min each |
+| `leader_slot_T` | free | cascade hop for posting/submission conventions | 60 slots |
+| `tm_recovery_window` | **constrained** | **must exceed the normal Binocular confirmation latency** (~100 BTC blocks + challenge ≈ 17–20 h), or healthy TMs are spuriously "recovered"; recommended ≥ 2× expected latency | 36 h |
+| `final_tm_cutoff` | constrained | `≤ epoch_length − (sign windows + posting + tm_recovery_window + handoff margin)` | E + 4 d |
+
+The free and constrained parameters live in the **Operational parameters UTxO** with a second
+effect rule: **schedule parameters take effect from the next epoch boundary** (fee parameters:
+from the next batch) — the schedule can never change under a running epoch. The constraints
+marked MUST are enforced by the params-update validator itself.
 
 <!-- G37: new section — end-to-end roster-rotation narrative; OPEN(Gn) marks pending decisions. -->
 ### Periodic consensus change flow (epoch roster rotation)
@@ -1350,15 +1421,16 @@ the treasury), the **candidates** (registered SPOs for the next epoch), **watcht
 4. **DKG (off-chain, incoming roster).** Round 1 (commitments + proofs of knowledge), Round 2
    (encrypted share distribution), finalization — producing $Y_{51}'$ and per-participant shares.
    Non-participation shrinks the qualified subset deterministically; cryptographic faults are
-   punishable via the fault-verifier/ban path (§Misbehavior Handling).
-   OPEN(G20): the concrete Round 1 / Round 2 deadline schedule.
+   punishable via the fault-verifier/ban path (§Misbehavior Handling). Deadlines:
+   `dkg_r1_deadline` / `dkg_r2_deadline` per the protocol schedule (see *TM batches and the
+   protocol schedule*).
 5. **Update-Y (on-chain).** The current roster publishes $Y_{51}'$ to `treasury.ak`, authorized by
    a FROST group signature under the *current* group key; the posting SPO is selected by the
    leader rule with `tm_sequence = "dkg"`. From this point depositors derive peg-in addresses from
    $Y_{51}'$. (See *Update-Y* in the Transaction catalog; the implemented `treasury.ak` does not
    yet have the rotation branch — contract change request.)
-6. **Pegs snapshot.** At the Cardano stability window ($3k/f$, see next section) the final TM
-   batch of the epoch is frozen.
+6. **Final batch.** The last batch opportunity before `final_tm_cutoff` freezes the epoch's final
+   TM batch, under the per-batch stability cutoff (see *TM batches and the protocol schedule*).
 7. **Final Treasury Movement.** The current roster deterministically builds the final TM: sweeps
    the frozen peg-ins, pays the frozen peg-outs, and sends the treasury change to the **new**
    roster's Taproot address (derived from $Y_{51}'$ + $Y_{federation}$). The signing cascade runs
@@ -1395,7 +1467,7 @@ $$\tfrac{3k}{f} = \tfrac{3 \cdot 2160}{0.05} = 129{,}600 \text{ slots} = 36 \tex
 
 **Why $3k/f$ and not "just 2160 blocks".** Block-depth alone gives common-prefix finality only *relative to the chain an observer has already chosen*. An SPO or watchtower that restarts, loses peers, or is briefly partitioned must first re-select the canonical chain, and Cardano's Genesis rule [7] does so by comparing chain density inside a $3k/f$-slot window after the fork point — so $3k/f$ is a structural parameter of chain selection, not a safety margin bolted on top of $k$. It also provides ~3× wallclock headroom for peer-diversity and out-of-band cross-checks against eclipse scenarios, and aligns with the "settled state" notion used inside `cardano-node`.
 
-**Consequence for the protocol.** The Pegs Snapshot is taken **$3k/f = 36$ hours after the epoch boundary** (phase 5 of the epoch lifecycle). PegOuts posted after the cut-off are deferred to the next epoch; the roster signs the BTC Treasury Movement only against this frozen, post-stability-window PegOut set, so that no Cardano rollback can retroactively invalidate a PegOut committed on Bitcoin. PegInRequests use the same boundary for determinism, even though their rollback is recoverable by re-creation.
+**Consequence for the protocol.** Every TM batch applies this window individually: batch `B_i` freezes only requests created at or before `C_i = B_i − 3k/f` (see *TM batches and the protocol schedule*). The roster signs each BTC Treasury Movement only against such a post-stability-window set, so no Cardano rollback can retroactively invalidate a PegOut committed on Bitcoin; requests newer than a batch's cutoff simply wait for a later batch. PegInRequests use the same boundary for determinism, even though their rollback is recoverable by re-creation.
 
 ## SPO Program
 
@@ -2292,7 +2364,7 @@ The transaction is constructed unsigned — every input carries an empty witness
 
 **Multiple TMs per epoch.**
 
-The roster may process **multiple TM transactions** within an epoch, each cycling through build → sign → broadcast → Bitcoin confirmation (see **Realistic epoch timeline**). Peg-ins and peg-outs are processed FIFO — each TM includes the oldest pending requests first, so earlier depositors and withdrawers are served before later ones. Each TM's treasury input is the previous TM's treasury change output. The final TM of the epoch sends the treasury change to the new roster's Taproot address.
+The roster may process **multiple TM transactions** within an epoch, each cycling through build → sign → broadcast → Bitcoin confirmation (see **Realistic epoch timeline**). The batch grid, membership rules, FIFO order, and capacity/split rules are normative in **TM batches and the protocol schedule**. Each TM's treasury input is the previous TM's treasury change output (the TM-chain tip). The final TM of the epoch sends the treasury change to the new roster's Taproot address.
 
 The signing namespace is identified by the tuple `(epoch, txid, mode, attempt)` where:
 - `mode ∈ {67, 51}` selects the active SPO threshold path;
@@ -2329,8 +2401,9 @@ divergence to diagnose, or (two different signed payloads for the same namespace
 equivocation fault like any other.
 
 **Stuck-TM recovery (fee bump).** <!-- G29 --> If a posted TM is not Binocular-confirmed within
-the recovery window `tm_recovery_window` (protocol parameter — OPEN(G20): its value belongs to
-the deadline schedule), the frozen fee rate has fallen behind the Bitcoin fee market. Recovery is
+the recovery window `tm_recovery_window` (see *TM batches and the protocol schedule* — it must
+exceed the normal Binocular confirmation latency, else healthy TMs would be spuriously
+"recovered"), the frozen fee rate has fallen behind the Bitcoin fee market. Recovery is
 a collective act with no special roles:
 
 1. the roster raises `fee_rate_sat_per_vb` via the group-signed *Update operational parameters*
