@@ -1163,6 +1163,78 @@ flowchart LR
 Off-chain effect: per the Config determinism rule, the new parameters apply from the **next** TM
 batch snapshot — never to a batch already frozen or in signing.
 
+<!-- G5: new catalog entry — the Update-Y transaction existed only as narrative (epoch phase,
+     DKG finalization step 5, "Key publication"). Requires the key-rotation spend branch in
+     treasury.ak (contract change request; heimdall K2 is gated on it). -->
+### Update-Y — rotate the treasury group key (Cardano)
+
+**Purpose**: publish the epoch's DKG result — swap `current_spos_frost_key` in the Treasury state
+UTxO from the outgoing roster's key to the incoming roster's $Y_{51}'$ — so depositors and
+validators derive the new Treasury and peg-in Taproot addresses from on-chain state.
+
+**Who**: submission is **permissionless** — the group signature carried in the redeemer is the
+authorization (see the note below). By convention, the leader selected with
+`tm_sequence = "dkg"` submits first (see *Cardano submission and leader reward*).
+**Trigger**: the incoming roster's DKG finalized; before the final TM of the epoch (whose change
+output pays the address derived from the new key).
+
+```mermaid
+flowchart LR
+  tstate["Treasury state UTxO<br/>datum: { root, Y, y_fed, csv }"] --> tx{{"Update-Y"}}
+  sub["Submitter UTxO (fees)"] --> tx
+  tx --> tstate2["Treasury state UTxO′<br/>datum: { root, Y′, y_fed, csv }"]
+  tx --> change["Change → submitter"]
+```
+
+**Structure**
+
+| Role | Content |
+|------|---------|
+| **Inputs** | Treasury state UTxO; submitter UTxO (fees) |
+| **Reference inputs** | — (the authorizing key is in the spent datum) |
+| **Mint** | — (the Treasury state NFT is carried over) |
+| **Outputs** | Treasury state UTxO′ at the same `treasury.ak` address — same NFT, same `bifrost_identity_root`, same federation fields; only `current_spos_frost_key` changes |
+| **Witness data (redeemer)** | `new_key` (32 B x-only) + 64-byte BIP340 signature under the **spent datum's** `current_spos_frost_key` |
+| **Validity interval** | unconstrained |
+| **Required signers** | submitter (fee spend) — permissionless |
+
+**Signed message**
+
+```
+sig_msg = sha2_256("bifrost-update-y" ‖ spent_treasury_outpoint (36 B: txid ‖ index LE)
+                    ‖ epoch (8 B BE) ‖ new_key (32 B))
+```
+
+**Checks enforced on-chain**
+
+* The continuing output is at `treasury.ak` and carries the Treasury state NFT.
+* Datum transition per the field-permission matrix (§Treasury state UTxO): only
+  `current_spos_frost_key` changes; `bifrost_identity_root` and the federation fields are
+  byte-identical.
+* `verifySchnorrSecp256k1Signature(spent_datum.current_spos_frost_key, sig_msg, signature)` —
+  the *outgoing* key authorizes its own succession. In Phase 1 the spent datum holds
+  $Y_{federation}$, so the federation signs the first rotation; thereafter each outgoing roster
+  hands off to the next.
+* `new_key` is 32 bytes (a valid x-only point).
+
+> **Why submission is permissionless.** The transaction is valid because of *what* it carries,
+> not *who* submits it: the BIP340 group signature can only exist if the threshold (51% of stake
+> — or the federation, in Phase 1) actually agreed, and the signed message pins the new key, the
+> epoch, and the spent outpoint — a submitter can neither forge nor alter the payload, only
+> deliver it or not. Replay is structurally impossible: the message commits to the very outpoint
+> this transaction consumes, so no second transaction can ever reuse the signature. A submitter
+> gate would therefore add no security — but it would add a censorship/liveness dependency on the
+> gated party, for a transaction the whole bridge waits on (deposit addresses derive from this
+> key). Same principle as the TM chain: oracle- or signature-backed payloads need no submitter
+> authorization. The leader convention exists only to avoid duplicate fee spending.
+
+> **Implementation status.** The implemented `treasury.ak` has no spend branch that changes
+> `current_spos_frost_key` (every registry branch preserves it) — this entry is the normative
+> target; adding the branch is part of the standing contract change request and gates heimdall's
+> K2 (`PublishKeys`). If the epoch's DKG fails, no Update-Y is posted: the old key remains and
+> the federation path is the epoch's fallback (degraded-epoch handling: see the consensus-change
+> flow).
+
 ## Guaranteeing censor-resistant peg-ins and peg-outs
 
 The main axiom is: When the user uses any bridge, he is already fully trusting the source (ex. Bitcoin) and the destination (ex. Cardano). Every additional component that the bridge uses and that it can't be under direct control of the user is an additional trust assumption.
@@ -1235,9 +1307,8 @@ the treasury), the **candidates** (registered SPOs for the next epoch), **watcht
 5. **Update-Y (on-chain).** The current roster publishes $Y_{51}'$ to `treasury.ak`, authorized by
    a FROST group signature under the *current* group key; the posting SPO is selected by the
    leader rule with `tm_sequence = "dkg"`. From this point depositors derive peg-in addresses from
-   $Y_{51}'$.
-   OPEN(G5): the Update-Y transaction is not yet specified in the Transaction catalog, and the
-   implemented `treasury.ak` has no key-rotating spend path.
+   $Y_{51}'$. (See *Update-Y* in the Transaction catalog; the implemented `treasury.ak` does not
+   yet have the rotation branch — contract change request.)
 6. **Pegs snapshot.** At the Cardano stability window ($3k/f$, see next section) the final TM
    batch of the epoch is frozen.
 7. **Final Treasury Movement.** The current roster deterministically builds the final TM: sweeps
@@ -1932,7 +2003,7 @@ The above steps are run once per epoch with threshold $t_{51}$, producing $Y_{51
 
 4. Derives the Bitcoin Treasury Taproot address from $Y_{51}$ together with $Y_{federation}$ (see **Taproot address construction**).
 
-5. The **current roster** publishes the successfully derived group public key on Cardano at `treasury.ak`, authenticated by a FROST group signature from the current roster. If the DKG did not complete, the SPO threshold mode is unavailable for the epoch and the federation path remains as the emergency fallback. This makes the new Treasury address publicly verifiable on-chain, allowing depositors to look up the correct Treasury key and derive the Treasury and peg-in Taproot addresses.
+5. The **current roster** publishes the successfully derived group public key on Cardano at `treasury.ak`, authenticated by a FROST group signature from the current roster (the **Update-Y** transaction — see the Transaction catalog). If the DKG did not complete, the SPO threshold mode is unavailable for the epoch and the federation path remains as the emergency fallback. This makes the new Treasury address publicly verifiable on-chain, allowing depositors to look up the correct Treasury key and derive the Treasury and peg-in Taproot addresses.
 
 #### 9. Misbehavior Handling
 
