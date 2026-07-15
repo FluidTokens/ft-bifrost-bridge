@@ -278,10 +278,11 @@ instance.
   immutable for the instance's life.
 * **Parameters** — *tunable values*: plain integers governing the bridge's economic and security
   behaviour (minimum stake, fees, minimum peg-out size). They are data, not identity, so
-  governance may change them over time. Some are enforced by validators on-chain
-  (`per_pegout_fee`, `min_peg_out_fbtc`); others are **never checked by any validator** and live
-  here purely so that every off-chain actor shares one unquestionable consensus value
-  (`min_stake`, `fee_rate_sat_per_vb`) — an SPO reading such a value from local configuration
+  governance may change them over time. One is enforced by a validator on-chain
+  (`per_pegout_fee`, in the peg-out completion and cancel verifiers); the others are **never
+  checked by any validator** and live here purely so that every off-chain actor shares one
+  unquestionable consensus value (`min_stake`, `fee_rate_sat_per_vb`, `min_peg_out_fbtc`) — an
+  SPO reading such a value from local configuration
   could silently disagree with its peers and break TM determinism; reading it from the Config
   UTxO cannot.
 
@@ -304,7 +305,7 @@ One field list; **immutable** marks wiring the update path must preserve byte-fo
 | 17 | `min_stake` | Int (lovelace) | **updatable** — minimum delegated stake to enter the DKG candidate set; read off-chain only, at DKG candidate enumeration (§Candidate Set and Ordering) |
 | 18 | `fee_rate_sat_per_vb` | Int (sat/vB) | **updatable** — Bitcoin miner fee rate for deterministic TM construction (`miner fee = vsize × rate`); read off-chain only, by every SPO's TM builder |
 | 19 | `per_pegout_fee` | Int (satoshi) | **updatable** — per-peg-out protocol fee deducted from each peg-out output (BTC payout = gross − fee); read off-chain by the TM builder and on-chain by the peg-out completion verifier (`paid == amount − fee`, §Complete peg-out) |
-| 20 | `min_peg_out_fbtc` | Int (satoshi) | **updatable** — minimum fBTC a PegOut lock may hold (> `per_pegout_fee` + 330-sat dust); enforced on-chain by `peg_out.ak` at lock time, and used off-chain as the TM builder's sub-dust skip guard |
+| 20 | `min_peg_out_fbtc` | Int (satoshi) | **updatable** — minimum fBTC a PegOut request may lock (> `per_pegout_fee` + 330-sat dust); a client-side check at request creation and the TM builder's deterministic skip threshold — creation runs no validator, so there is no on-chain lock-time check (see *Create PegOut request*) |
 
 Fields 18–20 are appended after the implemented datum's last field (`min_stake`, #17), so the
 positions of all existing fields are preserved.
@@ -533,10 +534,10 @@ A user who wants to move his BTC from Cardano to Bitcoin is called a withdrawer.
 These are the steps to execute a correct peg-out:
 
 * Check the status of Bifrost: if the bridge is correctly operational and we are not too near the end of the current Cardano epoch, the peg-out can be done.
-* On Cardano, lock the correct amount of fBTC plus MIN_ADA at the peg_out.ak spend script, minting a unique NFT. The datum contains the Bitcoin destination address where BTC should be sent (`source_chain_destination_address`) and the current Bitcoin treasury outpoint (`source_chain_treasury_utxo_id`) that the paying Treasury Movement must spend — known from the previous TM's treasury change output. Naming a stale outpoint makes the peg-out unfulfillable (it can only be cancelled), so the peg-out must be created against the current treasury state.
+* On Cardano, lock the correct amount of fBTC plus MIN_ADA at the peg_out.ak spend script (a plain payment to the script address — nothing is minted). The datum contains the Bitcoin destination address where BTC should be sent (`source_chain_destination_address`) and the current Bitcoin treasury outpoint (`source_chain_treasury_utxo_id`) that the paying Treasury Movement must spend — known from the previous TM's treasury change output. Naming a stale outpoint makes the peg-out unfulfillable (it can only be cancelled), so the peg-out must be created against the current treasury state. Request-building software must validate before submitting (see *Create PegOut request* — client-side checks): two mistakes — an undecodable datum, a nonexistent treasury outpoint — are permanently unrecoverable.
 * Wait for the peg-out to be included in the Treasury Movement transaction at the next epoch boundary. In the normal 51% mode, SPOs sign this transaction with FROST and post it to Cardano (`treasury_movement.ak`); in the emergency mode, the federation satisfies the $Y_{federation}$ fallback script path instead. Watchtowers then relay the signed transaction to Bitcoin. At this point, the withdrawer has received BTC at their specified Bitcoin address.
-* Once the Treasury Movement transaction is confirmed on Bitcoin (100 Bitcoin blocks for Binocular confirmation), the withdrawer (per `owner_auth`) completes the peg-out on Cardano by providing the raw TM transaction, a Binocular inclusion proof of its confirmation, and a non-membership proof against the completed-peg-outs tree. This burns the locked fBTC and the peg-out NFT, records the completion, and returns the MIN_ADA to the withdrawer.
-* If for unexpected reasons the Treasury Movement transaction did not include the peg-out payment, the withdrawer can use a Binocular exclusion proof to unlock their fBTC and try again in the next epoch.
+* Once the Treasury Movement transaction is confirmed on Bitcoin (100 Bitcoin blocks for Binocular confirmation), the withdrawer (per `owner_auth`) completes the peg-out on Cardano by providing the raw TM transaction, a Binocular inclusion proof of its confirmation, and a non-membership proof against the completed-peg-outs tree. This burns the locked fBTC, records the completion, and returns the MIN_ADA to the withdrawer.
+* If the Treasury Movement did not include the peg-out payment, the withdrawer cancels: once the transaction that spent the named treasury outpoint is Binocular-confirmed, they present it together with proof that it contains no output paying their destination (see *Cancel PegOut request*), unlocking their fBTC to try again against the new treasury outpoint.
 
 ## Transaction catalog
 
@@ -692,14 +693,32 @@ flowchart LR
 | **Validity interval** | unconstrained |
 | **Size (est.)** | ~0.5 KB (no script execution; fee ≈ 0.18 ADA) |
 
+<!-- G3: no on-chain creation checks by design; the security load sits on the deterministic skip
+     rule (TM construction) and the completion/cancel verifiers. -->
 **Checks enforced on-chain**
 
-* None at creation — `peg_out.ak` is a spend-only validator, so creation is just a standard output. The withdrawer is the only one harmed by a malformed PegOut.
+* None at creation — creation is a plain payment to the script address, and Cardano runs no
+  validator on *receiving* outputs, so nothing *can* be checked here. This is safe for the
+  bridge: a bad request can only harm its own creator — the treasury is protected by the
+  **deterministic skip rule** at TM construction and by the completion/cancel verifiers at spend
+  time.
 
-**Checks delegated off-chain**
+**Client-side checks (normative for wallets and request-building tooling)**
 
-* `source_chain_destination_address` is a valid, spendable Bitcoin script. If it is malformed, the TM output is unspendable and the BTC is effectively lost — there is no on-chain proof possible.
-* `source_chain_treasury_utxo_id` names the **current** treasury outpoint. A stale or wrong outpoint makes the peg-out unfulfillable by any future TM (each TM spends the current treasury UTxO exactly once) — the withdrawer can only cancel and retry.
+A request that fails these is skippable at best and unrecoverable at worst, so software building
+this transaction MUST validate before submitting:
+
+* locked fBTC ≥ `min_peg_out_fbtc` (read from the Config UTxO) — otherwise the TM builder skips
+  the request and the withdrawer must cancel;
+* the datum encodes a well-formed `PegOutDatum` — an undecodable datum is **permanently
+  unrecoverable**: even Cancel must decode `owner_auth` to authorize the refund;
+* `source_chain_destination_address` is a spendable Bitcoin script (standard template) — a
+  malformed script means the TM pays an unspendable output and the BTC is lost; there is no
+  on-chain proof possible;
+* `source_chain_treasury_utxo_id` is the **current** treasury outpoint — a stale outpoint is
+  recoverable (Cancel opens once that outpoint's spender confirms), but a **nonexistent**
+  outpoint is permanently unrecoverable: the cancel proof (a confirmed spender of the outpoint)
+  can never be constructed.
 
 **PegOutDatum** <!-- G28: field list matches the implemented bifrost/types/peg-out.ak (constructor order is normative) -->
 
@@ -955,6 +974,64 @@ flowchart LR
 > peg-in*), peg-out completion re-proves the TM's Bitcoin confirmation directly against the
 > Binocular oracle and parses the raw TM bytes itself. The `fulfilled_peg_outs` list in the
 > Confirmed TM datum is informational for this path.
+
+<!-- G18: new catalog entry — the proof-based cancel; replaces the undefined "Binocular exclusion
+     proof". The not-produced verifier (Config #14) is intentionally unsatisfiable in the current
+     deployment — enabling it is part of the contract change request. -->
+### Cancel PegOut request (Cardano)
+
+**Purpose**: return the locked fBTC (and MIN_ADA) of a peg-out that was not — and now provably
+never can be — paid by any Treasury Movement.
+
+**Who**: the withdrawer — cancel must satisfy the PegOut datum's `owner_auth`.
+**Trigger**: a Binocular-confirmed Bitcoin transaction spent the treasury outpoint named in the
+PegOut datum **without** paying this peg-out.
+
+```mermaid
+flowchart LR
+  pout["PegOut UTxO<br/>(locked fBTC)"] --> tx{{"Cancel PegOut"}}
+  wdraw["Withdrawer UTxO (fees)"] --> tx
+  binoc[["Binocular Oracle<br/>(reference)"]] -. ref .-> tx
+  tx --> refund["fBTC + MIN_ADA → withdrawer"]
+  tx --> change["Change → withdrawer"]
+```
+
+**Structure**
+
+| Role | Content |
+|------|---------|
+| **Inputs** | PegOut UTxO; withdrawer UTxO (fees) |
+| **Reference inputs** | Binocular Oracle — supplies the confirmed-chain root; Config UTxO — supplies the verifier script hash |
+| **Mint** | — (nothing is minted or burned; the fBTC returns to its owner) |
+| **Outputs** | locked fBTC + MIN_ADA → withdrawer (per `owner_auth`); change |
+| **Witness data (redeemer)** | the raw (witness-stripped) Bitcoin tx that spent the named treasury outpoint; block header + Binocular inclusion proof + tx-Merkle proof |
+| **Validity interval** | unconstrained |
+| **Required signers** | per `owner_auth` |
+
+**Checks enforced on-chain** (`peg_out.ak` spend, `Cancel` action)
+
+* The supplied block header is in Binocular's confirmed-chain root; the supplied tx is
+  Merkle-included in that block.
+* The tx **spends** `source_chain_treasury_utxo_id` — the outpoint named in the PegOut datum.
+* The tx contains **no output** paying `source_chain_destination_address` the amount
+  `locked fBTC − per_pegout_fee` — delegated to the
+  `legit_treasury_movement_and_peg_out_not_produced` verifier (Config field #14), the mirror
+  image of the completion verifier's scan.
+* Cancel is authorized per the PegOut datum's `owner_auth`.
+* The locked fBTC is paid to the withdrawer — not burned.
+
+> **Why cancel can never race a payout.** A Bitcoin outpoint is spent exactly once. Cancel
+> requires a *confirmed* spender of the named outpoint that did *not* pay the peg-out; completion
+> requires that same spender to *have* paid it. Exactly one of the two proofs can ever exist, and
+> neither exists before the spender confirms — so "reclaim the fBTC while a signed TM pays the
+> BTC" is structurally impossible, with no timing rules or lockout windows needed. A withdrawer
+> whose valid peg-out was skipped waits one TM cycle (until the outpoint's spender confirms) and
+> then cancels; a peg-out that named an already-spent outpoint can be cancelled immediately.
+
+> **Implementation status.** The `Cancel` action and its `InputCancel` proof bundle exist in the
+> implemented types, but the not-produced verifier is intentionally unsatisfiable (cleanly
+> disabling Cancel until it is built). Enabling it is part of the standing contract change
+> request.
 
 <!-- G2: new catalog entry — requires the governance spend branch in config.ak (contract change
      request; the deployed config.ak is immutable). -->
@@ -1968,6 +2045,19 @@ All SPOs independently construct the same Treasury Movement (TM) transaction fro
   - For the **final TM of the epoch**: the new roster's Treasury address (derived from the new DKG group key).
 - Outputs 1..$m$: peg-out payments, ordered lexicographically by raw `scriptPubKey` bytes. Each output pays the requested amount minus the protocol fee (see below).
 
+<!-- G3: the deterministic skip rule is the actual griefing defense — no creation-time check exists. -->
+**Deterministic skip rule (peg-outs).**
+
+A peg-out in the frozen batch is **skipped** — excluded from the outputs, never aborting the
+TM — iff any of the following holds: its datum does not decode as `PegOutDatum`; its
+`source_chain_treasury_utxo_id` differs from this TM's treasury input; its destination
+`scriptPubKey` is unparseable; or its net payout `amount − per_pegout_fee` is below Bitcoin dust
+(330 sat). Both parameters come from the Config UTxO at the batch snapshot slot, so every SPO
+computes the identical skip set. Skipped peg-outs remain on-chain; their owners recover via
+*Cancel PegOut request* once this TM confirms. Without this rule a single 1-satoshi peg-out
+would make the whole TM unbuildable — the skip rule, not any creation-time check, is the
+bridge's defense against that.
+
 **Amounts and fees.**
 
 - Fee rate: `fee_rate_sat_per_vb` is a protocol parameter read from the Config UTxO (see §Config UTxO), taken **as of this batch's snapshot slot** so every SPO uses the identical value; a governance update takes effect from the next batch.
@@ -2257,7 +2347,7 @@ Beyond maintaining general Bitcoin state, watchtowers perform specialized duties
 **Peg-out Completion**
 
 * Peg-out completion (burning the locked fBTC) is performed by the withdrawer — it must satisfy the PegOut datum's `owner_auth`. Watchtowers' role in a peg-out ends at relaying the signed TM; the withdrawer is paid on Bitcoin as soon as the TM confirms, with no Cardano-side completion required for the payout.
-* At completion the withdrawer provides the raw TM transaction with a Binocular inclusion proof that it is confirmed and a non-membership proof against the completed-peg-outs tree; the validator verifies the TM spends the treasury outpoint named in the PegOut datum and paid the destination, burns the locked fBTC and the peg-out NFT, and returns the MIN_ADA.
+* At completion the withdrawer provides the raw TM transaction with a Binocular inclusion proof that it is confirmed and a non-membership proof against the completed-peg-outs tree; the validator verifies the TM spends the treasury outpoint named in the PegOut datum and paid the destination, burns the locked fBTC, and returns the MIN_ADA.
 * Peg-in completion (minting fBTC) is performed by the depositor directly, not by watchtowers — the depositor must provide their Bitcoin x-only public key and a Schnorr signature to authorize minting to their chosen Cardano address (see **bridged_asset.ak**).
 
 **Anomaly Detection**
