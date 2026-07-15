@@ -250,7 +250,7 @@ Depositors, who want to peg-in, send their source blockchain assets to a unique 
 
 Withdrawers, who want to peg-out, lock their bridged assets (e.g. fBTC) at peg_out.ak, specifying their source blockchain destination address in the datum.
 
-SPOs, who register with their delegated stake to join the next epoch in spos_registry.ak, are identified on-chain by their cold-key-derived `pool_id` and authorize a separate Bifrost Secp256k1 identity key for DKG and signing communication. The registration is accepted only if the SPO has a delegated stake bigger than a minimum threshold.
+SPOs, who register with their delegated stake to join the next epoch in spos_registry.ak, are identified on-chain by their cold-key-derived `pool_id` and authorize a separate Bifrost Secp256k1 identity key for DKG and signing communication. Registration itself is **stake-blind** (a validator cannot read the stake distribution); the `min_stake` filter (Operational parameters UTxO) is applied off-chain at each epoch's candidate enumeration, so an under-staked registrant simply never enters a candidate set — and becomes eligible automatically once its stake grows, with no re-registration.
 
 At the end of each epoch, the registered SPOs (that normally also include the old group) verify each other's delegated stake to ensure honesty and participate in a DKG ceremony to generate their new shared multisignature address.
 
@@ -1538,11 +1538,11 @@ The phases above, told once as a single end-to-end flow. Actors: the **current r
 the treasury), the **candidates** (registered SPOs for the next epoch), **watchtowers** (relay).
 
 1. **Continuous: registration.** SPOs register (and voluntarily deregister) at
-   `spos_registry.ak` — a one-time cold-key ceremony per pool (see §SPO Registration).
-   OPEN(G12): the exact validity window for registration/revocation transactions.
+   `spos_registry.ak` — a one-time cold-key ceremony per pool (see §SPO Registration). Requests
+   land at any time; all effects are snapshot-based (snapshot semantics, §SPO Registration).
 2. **Epoch boundary — snapshots.** The candidate set is frozen: the registration linked-list minus
    the active ban list, with the stake distribution read from the previous epoch. The `min_stake`
-   filter is applied off-chain at candidate enumeration. OPEN(G13): stake-check mechanism wording.
+   filter is applied off-chain at candidate enumeration — registration itself is stake-blind.
 3. **Candidate ordering and threshold.** Candidates are ordered lexicographically by
    `bifrost_id_pk` and indexed $1..n$; the threshold $t$ is computed by the bottom-$k$ stake rule
    (§Threshold Calculation) and frozen for the epoch's DKG instance.
@@ -1639,6 +1639,19 @@ Before participating in Bifrost, each SPO must complete a **one-time registratio
 
 Concretely, an SPO registers by submitting a Cardano `register_spo` transaction to `spos_registry.ak`. The transaction consumes the current registration-list anchor UTxO and the Treasury state UTxO, mints exactly one Bifrost Membership Token named by `pool_id`, and creates a registration-node UTxO whose value is that membership token plus min ADA and whose datum contains `bifrost_id_pk`, `bifrost_url`, and the ordered linked-list pointers. The redeemer carries `cold_vkey`, `cold_sig`, `bifrost_sig`, `registration_anchor_output_index`, and the non-membership witness proving that `bifrost_id_pk` is not already present in the Treasury state's `bifrost_identity_root`. The SPO program CLI is the intended operator interface for building this transaction; the protocol-level transaction shape is specified in Section 5 below.
 
+<!-- G12, ratified 2026-07-15: requests continuous, effects snapshot-based. -->
+**Snapshot semantics (normative).** Registration and revocation transactions may land **at any
+time** — no validity-interval restriction. All protocol *effects* are snapshot-based: each epoch
+operates on the boundary snapshot of the registration and ban lists (candidate set, roster, peer
+URLs, `bifrost_id_pk` bindings, threshold $t$), so a mid-epoch change to the live list takes
+effect only at the next boundary. In particular, a current-roster member who deregisters
+mid-epoch **remains bound to the epoch's roster duties** — deregistration is not an exit from
+in-flight participation (going silent instead is ordinary non-participation, which the protocol
+already tolerates). One consequence made explicit: applying a ban requires referencing the
+accused's registration node, so fault evidence against a *deregistered* pool waits until — and
+applies upon — re-registration (the `FaultProof` token and the ban list are `pool_id`-scoped and
+survive the gap).
+
 #### 2. Keys
 
 ##### 2.1 SPO Identity (Cardano Layer)
@@ -1690,7 +1703,7 @@ The ADA locked in the registration node is only the minimum lovelace required by
 - **Insert (ascending)**: A new node is inserted in ascending key order by verifying it sits between its neighbours — the spent **anchor** (the element with the greatest key strictly below the new node, or the root) keeps its data and is relinked to point at the new key, and the new node takes over the anchor's old link. Corresponds to `linked_list.insert_ascending` in the on-chain code.
 - **Remove**: A node is removed by relinking its neighbours. Corresponds to `linked_list.remove` in the on-chain code.
 
-**Spending Conditions**: Each registration node UTxO can be spent only by **voluntary revocation** via the cold-key-signed `bifrost-revoke` message, valid only at epoch boundary (enforced via Cardano validity intervals).
+**Spending Conditions**: Each registration node UTxO can be spent only by **voluntary revocation** via the cold-key-signed `bifrost-revoke` message — at any time (snapshot semantics, see §1: the removal takes effect at the next boundary snapshot).
 
 Fault-based banning does not spend the registration node. Instead, it updates the separate ban linked-list while the registration node remains in place.
 
@@ -1816,7 +1829,7 @@ Required witnesses:
 - `bifrost_sig`
 
 Required validity interval:
-- epoch-boundary window
+- unconstrained (snapshot semantics — see §1)
 ```
 
 #### 6. On-Chain Verification
@@ -1851,7 +1864,7 @@ Where:
 
 **Transaction**:
 1. **Redeemer**: contains `cold_vkey`, `cold_sig`, `removed_node_input_index`, and `anchor_node_input_index`.
-2. **Validity interval**: must fall within the epoch boundary window.
+2. **Validity interval**: unconstrained (snapshot semantics — see §1).
 3. Spends the registration node and the Treasury state UTxO.
 4. Burns the Bifrost Membership Token under `spos_registry.ak` and returns the registration node's ADA to an SPO-controlled output.
 5. Removes the registration node from the registration linked-list by updating the anchor node's `next` pointer to skip the removed node.
@@ -1892,16 +1905,15 @@ Required witnesses:
 - `cold_sig`
 
 Required validity interval:
-- epoch-boundary window
+- unconstrained (snapshot semantics — see §1)
 ```
 
 **On-chain verification**:
 1. `pool_id == blake2b_224(cold_vkey)` — proves the cold key owns this pool.
 2. `verifyEd25519Signature(cold_vkey, "bifrost-revoke" || pool_id, cold_sig)` — proves cold key authorized revocation.
-3. **Validity interval**: transaction validity falls within the epoch boundary window.
-4. Exactly one token burned with `TokenName = pool_id`.
-5. **Registration linked-list removal**: verifies the anchor node's `next` pointer is correctly updated to skip the removed registration node, maintaining list ordering.
-6. **Bifrost identity removal**: verifies, against the Treasury state's `bifrost_identity_root`, that the matching `bifrost_id_pk -> pool_id` mapping existed and is removed in the updated Treasury state UTxO.
+3. Exactly one token burned with `TokenName = pool_id`.
+4. **Registration linked-list removal**: verifies the anchor node's `next` pointer is correctly updated to skip the removed registration node, maintaining list ordering.
+5. **Bifrost identity removal**: verifies, against the Treasury state's `bifrost_identity_root`, that the matching `bifrost_id_pk -> pool_id` mapping existed and is removed in the updated Treasury state UTxO.
 
 After exit, the SPO may re-register with a new Bifrost identity.
 
@@ -2088,7 +2100,7 @@ For a fixed `(epoch, threshold-mode)` DKG instance, the resulting threshold `t` 
 
 ##### 4.1 Candidate Enumeration
 
-All SPOs with valid Bifrost Membership Tokens that are present in the registration linked-list and not present in the active ban linked-list are candidates for the DKG.
+All SPOs with valid Bifrost Membership Tokens that are present in the registration linked-list (boundary snapshot), not present in the active ban linked-list, and whose delegated stake at the snapshot is at least `min_stake` (Operational parameters UTxO) are candidates for the DKG.
 
 ##### 4.2 Canonical Ordering
 
@@ -2112,7 +2124,7 @@ Each SPO $P_i$ performs the following initialization steps:
 1. Determine the current epoch.
 2. Retrieve the registration and ban linked-list states from the end of the previous epoch.
 3. Enumerate all registered SPOs from the registration list and subtract the active ban list.
-4. Query delegated stake for each candidate.
+4. Query delegated stake for each candidate; drop candidates below `min_stake` (Operational parameters UTxO, boundary snapshot).
 5. Compute threshold $t$ as described in Section 3.
 6. Order candidates lexicographically by `bifrost_id_pk` and assign indices.
 7. Verify own participation (own `pool_id` is in the candidate set).
