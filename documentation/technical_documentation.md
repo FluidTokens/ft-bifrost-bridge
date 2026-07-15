@@ -304,7 +304,7 @@ One field list; **immutable** marks wiring the update path must preserve byte-fo
 | 14 | `legit_treasury_movement_and_peg_out_not_produced_verifier_script_hash` | ByteArray (script hash) | **immutable** — peg-out cancel verifier |
 | 15–16 | `treasury_nft_policy_id` / `..._asset_name` | PolicyId / AssetName | **immutable** — Treasury state UTxO identity |
 | 17 | `min_stake` | Int (lovelace) | **updatable** — minimum delegated stake to enter the DKG candidate set; read off-chain only, at DKG candidate enumeration (§Candidate Set and Ordering) |
-| 18 | `fee_rate_sat_per_vb` | Int (sat/vB) | **updatable** — Bitcoin miner fee rate for deterministic TM construction (`miner fee = vsize × rate`); read off-chain only, by every SPO's TM builder |
+| 18 | `fee_rate_sat_per_vb` | Int (sat/vB) | **updatable** — the **exact** Bitcoin miner fee rate for deterministic TM construction (`miner fee = vsize × rate`); read off-chain only, by every SPO's TM builder; the roster tracks the fee market by group-signing parameter updates (see the signing-model note and *Stuck-TM recovery*) |
 | 19 | `per_pegout_fee` | Int (satoshi) | **updatable** — per-peg-out protocol fee deducted from each peg-out output (BTC payout = gross − fee); read off-chain by the TM builder and on-chain by the peg-out completion verifier (`paid == amount − fee`, §Complete peg-out) |
 | 20 | `min_peg_out_fbtc` | Int (satoshi) | **updatable** — minimum fBTC a PegOut request may lock (> `per_pegout_fee` + 330-sat dust); a client-side check at request creation and the TM builder's deterministic skip threshold — creation runs no validator, so there is no on-chain lock-time check (see *Create PegOut request*) |
 | 21 | `genesis_treasury_utxo_id` | ByteArray (36 B: txid ‖ vout LE) | **immutable** — the bridge's initial Bitcoin treasury outpoint; anchor of the **TM chain** (the first-movement branch of the TM linkage check, see *Post signed TM*). Must exist on Bitcoin before the Config mint. |
@@ -2175,6 +2175,21 @@ All SPOs agree on input ordering deterministically (treasury input first, then p
 
 All SPOs independently construct the same Treasury Movement (TM) transaction from shared state, with no coordinator. If any field differs between SPOs, signing will fail (different `txid` → mismatched nonce commitments). The rules below fully determine every byte of the unsigned transaction.
 
+<!-- G4: signing model ratified 2026-07-15 — Model A′ (exact reconstruction + roster-updatable
+     Config fee). The leader-proposed-fee hybrid was considered and rejected (see the note). -->
+> **Signing model (normative).** Bifrost deliberately uses **exact reconstruction** — every byte
+> of the unsigned TM is forced by public state (the frozen batch + the Config parameters at the
+> batch snapshot slot), so **the transaction's content is never any participant's choice**. A
+> signer's entire correctness check is byte-equality between its own build and its peers'; no
+> leader can inject content or choose parameters. (A rejected alternative — a leader-chosen fee
+> rate within a Config bound — was struck down because a low-ball proposal is valid-looking,
+> unpunishable, deniable, and detected only after wasting a full signing ceremony and hours of
+> Bitcoin-confirmation ambiguity.) Fee-market agility comes from governance instead: the roster
+> updates `fee_rate_sat_per_vb` via the group-signed *Update Config parameters* transaction — an
+> explicit collective act in which each signer sanity-checks the proposed rate against its own
+> market view before signing, and refusal is harmless (the old rate persists; nothing mid-flight
+> stalls).
+
 **Shared state reference.** Every SPO reads the same Cardano confirmed state:
 
 - Confirmed **PegInRequest** UTxOs — each contains the raw Bitcoin peg-in transaction from which the SPO extracts the Bitcoin txid+vout being swept.
@@ -2238,17 +2253,47 @@ The signing namespace is identified by the tuple `(epoch, txid, mode, attempt)` 
 Each SPO publishes its constructed TM at:
 
 ```
-<bifrost_url>/sign/<epoch>/tm.json
+<bifrost_url>/sign/<epoch>/<tm_sequence>/tm.json
 ```
 
 ```json
 {
   "raw_tx": "<hex>",
-  "txid": "<hex, 32 bytes>"
+  "txid": "<hex, 32 bytes>",
+  "signature": "<hex, 64 bytes>"
 }
 ```
 
-The `txid` (Bitcoin transaction hash, computed from the unsigned transaction's non-witness data) uniquely identifies the TM being signed and is used as the key in FROST signing URLs. Other SPOs fetch this endpoint to verify they agree on the transaction before signing.
+**Canonical byte layout** (for authentication and on-chain misbehavior proofs — this payload was
+previously the protocol's only unauthenticated message):
+
+```
+"bifrost-tm" || epoch (8B BE) || tm_sequence (8B BE) || pool_id (28B) || txid (32B)
+```
+
+`signature` is a BIP340 Schnorr signature over `SHA256(canonical_bytes)` using `bifrost_id_sk`
+(the raw tx bytes are covered transitively through `txid`). The `txid` (computed from the unsigned
+transaction's non-witness data) uniquely identifies the TM being signed and is used as the key in
+FROST signing URLs. Other SPOs fetch this endpoint to verify they agree on the transaction before
+signing — under exact reconstruction any disagreement is a red flag: either a state-view
+divergence to diagnose, or (two different signed payloads for the same namespace) a provable
+equivocation fault like any other.
+
+**Stuck-TM recovery (fee bump).** <!-- G29 --> If a posted TM is not Binocular-confirmed within
+the recovery window `tm_recovery_window` (protocol parameter — OPEN(G20): its value belongs to
+the deadline schedule), the frozen fee rate has fallen behind the Bitcoin fee market. Recovery is
+a collective act with no special roles:
+
+1. the roster raises `fee_rate_sat_per_vb` via the group-signed *Update Config parameters*
+   transaction;
+2. every SPO rebuilds the **same frozen batch** deterministically at the new rate — a new `txid`,
+   hence a new signing namespace (fresh nonces are mandatory, per the nonce-freshness rule);
+3. the roster re-signs and anyone posts the replacement (permissionless).
+
+The replacement and the stuck original both chain from the same predecessor and spend the same
+treasury outpoint; RBF is signaled on all inputs, and Bitcoin confirms exactly one — the loser
+remains inert `Unconfirmed` garbage (see *The TM chain*). No un-freezing or batch reshuffling is
+allowed during recovery: only the fee rate may differ between the two builds.
 
 #### Preprocess
 
@@ -2419,7 +2464,7 @@ URL path conventions (`<threshold>` is `67` or `51` — two DKGs run concurrentl
 
 * **DKG Round 1**: `<bifrost_url>/dkg/<epoch>/<threshold>/<attempt>/round1/<pool_id>.json`
 * **DKG Round 2**: `<bifrost_url>/dkg/<epoch>/<threshold>/<attempt>/round2/<pool_id>.json`
-* **TM proposal**: `<bifrost_url>/sign/<epoch>/tm.json` (current TM transaction and txid)
+* **TM proposal**: `<bifrost_url>/sign/<epoch>/<tm_sequence>/tm.json` (current TM transaction and txid, signed)
 * **FROST signing**: `<bifrost_url>/sign/<epoch>/<txid>/<mode>/<attempt>/round1/<pool_id>.json` (nonce commitments), `.../round2/<pool_id>.json` (partial signatures)
 
 Each SPO writes its own payload locally, then polls all other SPOs' endpoints until the relevant round deadline is reached. Any signed payload fetched from HTTP can later be reused on-chain as direct fault evidence.
