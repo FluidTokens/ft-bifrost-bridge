@@ -354,6 +354,63 @@ never retroactively. On-chain consumers read the current Config UTxO as a refere
 > The third verifier field is mirrored as `pegInCloseVerifierScriptHash` in the binocular Scalus
 > types — the Aiken name above is normative.
 
+<!-- G16: new section — the Treasury state UTxO previously had no datum spec, and the document
+     named two objects ("Treasury state UTxO" / "Treasury Info UTxO") that were never reconciled;
+     the latter is now the TM chain (G15). The implemented datum's deltas are in the
+     implementation-status note (contract change request). -->
+## Treasury state UTxO
+
+The **Treasury state UTxO** is the NFT-authenticated singleton at `treasury.ak` holding the
+bridge's SPO-side state: the active identity bindings and the treasury keys. It is deliberately
+**cold** — only infrequent, SPO-driven transactions touch it (registration, revocation, key
+rotation). Everything high-frequency lives elsewhere: the completed-peg-ins/-outs trees are their
+own singletons (contention isolation — see §Components), and the treasury *pointer* is not state
+at all (it is the TM chain's tip — see *Post signed TM*).
+
+**The Treasury state NFT.** Minted exactly once by the protocol bootstrap (K1): a one-shot mint
+that consumes a chosen outpoint, with asset name `sha256(serialiseData(consumed_outpoint))` — so
+the token is mintable once and identifies this instance's Treasury state for its whole life. The
+identity `(treasury_nft_policy_id, treasury_nft_asset_name)` is recorded in the Config wiring
+(#15–16); every reader locates the UTxO by it. Each update spends and re-produces the UTxO,
+carrying the NFT forward.
+
+**TreasuryDatum** (normative):
+
+| # | Field | Type | Description |
+|---|---|---|---|
+| 0 | `bifrost_identity_root` | ByteArray (32 B MPF root) | active `bifrost_id_pk → pool_id` bindings — global uniqueness of Bifrost identities (see §SPO Registration 3.3) |
+| 1 | `current_spos_frost_key` | ByteArray (32 B x-only) | the current treasury group key: $Y_{51}$ after the first successful DKG; **$Y_{federation}$ from K1 until then** — which is what makes Phase 1 operation and the governance continuum (Config updates, Update-Y) work unchanged |
+| 2 | `y_federation` | ByteArray (32 B x-only) | the federation fallback key — the script-leaf key of both Taproot trees |
+| 3 | `federation_csv_blocks` | Int | the `timeout_federation` CSV value baked into the federation leaves |
+
+Fields 2–3 complete address derivation: a depositor (or SPO) reads this **one** UTxO and derives
+both the Treasury and peg-in Taproot addresses (see *Taproot address construction*).
+
+**Field-permission matrix** — each spend branch must preserve every field it does not own:
+
+| Transaction | May change | Must preserve |
+|---|---|---|
+| K1 bootstrap (one-shot mint) | creates all | — |
+| Register SPO | `bifrost_identity_root` (insert) | #1–3 |
+| Deregister / voluntary revoke | `bifrost_identity_root` (remove) | #1–3 |
+| Update-Y (key rotation — see the Transaction catalog) | `current_spos_frost_key` | #0, #2–3 |
+| Federation-key rotation (rare; an Update-Y variant) | `y_federation`, `federation_csv_blocks` | #0–1 — note: this changes every derived address; in-flight peg-ins against old addresses must be swept or refunded first |
+
+**Reading the Treasury state.** As with the Config UTxO: on-chain readers take it as a reference
+input and verify the NFT; off-chain readers resolve the NFT to its UTxO and decode the inline
+datum. Registration and key-rotation transactions **spend** it (their updates must be atomic with
+the state they change).
+
+> **Implementation status.** The implemented `TreasuryDatum` is `{bifrost_identity_root,
+> current_treasury_address, current_treasury_utxo_id, current_spos_frost_key}`: the two pointer
+> fields are **vestigial** under the TM-chain model (bootstrap-seeded, never advanced, not
+> authoritative — slated for removal), and `y_federation` / `federation_csv_blocks` are not yet
+> present. The implemented `treasury.ak` also has **no spend branch that changes
+> `current_spos_frost_key`** — every registry branch preserves it — so on-chain key rotation
+> (Update-Y) is not yet possible. All of these are items of the standing contract change request.
+> The K1 bootstrap itself is implemented and has run on preprod (heimdall
+> `bootstrap-treasury-info`).
+
 <!-- G36: new section — drafted from the implemented deployment (binocular deploy-bridge /
      deploy-script-refs). OPEN(Gn) marks decisions still pending in the gap review. -->
 ## Bridge instance creation flow
@@ -394,8 +451,10 @@ operator performs:
 8. **Bootstrap the SPO-side state** (see §SPO Bootstrap Flow): the Treasury state NFT + UTxO at
    `treasury.ak` (initial keys and an empty `bifrost_identity_root`), the registration-list root
    (`reg-root`), and the ban-list root (`ban-root`).
-   OPEN(G24): the pre-DKG treasury/peg-in internal key (no $Y_{51}$ exists yet) and the initial
-   TreasuryDatum values; OPEN(G16): the TreasuryDatum field layout.
+   The initial TreasuryDatum seeds `current_spos_frost_key` with $Y_{federation}$, so Phase-1
+   address derivation and governance work with no special cases (see §Treasury state UTxO).
+   OPEN(G24): who creates and funds the genesis treasury outpoint, and the Phase-1 sweep
+   operation details.
 9. **Deploy reference scripts (CIP-33)** for the large validators, so user transactions reference
    them instead of carrying the script bytes.
 10. **Publish the instance parameters** — the Config NFT policy id + asset name and the fBTC
