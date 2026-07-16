@@ -193,7 +193,11 @@ that every other validator reads via a reference input. Because `bridged_asset.a
 is parameterized only by the config NFT identity and reads the current
 protocol script hashes from the datum at run time, updating the `ConfigDatum`
 swaps out protocol validators while the fBTC policyId stays stable, so
-existing fBTC remains in circulation across upgrades.
+existing fBTC remains in circulation across upgrades. The fBTC minting policy
+itself is a pure delegator: it only requires the mint-checker withdraw script
+named by `bridged_token_mint_checker_script_hash` (field 19) to run in the
+transaction, so ALL mint/burn rules are swappable via a config update while
+the policy id stays fixed.
 
 Readers access the datum through positional getters
 (`lib/bifrost/types/config.ak`) rather than casting it to `ConfigDatum`: a
@@ -235,6 +239,18 @@ names the authority allowed to change the config:
     can never validate again; no further fBTC can be minted *or burned*.
     Retire is a true end-of-life action for a deployment.
 - `None`: the config is permanently frozen; the UTxO is unspendable.
+
+`bridged_token_mint_checker_script_hash` (field 19) names the withdraw
+script carrying all fBTC mint/burn rules. The immutable fBTC policy checks
+only that this script runs in the minting tx, so every code path of the
+checker must fully constrain the fBTC mint value: an action that ignores
+`self.mint` would let any tx invoking it change the supply freely. The V1
+checker replicates the original rules (exactly one asset entry with the
+configured name; positive quantity requires the peg-in withdraw script
+running with a `CompletePegIn` redeemer, negative requires peg-out with
+`CompletePegOut`). Upgrading mint logic = deploy a new checker, register
+its stake credential, and one authorized config Update of field 19; the
+fBTC policy id and circulating fBTC are untouched.
 
 The mint policy has two paths: bootstrap (+1, one-shot mint gated on spending
 a fixed `OutputReference`, requiring the genesis output to carry a parseable
