@@ -24,7 +24,7 @@ validator bridged_token(
   configNFTPolicyId: ByteArray,
   configNFTAssetName: ByteArray,
 ) {
-  mint(redeemer: MintRedeemer, _policy_id: PolicyId, self: Transaction) {
+  mint(redeemer: MintRedeemer, policy_id: PolicyId, self: Transaction) {
     let config_fields =
       utils.get_config_as_data_list(
         utils.safe_list_at(
@@ -34,6 +34,13 @@ validator bridged_token(
         configNFTPolicyId,
         configNFTAssetName,
       )
+    //Anchor the delegation to THIS policy. The checker validates the mint of
+    //the policy named by config[0] (bridged_token_policy_id); since this
+    //policy never inspects self.mint itself, config[0] must equal our own
+    //policy id, otherwise our mint would be unconstrained while the checker
+    //polices a different policy. config[0] is the fBTC identity = our own
+    //hash by construction, so this only ever fails on a broken config.
+    expect config.get_bridged_token_policy_id(config_fields) == policy_id
     let checker_hash =
       config.get_bridged_token_mint_checker_script_hash(config_fields)
     pairs.has_key(self.withdrawals, Script(checker_hash))
@@ -174,6 +181,28 @@ test mint_rejects_unrelated_withdrawal_only() fail {
       mint: assets.from_asset(t_own_policy, "fBTC", 100),
     }
   expect t_mint(tx)
+}
+
+//config[0] must equal the minting policy id: else the checker (which reads
+//config[0]) would constrain a different policy, leaving this mint unpoliced.
+test mint_rejects_config_policy_id_mismatch() fail {
+  let other_policy =
+    #"bb111111111111111111111111111111111111111111111111111111"
+  let tx =
+    Transaction {
+      ..placeholder,
+      reference_inputs: [t_config_ref_input()],
+      withdrawals: [Pair(Script(t_checker_hash), 0)],
+      mint: assets.from_asset(other_policy, "fBTC", 100),
+    }
+  expect
+    bridged_token.mint(
+      t_config_policy,
+      t_config_asset,
+      MintRedeemer { config_ref_input_index: 0 },
+      other_policy,
+      tx,
+    )
 }
 
 test mint_rejects_ref_input_without_config_nft() fail {
