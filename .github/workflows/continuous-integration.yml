@@ -12,7 +12,7 @@ jobs:
         # The Aiken project root is onchain/, not the repo root — aiken.toml lives there.
         working-directory: onchain
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: aiken-lang/setup-aiken@v1
         with:
           # Must match onchain/aiken.toml.
