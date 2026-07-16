@@ -1,25 +1,30 @@
-use aiken/collection/dict
-use aiken/collection/list
-use bifrost/types/config
-use bifrost/types/peg_in.{CompletePegIn, PegInWithdrawRedeemer}
-use bifrost/types/peg_out.{CompletePegOut, PegOutWithdrawRedeemer}
+use aiken/collection/pairs
+use bifrost/types/config.{ConfigDatum}
+use bifrost/types/general.{CardanoSignature}
 use bifrost/utils
-use cardano/address.{Script}
-use cardano/assets.{PolicyId, tokens}
+use cardano/address.{Address, Script}
+use cardano/assets.{PolicyId}
 use cardano/script_context.{ScriptContext}
-use cardano/transaction.{Transaction, Withdraw}
+use cardano/transaction.{
+  InlineDatum, Input, Output, OutputReference, Transaction, placeholder,
+}
 
 pub type MintRedeemer {
   config_ref_input_index: Int,
-  //Can be either PegIn or PegOut depending if we are minting or burning
-  wanted_peg_withdraw_redeemer_index: Int,
 }
 
-validator completed_peg_ins_merkle_tree_validator(
+//The fBTC minting policy: a minimal, immutable delegator. Its script hash is
+//the stable fBTC policy id (ConfigDatum index 0). ALL minting rules live in
+//the swappable mint-checker withdraw script named by ConfigDatum index 19;
+//this policy only requires that checker to run in the same tx. The core
+//never inspects self.mint - delegation is total by design, so the checker
+//must constrain the full fBTC mint value on EVERY code path (see
+//docs/superpowers/specs/2026-07-16-fbtc-mint-delegation-design.md).
+validator bridged_token(
   configNFTPolicyId: ByteArray,
   configNFTAssetName: ByteArray,
 ) {
-  mint(redeemer: MintRedeemer, policy_id: PolicyId, self: Transaction) {
+  mint(redeemer: MintRedeemer, _policy_id: PolicyId, self: Transaction) {
     let config_fields =
       utils.get_config_as_data_list(
         utils.safe_list_at(
@@ -29,79 +34,163 @@ validator completed_peg_ins_merkle_tree_validator(
         configNFTPolicyId,
         configNFTAssetName,
       )
-    let bridged_token_asset_name =
-      config.get_bridged_token_asset_name(config_fields)
-    let peg_in_withdraw_script_hash =
-      config.get_peg_in_withdraw_script_hash(config_fields)
-    let peg_out_withdraw_script_hash =
-      config.get_peg_out_withdraw_script_hash(config_fields)
-    //Minted tokens from this policy id must have only the expected AssetName
-    expect [Pair(minted_token_asset_name, minted_tokens_quantity)] =
-      dict.to_pairs(tokens(self.mint, policy_id))
-    expect minted_token_asset_name == bridged_token_asset_name
-
-    if minted_tokens_quantity > 0 {
-      let peg_in_withdraw_redeemer =
-        utils.safe_list_at(
-          self.redeemers,
-          redeemer.wanted_peg_withdraw_redeemer_index,
-        )
-      expect
-        peg_in_withdraw_redeemer.1st == Withdraw(
-          Script(peg_in_withdraw_script_hash),
-        )
-      expect peg_in_redeemer: PegInWithdrawRedeemer =
-        peg_in_withdraw_redeemer.2nd
-
-      and {
-        when peg_in_redeemer.action_type is {
-          CompletePegIn { .. } -> True
-          _ -> False
-        },
-        list.any(
-          self.withdrawals,
-          fn(withdrawal) {
-            when withdrawal is {
-              Pair(Script(script_hash), _amnt) ->
-                script_hash == peg_in_withdraw_script_hash
-              _ -> False
-            }
-          },
-        ),
-      }
-    } else {
-      let peg_out_withdraw_redeemer =
-        utils.safe_list_at(
-          self.redeemers,
-          redeemer.wanted_peg_withdraw_redeemer_index,
-        )
-      expect
-        peg_out_withdraw_redeemer.1st == Withdraw(
-          Script(peg_out_withdraw_script_hash),
-        )
-      expect peg_out_redeemer: PegOutWithdrawRedeemer =
-        peg_out_withdraw_redeemer.2nd
-
-      and {
-        when peg_out_redeemer.action_type is {
-          CompletePegOut { .. } -> True
-          _ -> False
-        },
-        list.any(
-          self.withdrawals,
-          fn(withdrawal) {
-            when withdrawal is {
-              Pair(Script(script_hash), _amnt) ->
-                script_hash == peg_out_withdraw_script_hash
-              _ -> False
-            }
-          },
-        ),
-      }
-    }
+    let checker_hash =
+      config.get_bridged_token_mint_checker_script_hash(config_fields)
+    pairs.has_key(self.withdrawals, Script(checker_hash))
   }
 
   else(_ctx: ScriptContext) {
     False
   }
+}
+
+//----------------------------------------------------------------------------
+// Tests
+//----------------------------------------------------------------------------
+
+const t_config_policy: ByteArray =
+  #"cccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+
+const t_config_asset: ByteArray = "BifrostConfig"
+
+const t_checker_hash: ByteArray =
+  #"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+
+const t_own_policy: ByteArray =
+  #"aa111111111111111111111111111111111111111111111111111111"
+
+fn t_config_datum() -> ConfigDatum {
+  ConfigDatum {
+    bridged_token_policy_id: t_own_policy,
+    bridged_token_asset_name: "fBTC",
+    source_chain_merkle_tree_policy_id: #"aa22",
+    source_chain_merkle_tree_asset_name: "sourceChain",
+    block_header_merkle_tree_policy_id: #"aa33",
+    block_header_merkle_tree_asset_name: "blockHeaders",
+    completed_peg_ins_merkle_tree_policy_id: #"aa44",
+    completed_peg_ins_merkle_tree_asset_name: "completedPegIns",
+    completed_peg_outs_merkle_tree_policy_id: #"aa55",
+    completed_peg_outs_merkle_tree_asset_name: "completedPegOuts",
+    peg_in_withdraw_script_hash: #"aa66",
+    peg_out_withdraw_script_hash: #"aa77",
+    peg_in_close_verifier_script_hash: #"aa88",
+    legit_treasury_movement_and_peg_out_produced_verifier_script_hash: #"aa99",
+    legit_treasury_movement_and_peg_out_not_produced_verifier_script_hash: #"aaaa",
+    treasury_nft_policy_id: #"aabb",
+    treasury_nft_asset_name: "treasuryNFT",
+    min_stake: 0,
+    update_auth: Some(CardanoSignature { hash: #"aadd" }),
+    bridged_token_mint_checker_script_hash: t_checker_hash,
+  }
+}
+
+fn t_config_ref_input() -> Input {
+  Input {
+    output_reference: OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    output: Output {
+      address: Address {
+        payment_credential: Script(t_config_policy),
+        stake_credential: None,
+      },
+      value: assets.from_lovelace(2_000_000)
+        |> assets.add(t_config_policy, t_config_asset, 1),
+      datum: InlineDatum(t_config_datum()),
+      reference_script: None,
+    },
+  }
+}
+
+fn t_mint(tx: Transaction) {
+  bridged_token.mint(
+    t_config_policy,
+    t_config_asset,
+    MintRedeemer { config_ref_input_index: 0 },
+    t_own_policy,
+    tx,
+  )
+}
+
+test mint_accepts_when_checker_runs() {
+  let tx =
+    Transaction {
+      ..placeholder,
+      reference_inputs: [t_config_ref_input()],
+      withdrawals: [Pair(Script(t_checker_hash), 0)],
+      mint: assets.from_asset(t_own_policy, "fBTC", 100),
+    }
+  t_mint(tx)
+}
+
+test burn_accepts_when_checker_runs() {
+  let tx =
+    Transaction {
+      ..placeholder,
+      reference_inputs: [t_config_ref_input()],
+      withdrawals: [Pair(Script(t_checker_hash), 0)],
+      mint: assets.from_asset(t_own_policy, "fBTC", -100),
+    }
+  t_mint(tx)
+}
+
+//Delegation is total: the core accepts ANY mint shape (multiple asset names,
+//mixed signs) as long as the checker runs. The checker carries every rule.
+test mint_delegation_is_total() {
+  let tx =
+    Transaction {
+      ..placeholder,
+      reference_inputs: [t_config_ref_input()],
+      withdrawals: [Pair(Script(t_checker_hash), 0)],
+      mint: assets.from_asset(t_own_policy, "fBTC", 100)
+        |> assets.add(t_own_policy, "junk", -3),
+    }
+  t_mint(tx)
+}
+
+test mint_rejects_missing_checker_withdrawal() fail {
+  let tx =
+    Transaction {
+      ..placeholder,
+      reference_inputs: [t_config_ref_input()],
+      withdrawals: [],
+      mint: assets.from_asset(t_own_policy, "fBTC", 100),
+    }
+  expect t_mint(tx)
+}
+
+test mint_rejects_unrelated_withdrawal_only() fail {
+  let tx =
+    Transaction {
+      ..placeholder,
+      reference_inputs: [t_config_ref_input()],
+      withdrawals: [
+        Pair(
+          Script(#"ff11111111111111111111111111111111111111111111111111111111"),
+          0,
+        ),
+      ],
+      mint: assets.from_asset(t_own_policy, "fBTC", 100),
+    }
+  expect t_mint(tx)
+}
+
+test mint_rejects_ref_input_without_config_nft() fail {
+  let no_nft_input =
+    Input {
+      ..t_config_ref_input(),
+      output: Output {
+        ..t_config_ref_input().output,
+        value: assets.from_lovelace(2_000_000),
+      },
+    }
+  let tx =
+    Transaction {
+      ..placeholder,
+      reference_inputs: [no_nft_input],
+      withdrawals: [Pair(Script(t_checker_hash), 0)],
+      mint: assets.from_asset(t_own_policy, "fBTC", 100),
+    }
+  expect t_mint(tx)
 }
