@@ -1,7 +1,7 @@
 # Config Update Authorization – Design
 
 **Date**: 2026-07-16
-**Status**: Approved for implementation
+**Status**: Implemented (2026-07-16)
 **Scope**: `onchain/validators/bitcoin/config.ak`, `onchain/lib/bifrost/types/config.ak`, documentation
 
 ## Context
@@ -155,6 +155,25 @@ Two paths, disambiguated by mint sign:
   hash, hence a new config NFT policy, hence a new fBTC policyId. This change
   must land **before** the testnet4/preprod deployment whose policyId is meant
   to be kept. It cannot be retrofitted onto an existing deployment.
+
+## Implementation notes (post-review hardening)
+
+The implementation adds four constraints beyond this design, all driven by
+security review findings:
+
+1. The continuing Update output must keep the exact full address of the spent
+   config UTxO (stake credential included), not just the payment credential.
+2. The continuing Update output must keep the exact non-ADA value (the config
+   UTxO is a reference input of every bridge tx; junk tokens would bloat all
+   of them).
+3. A `Some` `update_auth` (genesis or rotated) must carry a 28-byte hash that
+   differs from the config script hash: `CardanoSpendScript(own_hash)` would
+   self-authorize any spend, `CardanoMintScript(own_hash)` would
+   self-authorize Retire, and a wrong-length hash is an accidental permanent
+   freeze.
+4. Known follow-up: the off-chain `ConfigDatum` mirror in the binocular
+   submodule (`ConfigTypes.scala`, `DeployBridgeCommand.scala`) still builds
+   the 18-field datum and must append `update_auth` before the next deploy.
 
 ## Security considerations
 

@@ -162,7 +162,7 @@ Source code for all validators listed here is published in the Bifrost on-chain 
 | `completed-peg-ins-merkle-tree.ak` | NFT-authenticated singleton holding the MPF root of completed peg-ins (keyed by `peg_in_utxo_id`); spent and recreated on every fBTC mint. |
 | `treasury_movement.ak` | Stores SPO-signed Bitcoin TM transactions for watchtower relay; enforces leader-election rules.                                                   |
 | `bridged_asset.ak`     | fBTC mint/burn policy; verifies TM-confirmed peg-in sweeps and Schnorr-signed depositor claims.                                                   |
-| `config.ak`            | One-shot Config NFT + Config UTxO: immutable instance wiring (script hashes, token identities, genesis treasury outpoint), read by all other validators as a reference input; never spent. |
+| `config.ak`            | Singleton Config NFT + Config UTxO: instance wiring (script hashes, token identities, genesis treasury outpoint), read by all other validators as a reference input; supports authorized Update and Retire (see *Config UTxO governance*). |
 | operational params validator | One-shot params NFT + Operational parameters UTxO: the tunable values (fee rate, fee floor, minimums); spend authorized by the treasury group key; read by no on-chain validator. |
 
 <!-- G35: the complete token inventory. -->
@@ -170,7 +170,7 @@ Source code for all validators listed here is published in the Bifrost on-chain 
 
 | Token | Policy | Asset name | Minted / burned by | Purpose |
 |---|---|---|---|---|
-| Config NFT | `config.ak` (one-shot) | mint parameter (deployed: `BIFCFG`) | bootstrap / never | instance identity + wiring |
+| Config NFT | `config.ak` (one-shot) | mint parameter (deployed: `BIFCFG`) | bootstrap / Retire | instance identity + wiring |
 | Operational params NFT | params validator (one-shot) | mint parameter | bootstrap / never | tunables singleton |
 | Treasury state NFT | treasury bootstrap policy (K1) | `sha256(serialiseData(consumed outpoint))` | K1 / never | SPO-state singleton |
 | Registration-list root | `spos_registry.ak` | `reg-root` | bootstrap / never | registration list anchor |
@@ -185,6 +185,51 @@ Source code for all validators listed here is published in the Bifrost on-chain 
 | fBTC | `bridged_asset.ak` | `"fBTC"` | complete peg-in / complete peg-out | the bridged asset — 1 token = 1 satoshi |
 
 No peg-out token exists — creating a peg-out request mints nothing (see *Create PegOut request*).
+
+### Config UTxO governance
+
+The Config UTxO is a singleton NFT at `config.ak` carrying the `ConfigDatum`
+that every other validator reads via a reference input. Because `bridged_asset.ak`
+is parameterized only by the config NFT identity and reads the current
+protocol script hashes from the datum at run time, updating the `ConfigDatum`
+swaps out protocol validators while the fBTC policyId stays stable, so
+existing fBTC remains in circulation across upgrades.
+
+The last `ConfigDatum` field, `update_auth: Option<AuthorizationMethod>`,
+names the authority allowed to change the config:
+
+- `Some(auth)`: the authority (a signature, spend script, withdraw script,
+  mint script, or NFT ownership, per `authorizer.ak`) can spend the config
+  UTxO with one of two redeemers:
+  - **Update**: exactly one continuing output at the config script carries
+    the NFT (and no other own-policy token) with a new inline `ConfigDatum`.
+    The continuing output must keep the exact full address (stake credential
+    included) and the exact non-ADA value of the spent config UTxO, so the
+    config UTxO can never drift to another address or accumulate junk tokens.
+    The `bridged_token_policy_id` and `bridged_token_asset_name` fields are
+    pinned: they can never change, even by the authority. Everything else,
+    including `update_auth` itself, is updatable. Rotating `update_auth` is
+    the progressive-decentralization path: dev key on testnets, SPO
+    governance withdraw script at mainnet launch, optionally `None` to
+    renounce. A rotated (or genesis) `update_auth` hash must be 28 bytes and
+    must differ from the config script hash itself; self-referential values
+    would make the config permissionlessly spendable.
+  - **Retire**: the tx burns exactly the config NFT (mint of −1 under the
+    config policy); no continuing output is required and the min-ADA is
+    released. **Warning**: with the config NFT gone, the fBTC minting policy
+    can never validate again; no further fBTC can be minted *or burned*.
+    Retire is a true end-of-life action for a deployment.
+- `None`: the config is permanently frozen; the UTxO is unspendable.
+
+The mint policy has two paths: bootstrap (+1, one-shot mint gated on spending
+a fixed `OutputReference`, requiring the genesis output to carry a parseable
+`ConfigDatum`) and burn (−1, unauthorized in the mint handler itself because
+burning necessarily spends the config UTxO, which enforces the Retire
+authorization in the spend handler).
+
+The governance sophistication expected on mainnet (SPO thresholds, per-field
+rules, timelocks with peg-out exit windows) lives in the swappable
+`update_auth` target, not in `config.ak`, which stays minimal and immutable.
 
 ### Mathematical notation
 
