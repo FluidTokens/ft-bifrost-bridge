@@ -173,6 +173,7 @@ fn t_datum(update_auth) -> ConfigDatum {
     treasury_nft_asset_name: "treasuryNFT",
     min_stake: 100_000_000,
     update_auth,
+    bridged_token_mint_checker_script_hash: #"aadddddddddddddddddddddddddddddddddddddddddddddddddddddd",
   }
 }
 

@@ -34,6 +34,10 @@ pub type ConfigDatum {
   //Authority allowed to update or retire the config UTxO.
   //None = permanently frozen (unspendable), the pre-governance behavior.
   update_auth: Option<AuthorizationMethod>,
+  //Withdraw script carrying ALL fBTC mint/burn rules; the immutable
+  //bridged_token policy only requires this script to run in the tx. Swapped
+  //via an authorized config Update (see the delegated-mint design spec).
+  bridged_token_mint_checker_script_hash: ByteArray,
 }
 
 //----------------------------------------------------------------------------
@@ -164,6 +168,12 @@ pub fn get_update_auth(
   update_auth
 }
 
+pub fn get_bridged_token_mint_checker_script_hash(
+  config_fields: List<Data>,
+) -> ByteArray {
+  builtin.un_b_data(safe_list_at(config_fields, 19))
+}
+
 //Pins every getter index to its ConfigDatum record field: reordering record
 //fields or getter indexes independently makes this fail.
 test config_getters_match_datum_fields() {
@@ -188,6 +198,7 @@ test config_getters_match_datum_fields() {
       treasury_nft_asset_name: #"aa16",
       min_stake: 17,
       update_auth: Some(CardanoSignature { hash: #"aa18" }),
+      bridged_token_mint_checker_script_hash: #"aa19",
     }
   let datum_data: Data = datum
   let fields = builtin.unconstr_fields(datum_data)
@@ -215,5 +226,6 @@ test config_getters_match_datum_fields() {
     get_treasury_nft_asset_name(fields) == datum.treasury_nft_asset_name,
     get_min_stake(fields) == datum.min_stake,
     get_update_auth(fields) == datum.update_auth,
+    get_bridged_token_mint_checker_script_hash(fields) == datum.bridged_token_mint_checker_script_hash,
   }
 }
