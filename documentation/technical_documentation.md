@@ -195,6 +195,15 @@ protocol script hashes from the datum at run time, updating the `ConfigDatum`
 swaps out protocol validators while the fBTC policyId stays stable, so
 existing fBTC remains in circulation across upgrades.
 
+Readers access the datum through positional getters
+(`lib/bifrost/types/config.ak`) rather than casting it to `ConfigDatum`: a
+typed cast enforces the exact field count and every field's type at run time,
+which would freeze the datum shape forever for immutable readers like the
+fBTC policy. With getters, only the accessed fields are validated, so new
+fields can be appended to `ConfigDatum` without redeploying existing readers.
+Existing field positions and types are consequently a frozen contract:
+evolve the datum by appending only.
+
 The last `ConfigDatum` field, `update_auth: Option<AuthorizationMethod>`,
 names the authority allowed to change the config:
 
@@ -202,18 +211,24 @@ names the authority allowed to change the config:
   mint script, or NFT ownership, per `authorizer.ak`) can spend the config
   UTxO with one of two redeemers:
   - **Update**: exactly one continuing output at the config script carries
-    the NFT (and no other own-policy token) with a new inline `ConfigDatum`.
-    The continuing output must keep the exact full address (stake credential
+    the NFT (and no other own-policy token) with a new inline datum. The
+    continuing output must keep the exact full address (stake credential
     included) and the exact non-ADA value of the spent config UTxO, so the
     config UTxO can never drift to another address or accumulate junk tokens.
-    The `bridged_token_policy_id` and `bridged_token_asset_name` fields are
-    pinned: they can never change, even by the authority. Everything else,
-    including `update_auth` itself, is updatable. Rotating `update_auth` is
-    the progressive-decentralization path: dev key on testnets, SPO
-    governance withdraw script at mainnet launch, optionally `None` to
-    renounce. A rotated (or genesis) `update_auth` hash must be 28 bytes and
-    must differ from the config script hash itself; self-referential values
-    would make the config permissionlessly spendable.
+    The datum content itself is entirely unconstrained: the authority is the
+    root of trust and may change any field, including the bridged-token
+    identity, `update_auth` itself, and even the datum's shape (readers use
+    positional getters, so fields can be appended without redeploying them).
+    Rotating `update_auth` is the progressive-decentralization path: dev key
+    on testnets, SPO governance withdraw script at mainnet launch, optionally
+    `None` to renounce. The authority carries the full consequences: a datum
+    whose field 18 no longer parses as `Option<AuthorizationMethod>` freezes
+    the config permanently, a self-referential `update_auth` makes it
+    permissionlessly spendable, and a datum current readers cannot parse
+    halts the bridge until a later Update fixes it. Sophisticated per-field
+    rules belong in the swappable governance script named by `update_auth`.
+    At genesis only, the mint handler requires the datum to parse as
+    `ConfigDatum`.
   - **Retire**: the tx burns exactly the config NFT (mint of −1 under the
     config policy); no continuing output is required and the min-ADA is
     released. **Warning**: with the config NFT gone, the fBTC minting policy

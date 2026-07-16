@@ -1,6 +1,6 @@
-use aiken/builtin
 use aiken/collection/dict
 use aiken/collection/list
+use bifrost/types/config
 use bifrost/types/peg_in.{CompletePegIn, PegInWithdrawRedeemer}
 use bifrost/types/peg_out.{CompletePegOut, PegOutWithdrawRedeemer}
 use bifrost/utils
@@ -20,7 +20,7 @@ validator completed_peg_ins_merkle_tree_validator(
   configNFTAssetName: ByteArray,
 ) {
   mint(redeemer: MintRedeemer, policy_id: PolicyId, self: Transaction) {
-    let config =
+    let config_fields =
       utils.get_config_as_data_list(
         utils.safe_list_at(
           self.reference_inputs,
@@ -30,11 +30,11 @@ validator completed_peg_ins_merkle_tree_validator(
         configNFTAssetName,
       )
     let bridged_token_asset_name =
-      builtin.un_b_data(utils.safe_list_at(config, 1))
+      config.get_bridged_token_asset_name(config_fields)
     let peg_in_withdraw_script_hash =
-      builtin.un_b_data(utils.safe_list_at(config, 10))
+      config.get_peg_in_withdraw_script_hash(config_fields)
     let peg_out_withdraw_script_hash =
-      builtin.un_b_data(utils.safe_list_at(config, 11))
+      config.get_peg_out_withdraw_script_hash(config_fields)
     //Minted tokens from this policy id must have only the expected AssetName
     expect [Pair(minted_token_asset_name, minted_tokens_quantity)] =
       dict.to_pairs(tokens(self.mint, policy_id))

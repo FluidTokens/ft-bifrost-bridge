@@ -7,6 +7,7 @@ use aiken/option
 use aiken/primitive/bytearray
 use bifrost/bip322
 use bifrost/bitcoin
+use bifrost/types/config
 use bifrost/types/general.{ChainState}
 use bifrost/types/peg_in.{
   Cancel, CompletePegIn, PegInDatum, PegInMintRedeemer, PegInRequest,
@@ -143,30 +144,25 @@ validator peg_in_validator(
     credential: Credential,
     self: Transaction,
   ) {
-    let config = utils.get_config_as_data_list(
+    let config_fields = utils.get_config_as_data_list(
       utils.safe_list_at(self.reference_inputs, redeemer.config_ref_input_index),
       config_nft_policy_id,
       config_nft_asset_name,
     )
-    let bridged_token_policy_id = builtin.un_b_data(
-      utils.safe_list_at(config, 0),
-    )
-    let bridged_token_asset_name = builtin.un_b_data(
-      utils.safe_list_at(config, 1),
-    )
-    let completed_peg_ins_merkle_tree_policy_id = builtin.un_b_data(
-      utils.safe_list_at(config, 6),
-    )
-    let completed_peg_ins_merkle_tree_asset_name = builtin.un_b_data(
-      utils.safe_list_at(config, 7),
-    )
-    // config[12] = the peg-in CLOSE verifier script hash (the slot vacated by the retired
-    // legit_TM_verifier). The Cancel path delegates the F4/F5 close checks to it (see below). It is
-    // a config-NFT field (runtime), so the close verifier can be deployed + wired via a config update
-    // with no peg_in recompile / PIR re-mint. Dummy until the F1–F6 failure-mode milestone ships.
-    let peg_in_close_verifier_script_hash = builtin.un_b_data(
-      utils.safe_list_at(config, 12),
-    )
+    let bridged_token_policy_id =
+      config.get_bridged_token_policy_id(config_fields)
+    let bridged_token_asset_name =
+      config.get_bridged_token_asset_name(config_fields)
+    let completed_peg_ins_merkle_tree_policy_id =
+      config.get_completed_peg_ins_merkle_tree_policy_id(config_fields)
+    let completed_peg_ins_merkle_tree_asset_name =
+      config.get_completed_peg_ins_merkle_tree_asset_name(config_fields)
+    // The peg-in CLOSE verifier (slot vacated by the retired legit_TM_verifier). The Cancel path
+    // delegates the F4/F5 close checks to it (see below). It is a config-NFT field (runtime), so
+    // the close verifier can be deployed + wired via a config update with no peg_in recompile /
+    // PIR re-mint. Dummy until the F1–F6 failure-mode milestone ships.
+    let peg_in_close_verifier_script_hash =
+      config.get_peg_in_close_verifier_script_hash(config_fields)
     expect [peg_in_input] = list.filter(
       self.inputs,
       fn(input) { input.output.address.payment_credential == credential },
@@ -174,13 +170,13 @@ validator peg_in_validator(
     when redeemer.action_type is {
       Cancel { burnt_peg_in_nft_asset_name } -> {
         expect Script(peg_in_policy_id) = credential
-        //PegIn close authorized by the peg-in CLOSE verifier (config[12]) — the stake-validator
+        //PegIn close authorized by the peg-in CLOSE verifier (peg_in_close_verifier_script_hash) – the stake-validator
         //delegation pattern. The separate close verifier owns the spec's F4/F5 logic (F4: the
         //depositor reclaimed the BTC on the Bitcoin side via the Taproot CSV refund leaf, proven by
         //a refund-script witness; F5: this PIR is a duplicate, proven by a completed-peg-ins trie
         //inclusion proof). peg_in.ak only requires the verifier's withdrawal is present and burns the
         //PIR NFT; it stays agnostic to the verifier's redeemer. Until that verifier is deployed and
-        //wired into config[12] (F1–F6 milestone), config[12] is a dummy hash with no reward account,
+        //wired into the config (F1–F6 milestone), the field holds a dummy hash with no reward account,
         //so this Cancel path is cleanly unsatisfiable.
         let close_authorized = list.any(
           self.withdrawals,

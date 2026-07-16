@@ -14,3 +14,10 @@ AGENTS.md
 node_modules/
 mermaid-filter.err
 documentation/.git-info.tex
+
+# IDE / editor / build-tool state
+.vscode/
+.metals/
+.scala-build/
+.bsp/
+.idea/

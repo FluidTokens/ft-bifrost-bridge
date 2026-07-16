@@ -4,6 +4,7 @@ use aiken/merkle_patricia_forestry as mpf
 use aiken_design_patterns/stake_validator
 use bifrost/authorizer.{authorize_action, create_auth}
 use bifrost/bitcoin
+use bifrost/types/config
 use bifrost/types/general.{ChainState}
 use bifrost/types/peg_out.{
   Cancel, CompletePegOut, InputCancel, InputCompletePegOut, PegOutDatum,
@@ -25,7 +26,7 @@ validator peg_out_validator(
     credential: Credential,
     self: Transaction,
   ) {
-    let config =
+    let config_fields =
       utils.get_config_as_data_list(
         utils.safe_list_at(
           self.reference_inputs,
@@ -35,21 +36,21 @@ validator peg_out_validator(
         config_nft_asset_name,
       )
     let bridged_token_policy_id =
-      builtin.un_b_data(utils.safe_list_at(config, 0))
+      config.get_bridged_token_policy_id(config_fields)
     let bridged_token_asset_name =
-      builtin.un_b_data(utils.safe_list_at(config, 1))
-    expect _block_header_merkle_tree_policy_id =
-      builtin.un_b_data(utils.safe_list_at(config, 4))
-    expect _block_header_merkle_tree_asset_name =
-      builtin.un_b_data(utils.safe_list_at(config, 5))
+      config.get_bridged_token_asset_name(config_fields)
     let completed_peg_outs_merkle_tree_policy_id =
-      builtin.un_b_data(utils.safe_list_at(config, 8))
+      config.get_completed_peg_outs_merkle_tree_policy_id(config_fields)
     let completed_peg_outs_merkle_tree_asset_name =
-      builtin.un_b_data(utils.safe_list_at(config, 9))
+      config.get_completed_peg_outs_merkle_tree_asset_name(config_fields)
     let legit_treasury_movement_and_peg_out_produced_verifier_script_hash =
-      builtin.un_b_data(utils.safe_list_at(config, 13))
+      config.get_legit_treasury_movement_and_peg_out_produced_verifier_script_hash(
+        config_fields,
+      )
     let legit_treasury_movement_and_peg_out_not_produced_verifier_script_hash =
-      builtin.un_b_data(utils.safe_list_at(config, 14))
+      config.get_legit_treasury_movement_and_peg_out_not_produced_verifier_script_hash(
+        config_fields,
+      )
     expect [peg_out_input] =
       list.filter(
         self.inputs,

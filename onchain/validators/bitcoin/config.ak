@@ -1,10 +1,9 @@
+use aiken/builtin
 use aiken/collection/list
-use aiken/primitive/bytearray
 use bifrost/authorizer
 use bifrost/types/config.{ConfigDatum, ConfigSpendRedeemer, Retire, Update} as configType
 use bifrost/types/general.{
-  AuthorizationMethod, CardanoMintScript, CardanoSignature, CardanoSpendScript,
-  CardanoTokenOwnership, CardanoWithdrawScript,
+  CardanoSignature, CardanoSpendScript, CardanoWithdrawScript,
 }
 use bifrost/utils.{quantity_of_policy_id}
 use cardano/address.{Address, Inline, Script}
@@ -12,35 +11,6 @@ use cardano/assets.{PolicyId, quantity_of, without_lovelace}
 use cardano/transaction.{
   InlineDatum, Input, NoDatum, Output, OutputReference, Redeemer, Transaction,
   find_input, placeholder,
-}
-
-//Guards against foot-gun update_auth values that would break the authority
-//model: a self-referential hash self-authorizes (spending the config UTxO
-//itself satisfies the spend-script check; the Retire burn itself satisfies
-//the mint-script check), and a hash of the wrong length can never match
-//anything, permanently freezing the config as if renounced.
-fn update_auth_is_safe(
-  update_auth: Option<AuthorizationMethod>,
-  own_hash: ByteArray,
-) -> Bool {
-  when update_auth is {
-    //Explicit renounce is legitimate
-    None -> True
-    Some(auth) -> {
-      let hash =
-        when auth is {
-          CardanoSignature { hash } -> hash
-          CardanoSpendScript { hash } -> hash
-          CardanoWithdrawScript { hash } -> hash
-          CardanoMintScript { hash } -> hash
-          CardanoTokenOwnership { policy_id, .. } -> policy_id
-        }
-      and {
-        bytearray.length(hash) == 28,
-        hash != own_hash,
-      }
-    }
-  }
 }
 
 //Contains all SC params
@@ -58,10 +28,9 @@ validator config(tx0: ByteArray, index0: Int, config_asset_name: ByteArray) {
       //Genesis datum must parse, so the spend handler's assumptions hold
       //from the start
       expect InlineDatum(datum_raw) = output_parameters.datum
-      expect genesis_datum: ConfigDatum = datum_raw
+      expect _genesis_datum: ConfigDatum = datum_raw
 
       and {
-        update_auth_is_safe(genesis_datum.update_auth, policy_id),
         //First output goes to this address
         output_parameters.address.payment_credential == contract_credential,
         //Only 1 token of same policy
@@ -84,14 +53,18 @@ validator config(tx0: ByteArray, index0: Int, config_asset_name: ByteArray) {
   }
 
   spend(
-    datum_opt: Option<ConfigDatum>,
+    //Raw on purpose: a typed ConfigDatum here would make the config UTxO
+    //unspendable after any datum shape evolution (see the getters section in
+    //bifrost/types/config)
+    datum_opt: Option<Data>,
     redeemer: ConfigSpendRedeemer,
     own_ref: OutputReference,
     self: Transaction,
   ) {
-    expect Some(datum) = datum_opt
+    expect Some(datum_raw) = datum_opt
+    let old_fields = builtin.unconstr_fields(datum_raw)
     //None = permanently frozen: unspendable, the pre-governance behavior
-    expect Some(update_auth) = datum.update_auth
+    expect Some(update_auth) = configType.get_update_auth(old_fields)
     let authorized =
       authorizer.authorize_action(
         authorizer.create_auth(
@@ -117,8 +90,14 @@ validator config(tx0: ByteArray, index0: Int, config_asset_name: ByteArray) {
               output.address.payment_credential == Script(own_hash)
             },
           )
-        expect InlineDatum(new_datum_raw) = config_output.datum
-        expect new_datum: ConfigDatum = new_datum_raw
+        //ANY inline datum is allowed: the authority is the root of trust and
+        //datum shape evolution is an explicit goal (readers use positional
+        //getters, see bifrost/types/config). The authority is responsible
+        //for writing a datum that (a) current readers can parse and (b)
+        //keeps field 18 parseable as Option<AuthorizationMethod> - anything
+        //else halts the bridge or freezes the config until/unless a later
+        //Update can fix it.
+        expect InlineDatum(_new_datum_raw) = config_output.datum
         and {
           authorized,
           //Full address (stake credential included) must not drift
@@ -132,11 +111,6 @@ validator config(tx0: ByteArray, index0: Int, config_asset_name: ByteArray) {
           //The config NFT continues, and is the only own-policy token
           quantity_of(config_output.value, own_hash, config_asset_name) == 1,
           quantity_of_policy_id(config_output.value, own_hash) == 1,
-          //The bridged-token identity can never be swapped out from under
-          //holders, even by the authority
-          new_datum.bridged_token_policy_id == datum.bridged_token_policy_id,
-          new_datum.bridged_token_asset_name == datum.bridged_token_asset_name,
-          update_auth_is_safe(new_datum.update_auth, own_hash),
         }
       }
       Retire ->
@@ -219,6 +193,37 @@ fn t_own_input(datum: ConfigDatum) -> Input {
   Input { output_reference: t_own_ref, output: t_config_output(datum) }
 }
 
+//Continuing config output with an arbitrary raw datum (shape-evolution tests)
+fn t_config_output_raw(datum_data: Data) -> Output {
+  Output {
+    address: Address {
+      payment_credential: Script(t_own_hash),
+      stake_credential: None,
+    },
+    value: assets.from_lovelace(2_000_000)
+      |> assets.add(t_own_hash, t_asset_name, 1),
+    datum: InlineDatum(datum_data),
+    reference_script: None,
+  }
+}
+
+fn t_spend(
+  old_datum: ConfigDatum,
+  redeemer: ConfigSpendRedeemer,
+  tx: Transaction,
+) {
+  let datum_data: Data = old_datum
+  config.spend(
+    t_tx0,
+    t_index0,
+    t_asset_name,
+    Some(datum_data),
+    redeemer,
+    t_own_ref,
+    tx,
+  )
+}
+
 fn t_update_tx(old_datum: ConfigDatum, config_outputs: List<Output>) {
   Transaction {
     ..placeholder,
@@ -232,15 +237,7 @@ test update_happy_path_signature_auth() {
   let old_datum = t_datum(Some(CardanoSignature { hash: t_dev_pkh }))
   let new_datum = ConfigDatum { ..old_datum, min_stake: 42 }
   let tx = t_update_tx(old_datum, [t_config_output(new_datum)])
-  config.spend(
-    t_tx0,
-    t_index0,
-    t_asset_name,
-    Some(old_datum),
-    Update,
-    t_own_ref,
-    tx,
-  )
+  t_spend(old_datum, Update, tx)
 }
 
 test update_happy_path_withdraw_script_auth() {
@@ -254,15 +251,7 @@ test update_happy_path_withdraw_script_auth() {
       outputs: [t_config_output(new_datum)],
       withdrawals: [Pair(Script(gov_hash), 0)],
     }
-  config.spend(
-    t_tx0,
-    t_index0,
-    t_asset_name,
-    Some(old_datum),
-    Update,
-    t_own_ref,
-    tx,
-  )
+  t_spend(old_datum, Update, tx)
 }
 
 test update_rotates_update_auth() {
@@ -275,30 +264,14 @@ test update_rotates_update_auth() {
     )
   let new_datum = ConfigDatum { ..old_datum, update_auth: new_auth }
   let tx = t_update_tx(old_datum, [t_config_output(new_datum)])
-  config.spend(
-    t_tx0,
-    t_index0,
-    t_asset_name,
-    Some(old_datum),
-    Update,
-    t_own_ref,
-    tx,
-  )
+  t_spend(old_datum, Update, tx)
 }
 
 test update_renounces_to_none() {
   let old_datum = t_datum(Some(CardanoSignature { hash: t_dev_pkh }))
   let new_datum = ConfigDatum { ..old_datum, update_auth: None }
   let tx = t_update_tx(old_datum, [t_config_output(new_datum)])
-  config.spend(
-    t_tx0,
-    t_index0,
-    t_asset_name,
-    Some(old_datum),
-    Update,
-    t_own_ref,
-    tx,
-  )
+  t_spend(old_datum, Update, tx)
 }
 
 test update_rejects_missing_signature() fail {
@@ -311,30 +284,14 @@ test update_rejects_missing_signature() fail {
       outputs: [t_config_output(new_datum)],
       extra_signatories: [],
     }
-  config.spend(
-    t_tx0,
-    t_index0,
-    t_asset_name,
-    Some(old_datum),
-    Update,
-    t_own_ref,
-    tx,
-  )
+  t_spend(old_datum, Update, tx)
 }
 
 test update_rejects_frozen_config() fail {
   let old_datum = t_datum(None)
   let new_datum = ConfigDatum { ..old_datum, min_stake: 42 }
   let tx = t_update_tx(old_datum, [t_config_output(new_datum)])
-  config.spend(
-    t_tx0,
-    t_index0,
-    t_asset_name,
-    Some(old_datum),
-    Update,
-    t_own_ref,
-    tx,
-  )
+  t_spend(old_datum, Update, tx)
 }
 
 test update_rejects_nft_not_returned() fail {
@@ -352,15 +309,7 @@ test update_rejects_nft_not_returned() fail {
       },
     }
   let tx = t_update_tx(old_datum, [stolen_output])
-  config.spend(
-    t_tx0,
-    t_index0,
-    t_asset_name,
-    Some(old_datum),
-    Update,
-    t_own_ref,
-    tx,
-  )
+  t_spend(old_datum, Update, tx)
 }
 
 test update_rejects_nft_quantity_not_one() fail {
@@ -373,49 +322,37 @@ test update_rejects_nft_quantity_not_one() fail {
         |> assets.add(t_own_hash, t_asset_name, 2),
     }
   let tx = t_update_tx(old_datum, [doubled_nft_output])
-  config.spend(
-    t_tx0,
-    t_index0,
-    t_asset_name,
-    Some(old_datum),
-    Update,
-    t_own_ref,
-    tx,
-  )
+  t_spend(old_datum, Update, tx)
 }
 
-test update_rejects_changed_bridged_token_policy_id() fail {
+//The authority is the root of trust: it may change ANY datum content,
+//including the bridged-token identity
+test update_allows_changing_bridged_token_identity() {
   let old_datum = t_datum(Some(CardanoSignature { hash: t_dev_pkh }))
   let new_datum =
     ConfigDatum {
       ..old_datum,
       bridged_token_policy_id: #"ff222222222222222222222222222222222222222222222222222222",
+      bridged_token_asset_name: "fBTC2",
     }
   let tx = t_update_tx(old_datum, [t_config_output(new_datum)])
-  config.spend(
-    t_tx0,
-    t_index0,
-    t_asset_name,
-    Some(old_datum),
-    Update,
-    t_own_ref,
-    tx,
-  )
+  t_spend(old_datum, Update, tx)
 }
 
-test update_rejects_changed_bridged_token_asset_name() fail {
+//Shape evolution: appending a 20th field to the datum is a legal update
+test update_allows_appending_datum_fields() {
   let old_datum = t_datum(Some(CardanoSignature { hash: t_dev_pkh }))
-  let new_datum = ConfigDatum { ..old_datum, bridged_token_asset_name: "evil" }
-  let tx = t_update_tx(old_datum, [t_config_output(new_datum)])
-  config.spend(
-    t_tx0,
-    t_index0,
-    t_asset_name,
-    Some(old_datum),
-    Update,
-    t_own_ref,
-    tx,
-  )
+  let old_datum_data: Data = old_datum
+  let extended_datum =
+    builtin.constr_data(
+      0,
+      list.concat(
+        builtin.unconstr_fields(old_datum_data),
+        [builtin.i_data(99)],
+      ),
+    )
+  let tx = t_update_tx(old_datum, [t_config_output_raw(extended_datum)])
+  t_spend(old_datum, Update, tx)
 }
 
 test update_rejects_changed_stake_credential() fail {
@@ -434,15 +371,7 @@ test update_rejects_changed_stake_credential() fail {
       },
     }
   let tx = t_update_tx(old_datum, [drifted_output])
-  config.spend(
-    t_tx0,
-    t_index0,
-    t_asset_name,
-    Some(old_datum),
-    Update,
-    t_own_ref,
-    tx,
-  )
+  t_spend(old_datum, Update, tx)
 }
 
 test update_rejects_added_foreign_tokens() fail {
@@ -460,15 +389,7 @@ test update_rejects_added_foreign_tokens() fail {
           ),
     }
   let tx = t_update_tx(old_datum, [stuffed_output])
-  config.spend(
-    t_tx0,
-    t_index0,
-    t_asset_name,
-    Some(old_datum),
-    Update,
-    t_own_ref,
-    tx,
-  )
+  t_spend(old_datum, Update, tx)
 }
 
 test update_rejects_smuggled_own_policy_token() fail {
@@ -482,15 +403,7 @@ test update_rejects_smuggled_own_policy_token() fail {
         |> assets.add(t_own_hash, "fake-config-marker", 1),
     }
   let tx = t_update_tx(old_datum, [smuggled_output])
-  config.spend(
-    t_tx0,
-    t_index0,
-    t_asset_name,
-    Some(old_datum),
-    Update,
-    t_own_ref,
-    tx,
-  )
+  t_spend(old_datum, Update, tx)
 }
 
 test update_rejects_two_config_outputs() fail {
@@ -502,71 +415,32 @@ test update_rejects_two_config_outputs() fail {
       value: assets.from_lovelace(2_000_000),
     }
   let tx = t_update_tx(old_datum, [t_config_output(new_datum), decoy_output])
-  config.spend(
-    t_tx0,
-    t_index0,
-    t_asset_name,
-    Some(old_datum),
-    Update,
-    t_own_ref,
-    tx,
-  )
+  t_spend(old_datum, Update, tx)
 }
 
-test update_rejects_self_referential_update_auth() fail {
+//Rotating update_auth is unrestricted; the authority owns the consequences
+//(a self-referential CardanoSpendScript(own_hash) makes the config
+//permissionlessly spendable, a garbage hash freezes it)
+test update_allows_any_update_auth_rotation() {
   let old_datum = t_datum(Some(CardanoSignature { hash: t_dev_pkh }))
-  //CardanoSpendScript(own hash) would self-authorize: any Update tx spends
-  //the config UTxO, satisfying the spend-script presence check
   let new_datum =
     ConfigDatum {
       ..old_datum,
       update_auth: Some(CardanoSpendScript { hash: t_own_hash }),
     }
   let tx = t_update_tx(old_datum, [t_config_output(new_datum)])
-  config.spend(
-    t_tx0,
-    t_index0,
-    t_asset_name,
-    Some(old_datum),
-    Update,
-    t_own_ref,
-    tx,
-  )
+  t_spend(old_datum, Update, tx)
 }
 
-test update_rejects_truncated_update_auth_hash() fail {
+//Any inline datum is accepted, even one no current reader can parse. The
+//authority is responsible for writing a datum whose field 18 still parses
+//as Option<AuthorizationMethod>, otherwise the config freezes.
+test update_allows_arbitrary_datum_shape() {
   let old_datum = t_datum(Some(CardanoSignature { hash: t_dev_pkh }))
-  let new_datum =
-    ConfigDatum {
-      ..old_datum,
-      update_auth: Some(CardanoSignature { hash: #"dddd" }),
-    }
-  let tx = t_update_tx(old_datum, [t_config_output(new_datum)])
-  config.spend(
-    t_tx0,
-    t_index0,
-    t_asset_name,
-    Some(old_datum),
-    Update,
-    t_own_ref,
-    tx,
-  )
-}
-
-test update_rejects_malformed_new_datum() fail {
-  let old_datum = t_datum(Some(CardanoSignature { hash: t_dev_pkh }))
-  let malformed_output =
+  let arbitrary_output =
     Output { ..t_config_output(old_datum), datum: InlineDatum(42) }
-  let tx = t_update_tx(old_datum, [malformed_output])
-  config.spend(
-    t_tx0,
-    t_index0,
-    t_asset_name,
-    Some(old_datum),
-    Update,
-    t_own_ref,
-    tx,
-  )
+  let tx = t_update_tx(old_datum, [arbitrary_output])
+  t_spend(old_datum, Update, tx)
 }
 
 fn t_retire_tx(old_datum: ConfigDatum, mint: assets.Value) {
@@ -582,15 +456,7 @@ fn t_retire_tx(old_datum: ConfigDatum, mint: assets.Value) {
 test retire_happy_path() {
   let old_datum = t_datum(Some(CardanoSignature { hash: t_dev_pkh }))
   let tx = t_retire_tx(old_datum, assets.from_asset(t_own_hash, t_asset_name, -1))
-  config.spend(
-    t_tx0,
-    t_index0,
-    t_asset_name,
-    Some(old_datum),
-    Retire,
-    t_own_ref,
-    tx,
-  )
+  t_spend(old_datum, Retire, tx)
 }
 
 test retire_rejects_unauthorized() fail {
@@ -600,43 +466,19 @@ test retire_rejects_unauthorized() fail {
       ..t_retire_tx(old_datum, assets.from_asset(t_own_hash, t_asset_name, -1)),
       extra_signatories: [],
     }
-  config.spend(
-    t_tx0,
-    t_index0,
-    t_asset_name,
-    Some(old_datum),
-    Retire,
-    t_own_ref,
-    tx,
-  )
+  t_spend(old_datum, Retire, tx)
 }
 
 test retire_rejects_wrong_burn_quantity() fail {
   let old_datum = t_datum(Some(CardanoSignature { hash: t_dev_pkh }))
   let tx = t_retire_tx(old_datum, assets.from_asset(t_own_hash, t_asset_name, -2))
-  config.spend(
-    t_tx0,
-    t_index0,
-    t_asset_name,
-    Some(old_datum),
-    Retire,
-    t_own_ref,
-    tx,
-  )
+  t_spend(old_datum, Retire, tx)
 }
 
 test retire_rejects_wrong_asset_name_burn() fail {
   let old_datum = t_datum(Some(CardanoSignature { hash: t_dev_pkh }))
   let tx = t_retire_tx(old_datum, assets.from_asset(t_own_hash, "other", -1))
-  config.spend(
-    t_tx0,
-    t_index0,
-    t_asset_name,
-    Some(old_datum),
-    Retire,
-    t_own_ref,
-    tx,
-  )
+  t_spend(old_datum, Retire, tx)
 }
 
 fn t_one_time_input() -> Input {
@@ -694,22 +536,6 @@ test mint_burn_accepts_minus_one() {
       inputs: [t_own_input(t_datum(Some(CardanoSignature { hash: t_dev_pkh })))],
       mint: assets.from_asset(t_own_hash, t_asset_name, -1),
       extra_signatories: [t_dev_pkh],
-    }
-  config.mint(t_tx0, t_index0, t_asset_name, Void, t_own_hash, tx)
-}
-
-test mint_bootstrap_rejects_self_referential_update_auth() fail {
-  let bad_genesis_datum =
-    ConfigDatum {
-      ..t_datum(None),
-      update_auth: Some(CardanoMintScript { hash: t_own_hash }),
-    }
-  let tx =
-    Transaction {
-      ..placeholder,
-      inputs: [t_one_time_input()],
-      outputs: [t_config_output(bad_genesis_datum)],
-      mint: assets.from_asset(t_own_hash, t_asset_name, 1),
     }
   config.mint(t_tx0, t_index0, t_asset_name, Void, t_own_hash, tx)
 }

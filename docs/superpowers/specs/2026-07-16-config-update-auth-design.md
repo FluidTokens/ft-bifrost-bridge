@@ -156,24 +156,32 @@ Two paths, disambiguated by mint sign:
   must land **before** the testnet4/preprod deployment whose policyId is meant
   to be kept. It cannot be retrofitted onto an existing deployment.
 
-## Implementation notes (post-review hardening)
+## Implementation notes (deviations from this design)
 
-The implementation adds four constraints beyond this design, all driven by
-security review findings:
+Review-driven hardening:
 
 1. The continuing Update output must keep the exact full address of the spent
    config UTxO (stake credential included), not just the payment credential.
 2. The continuing Update output must keep the exact non-ADA value (the config
    UTxO is a reference input of every bridge tx; junk tokens would bloat all
    of them).
-3. A `Some` `update_auth` (genesis or rotated) must carry a 28-byte hash that
-   differs from the config script hash: `CardanoSpendScript(own_hash)` would
-   self-authorize any spend, `CardanoMintScript(own_hash)` would
-   self-authorize Retire, and a wrong-length hash is an accidental permanent
-   freeze.
-4. Known follow-up: the off-chain `ConfigDatum` mirror in the binocular
-   submodule (`ConfigTypes.scala`, `DeployBridgeCommand.scala`) still builds
-   the 18-field datum and must append `update_auth` before the next deploy.
+
+Later relaxation (datum shape evolution): the Update path does NOT validate
+the new datum beyond requiring an inline datum. The pinned
+`bridged_token_policy_id`/`bridged_token_asset_name` rule from this design
+was dropped; the authority may write any datum, including a different shape
+(readers access the config through positional getters in
+`lib/bifrost/types/config.ak`, so fields can be appended without redeploying
+readers). No `update_auth` sanity checks are performed anywhere: the
+authority and the genesis deployer own the consequences (a garbage or
+unparseable `update_auth` freezes the config, a self-referential
+`CardanoSpendScript`/`CardanoMintScript` of the config's own hash makes it
+permissionlessly spendable/retirable, halted readers, swapped bridged-token
+identity). Genesis still requires the datum to parse as `ConfigDatum`.
+
+Known follow-up: the off-chain `ConfigDatum` mirror in the binocular
+submodule (`ConfigTypes.scala`, `DeployBridgeCommand.scala`) still builds
+the 18-field datum and must append `update_auth` before the next deploy.
 
 ## Security considerations
 

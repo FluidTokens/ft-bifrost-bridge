@@ -104,17 +104,6 @@ pub fn get_oracle_state(
   parsed_oracle_state
 }
 
-pub fn get_treasury_info_as_data_list(
-  treasury_info_ref_input: Input,
-  treasury_info_nft_policy_id: ByteArray,
-) {
-  get_config_as_data_list(
-    treasury_info_ref_input,
-    treasury_info_nft_policy_id,
-    constants.treasury_info_nft_asset_name,
-  )
-}
-
 /// Returns `True` if `predicate(index, element)` holds for every element of the list.
 /// Returns `False` as soon as any predicate fails.
 pub fn indexed_all(self: List<a>, predicate: fn(Int, a) -> Bool) -> Bool {
