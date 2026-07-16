@@ -612,7 +612,7 @@ Merkle tree (single leaf):
   Y_federation
 ```
 
-Treasury output key: `Q_treasury = Y_51 + tagged_hash("TapTweak", Y_51 || merkle_root) · G`
+Treasury output key: `Q_treasury = lift_x(Y_51) + tagged_hash("TapTweak", Y_51 || merkle_root) · G`
 
 This address changes each epoch after DKG, since $Y_{51}$ is regenerated.
 
@@ -649,11 +649,12 @@ Merkle tree (2 leaves):
 
 The peg-in output key $Q$ is:
 
-`Q = Y_51 + tagged_hash("TapTweak", Y_51 || merkle_root) · G`
+`Q = lift_x(Y_51) + tagged_hash("TapTweak", Y_51 || merkle_root) · G`
 
 Where:
 
 - $Y_{51}$ is the internal key (51% FROST group x-only public key, from `treasury.ak`).
+- `lift_x(·)` is the BIP340 lift, yielding the **even-Y** point with the given x-coordinate. See *Parity normalization* below — it is consensus-critical on the signing side.
 - The script tree contains two leaves (federation sweep and depositor refund), so merkle_root is the hash of both leaf hashes.
 - `leaf_hash = tagged_hash("TapLeaf", 0xc0 || compact_size(script_len) || script)`
 - `tagged_hash(tag, msg) = SHA256(SHA256(tag) || SHA256(tag) || msg)`
@@ -663,13 +664,28 @@ The resulting Bitcoin address is `bc1p<bech32m(Q)>`.
 
 **To reconstruct $Q$**, all components are available: $Y_{51}$ and $Y_{federation}$ from `treasury.ak`, and the depositor's refund key `D` from the beacon (propagated via the PegInRequest datum). Both scripts are fully determined by these parameters — no secret information is needed.
 
+#### Parity normalization (BIP340/341)
+
+<!-- G38: parity handling was unspecified. Reconstructing an x-only internal key is lift_x, which
+     is even-Y by definition, so both the group secret and the tweaked secret may need negating.
+     A literal reading of the tweak formulas without these rules is invalid for ~75% of keys. -->
+
+$Y_{51}$ and $Y_{federation}$ are stored **x-only** (32 bytes — see *Treasury state UTxO*), so every reconstruction of the internal key is `lift_x(Y_51)`, which is an **even-Y** point by definition. Two normalizations follow. Both are **consensus-critical**: every signer must apply them identically, or the FROST shares do not aggregate to a valid signature.
+
+1. **Internal-key parity.** Let `P = lift_x(Y_51)`. The DKG group point `Y` satisfies `x(Y) = Y_51`, but its Y-coordinate may be odd — in which case `Y = -P`. The group secret is then normalized `y_51' = n - y_51`, so that `y_51' · G = P`; otherwise `y_51' = y_51`. Applied to a FROST key package, this is a negation of the shares.
+2. **Output-key parity.** With `t = tagged_hash("TapTweak", Y_51 || merkle_root)` and `d = y_51' + t (mod n)`, the output key is `Q = P + t·G`. BIP340 signing under `d` requires `d` negated when `y(Q)` is odd — BIP340 *Default Signing* [3], applied to the aggregate.
+
+`n` is the secp256k1 group order. Both rules apply identically to $Q_{treasury}$, to every peg-in input, and to the federation key path where used. They are what make the tweak formulas above and the signing rule below well-defined for *any* DKG output rather than only for even-Y group keys.
+
+> **Implementation note** (non-normative). A BIP341-aware FROST implementation performs both normalizations internally — e.g. `frost-secp256k1-tr` — in which case an implementer gets this for free, and only code re-deriving the *pre-tweak* point must track the parity bit. An implementation built on a plain (non-taproot) FROST, or a hand-rolled aggregator, must apply them explicitly. Omitting either yields signatures that fail verification for ~75% of group keys; and because *Deterministic TM construction* (model A′) requires byte-identical reconstruction, a signer that normalizes differently does not fail loudly — it silently fails to converge with the rest of the roster.
+
 #### Spending paths and Treasury Movement variants
 
 Both quorum levels construct **full** Treasury Movement transactions (sweeping peg-in UTxOs, fulfilling peg-outs, and moving the treasury). The signing cascade tries the SPO threshold first, then falls back to the federation:
 
 **Key path on Treasury, key path on peg-in inputs (51% quorum — main line):**
 
-SPOs collect all confirmed PegInRequest and PegOut UTxOs from Cardano and construct a full Treasury Movement transaction. They spend both the treasury UTxO and the peg-in UTxOs via key path ($Y_{51}$) — a single 64-byte FROST Schnorr signature per input. To sign peg-in inputs, SPOs compute the tweaked private key: `d = y_51 + tagged_hash("TapTweak", Y_51 || merkle_root)`, where $y_{51}$ is the FROST group private key (held as shares). Computing the merkle_root requires the depositor's pubkey hash (for the refund leaf) and $Y_{federation}$ (for the federation leaf) — both available from the PegInRequest datum and `treasury.ak`. This is the cheapest spending path.
+SPOs collect all confirmed PegInRequest and PegOut UTxOs from Cardano and construct a full Treasury Movement transaction. They spend both the treasury UTxO and the peg-in UTxOs via key path ($Y_{51}$) — a single 64-byte FROST Schnorr signature per input. To sign peg-in inputs, SPOs compute the tweaked private key: `d = y_51' + tagged_hash("TapTweak", Y_51 || merkle_root) (mod n)`, where $y_{51}$ is the FROST group private key (held as shares) and `y_51'` is $y_{51}$ **parity-normalized** — with `d` itself negated when the resulting output key has odd Y (see *Parity normalization* above; both rules are consensus-critical). Computing the merkle_root requires the depositor's pubkey hash (for the refund leaf) and $Y_{federation}$ (for the federation leaf) — both available from the PegInRequest datum and `treasury.ak`. This is the cheapest spending path.
 
 **Script path on Treasury, script path on peg-in inputs (federation — emergency):**
 
@@ -759,7 +775,7 @@ flowchart LR
 
 **Taproot address $Q$** (see **Taproot address construction** for the full derivation)
 
-`Q = Y_51 + tagged_hash("TapTweak", Y_51 || merkle_root) · G`
+`Q = lift_x(Y_51) + tagged_hash("TapTweak", Y_51 || merkle_root) · G`
 
 where the script tree has two leaves:
 
