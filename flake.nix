@@ -3,6 +3,9 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    # Tracked separately for aiken: 25.11 ships 1.1.19, which has a
+    # validation-skipping bug (aiken-lang/aiken#1325, fixed in 1.1.23)
+    nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
@@ -10,11 +13,13 @@
     { self
     , flake-utils
     , nixpkgs
+    , nixpkgs-unstable
     , ...
     } @ inputs:
     (flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
+        pkgs-unstable = import nixpkgs-unstable { inherit system; };
       in
       rec {
         devShell = pkgs.mkShell {
@@ -22,7 +27,7 @@
           buildInputs = [ pkgs.bashInteractive ];
           packages = with pkgs; [
             git
-            aiken
+            pkgs-unstable.aiken
             nixpkgs-fmt
             nodejs
             mermaid-cli
