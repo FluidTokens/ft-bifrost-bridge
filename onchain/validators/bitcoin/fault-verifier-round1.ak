@@ -1,4 +1,6 @@
 use bifrost/fault_verifier/common
+use bifrost/fault_verifier/dkg
+use bifrost/fault_verifier/round1/proof_verifier
 use bifrost/types/fault_verifier as fault_verifier_types
 use bifrost/utils
 use cardano/assets.{PolicyId}
@@ -24,15 +26,35 @@ validator fault_verifier_round1(registration_script_hash: PolicyId) {
           registration_script_hash,
           evidence.accused_pool_id,
         )
+        let evidence_hash = dkg.round1_evidence_hash(
+          evidence.canonical_round1_bytes,
+        )
 
         and {
+          dkg.is_round1_payload(
+            evidence.canonical_round1_bytes,
+            evidence.accused_pool_id,
+          ),
+          dkg.public_inputs_match(
+            evidence.halo2_public_inputs,
+            evidence_hash,
+            evidence.accused_pool_id,
+          ),
           common.verify_bifrost_signature(
             bifrost_id_pk,
             evidence.canonical_round1_bytes,
             evidence.payload_signature,
           ),
-          // Fail closed until the generated Round 1 Halo2 verifier is wired in.
-          False,
+          proof_verifier.verifier(
+            evidence.halo2_proof,
+            dkg.halo2_public_inputs(evidence_hash, evidence.accused_pool_id),
+          ),
+          common.mint_single_fault_token(
+            self,
+            policy_id,
+            evidence.accused_pool_id,
+            evidence_hash,
+          ),
         }
       }
       fault_verifier_types.BurnProof ->
