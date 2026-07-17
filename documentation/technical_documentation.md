@@ -390,6 +390,376 @@ Peg-out completion is authorized by the peg-out's `owner_auth` — but the withd
 
 ![Bifrost UTxO Flow](./images/utxo_flow.png)
 
+## Protocol UTxOs and script dependency graphs
+
+This section maps every protocol UTxO – the datum it carries and the token that
+authenticates it – and the two layers of dependency that tie the validators together:
+
+1. **Build-time parameterization**: values baked into a script before hashing – one-shot
+   outpoints and other scripts' hashes / policy ids. These fix the script's hash forever.
+2. **Run-time wiring**: what a validator reads (reference inputs), requires to be present
+   (withdraw-script delegation), or consumes (tokens, singleton spends) while validating.
+
+The diagrams reflect the **implemented** validators in `onchain/validators/bitcoin/`. Where the
+design-normative sections of this document extend them (the extended `ConfigDatum` layout in
+§Config UTxO, the Operational parameters UTxO in §Operational parameters UTxO), the delta is
+noted in prose but not drawn.
+
+### Singleton state UTxOs
+
+Four NFT-authenticated singletons hold the global protocol state. Each is identified by a
+one-shot NFT (see *Token inventory*); a reader trusts a datum only if the UTxO's value carries
+the expected NFT.
+
+```mermaid
+classDiagram
+    direction LR
+
+    class Config_UTxO {
+        <<config.ak · Config NFT>>
+        bridged_token_policy_id : PolicyId
+        bridged_token_asset_name : AssetName
+        completed_peg_ins_merkle_tree_policy_id : PolicyId
+        completed_peg_outs_merkle_tree_policy_id : PolicyId
+        peg_in_withdraw_script_hash : ScriptHash
+        peg_out_withdraw_script_hash : ScriptHash
+        peg_in_close_verifier_script_hash : ScriptHash
+        legit_tm_and_peg_out_produced_verifier_script_hash : ScriptHash
+        legit_tm_and_peg_out_not_produced_verifier_script_hash : ScriptHash
+        min_stake : Int
+        update_auth : Option~AuthorizationMethod~
+    }
+
+    class Treasury_State_UTxO {
+        <<treasury.ak · Treasury NFT>>
+        bifrost_identity_root : ByteArray
+        current_treasury_address : ByteArray
+        current_treasury_utxo_id : ByteArray
+        current_spos_frost_key : ByteArray
+    }
+
+    class CompletedPegIns_UTxO {
+        <<completed-peg-ins-merkle-tree.ak · CPI NFT>>
+        root : ByteArray
+    }
+
+    class CompletedPegOuts_UTxO {
+        <<completed-peg-outs-merkle-tree.ak · CPO NFT>>
+        root : ByteArray
+    }
+
+    Config_UTxO ..> CompletedPegIns_UTxO : field 2 names its policy
+    Config_UTxO ..> CompletedPegOuts_UTxO : field 3 names its policy
+```
+
+* **Config UTxO** – the instance wiring, read by nearly every other script as a reference
+  input. Created once by consuming the parameterized outpoint `(tx0, index0)`; spendable only
+  through the `update_auth` authority (Update / Retire, see §Config UTxO governance). The
+  design-normative extended field layout (genesis treasury outpoint, operational-params NFT
+  identity) is specified in §Config UTxO.
+* **Treasury state UTxO** – the SPO-side state: the current Bitcoin treasury address and
+  outpoint, the active FROST group key, and the MPF root of active Bifrost identity bindings
+  (`bifrost_id_pk → pool_id`). The Treasury NFT asset name is the hash of the outpoint consumed
+  at mint, making the mint one-shot. Spending it requires a registry mint/burn in the same
+  transaction, so it only ever changes together with a registration or deregistration.
+* **Completed-peg-ins UTxO** – MPF root of completed peg-ins, keyed by `peg_in_utxo_id`. Spent
+  and recreated on every fBTC mint (double-mint prevention).
+* **Completed-peg-outs UTxO** – MPF root of completed peg-outs, keyed by the PegOut UTxO
+  outpoint. Spent and recreated on every peg-out completion (double-burn prevention).
+
+The tunable **Operational parameters UTxO** (§Operational parameters UTxO) is a fifth,
+design-normative singleton: a one-shot params NFT whose datum no on-chain validator reads.
+
+### Linked-list UTxOs: SPO registry and ban list
+
+Both lists use the `aiken_design_patterns` on-chain ordered linked list: a root element plus
+one node per key, each element being a separate UTxO at the list's script address,
+authenticated by a token of the list's own policy whose asset name is the element's key.
+
+```mermaid
+classDiagram
+    direction LR
+
+    class Registry_Root {
+        <<spos-registry.ak · token reg-root>>
+        data : ListRootData
+        link : Link
+    }
+    class Registration_Node {
+        <<spos-registry.ak · token = pool_id>>
+        bifrost_id_pk : ByteArray
+        bifrost_url : ByteArray
+        link : Link
+    }
+    Registry_Root --> Registration_Node : link, ascending pool_id
+    Registration_Node --> Registration_Node : link
+
+    class BanList_Root {
+        <<spo-bans.ak · token ban-root>>
+        data : BanListRootData
+        link : Link
+    }
+    class Ban_Node {
+        <<spo-bans.ak · token = ban/pool_id>>
+        ban_counter : Int
+        ban_until_time : Int
+        permanent : Bool
+        evidence_hashes : List~ByteArray~
+        link : Link
+    }
+    BanList_Root --> Ban_Node : link, ascending pool_id
+    Ban_Node --> Ban_Node : link
+```
+
+* **Registry**: bootstrap mints the `reg-root` token by consuming the parameterized bootstrap
+  outpoint. `Register` inserts a node (Ed25519 cold-key signature + Bifrost-identity signature)
+  and, in the same transaction, spends the Treasury state UTxO to add the identity binding to
+  `bifrost_identity_root` (with an MPF absence proof). `Deregister` is the mirror image.
+  Spending any list element requires a mint/burn of the list's own policy, so all list surgery
+  is validated by the mint handler.
+* **Ban list**: bootstrap likewise consumes a parameterized outpoint. Minting a ban node or
+  spending any element delegates to the `ApplyBan` withdraw handler, which consumes a
+  `FaultProof` token from an allow-listed verifier policy and reads the accused pool's
+  registration node as a reference input.
+
+### Request and record UTxOs
+
+These UTxOs are created per event rather than as singletons.
+
+```mermaid
+classDiagram
+    direction LR
+
+    class PegInRequest_UTxO {
+        <<peg-in.ak · NFT = hash of consumed outpoint>>
+        owner_auth : AuthorizationMethod
+        source_chain_peg_in_raw_tx : ByteArray
+        source_chain_peg_in_raw_tx_index : Int
+        peg_in_utxo_id : ByteArray
+        source_chain_treasury_utxo_id : ByteArray
+        peg_in_amount : Int
+        user_source_chain_pub_key : ByteArray
+    }
+
+    class PegOutRequest_UTxO {
+        <<peg-out.ak · no token, holds locked fBTC>>
+        owner_auth : AuthorizationMethod
+        source_chain_destination_address : ByteArray
+        source_chain_treasury_utxo_id : ByteArray
+    }
+
+    class TM_Record_UTxO {
+        <<binocular TreasuryMovementValidator · TM NFT>>
+    }
+    class Unconfirmed {
+        signed_btc_tx : ByteArray
+    }
+    class Confirmed {
+        btc_txid : ByteArray
+        swept_peg_in_utxo_ids : List~ByteArray~
+        fulfilled_peg_outs : List~PegOutEntry~
+    }
+    class PegOutEntry {
+        script_pub_key : ByteArray
+        amount : Int
+    }
+    TM_Record_UTxO <|-- Unconfirmed : datum variant
+    TM_Record_UTxO <|-- Confirmed : datum variant
+    Confirmed *-- PegOutEntry
+
+    class FaultProof_UTxO {
+        <<fault-verifier policy · token = hash of pool_id and evidence>>
+        kind : FaultKind
+        accused_pool_id : ByteArray
+        namespace_hash : ByteArray
+        evidence_hash : ByteArray
+    }
+
+    Confirmed ..> PegInRequest_UTxO : swept_peg_in_utxo_ids contains peg_in_utxo_id
+    Confirmed ..> PegOutRequest_UTxO : fulfilled_peg_outs pays destination
+```
+
+* **PegInRequest** – created permissionlessly with a Binocular inclusion proof of the Bitcoin
+  deposit; the mint consumes an arbitrary input whose outpoint hash becomes the NFT asset name
+  (uniqueness). Spent on completion (fBTC mint) or closed via `owner_auth`.
+* **PegOut request** – created without any script run: the withdrawer pays fBTC to the
+  `peg-out.ak` address with the datum above. Spent on completion (fBTC burn) or cancel.
+* **TM record** – the Treasury Movement lifecycle UTxO. The canonical validator is binocular's
+  Scalus `TreasuryMovementValidator`; its script hash is the TM NFT policy. Posted as
+  `Unconfirmed` (raw signed Bitcoin transaction), rewritten to `Confirmed` by binocular's
+  `confirm-tmtx` once oracle-proven; peg-in completion then references the `Confirmed` record
+  instead of re-proving the TM inline. (`treasury-movement.ak` in this repository is a
+  permissive placeholder.)
+* **FaultProof** – evidence-bound fault record; the token is consumed when the ban list applies
+  the ban.
+
+### Build-time parameterization and one-shot UTxOs
+
+Every arrow below is a compile-time parameter: the source value is baked into the target script
+before hashing. Stadium-shaped nodes are one-shot UTxOs – outpoints that must be consumed by
+the bootstrap mint, making each NFT unmintable a second time.
+
+```mermaid
+flowchart TD
+    subgraph oneshot["One-shot outpoints"]
+        cfg0([config outpoint tx0 index0])
+        cpi0([CPI outpoint])
+        cpo0([CPO outpoint])
+        reg0([registry bootstrap outpoint])
+        ban0([ban-list bootstrap outpoint])
+    end
+
+    subgraph binocular["External: Binocular"]
+        oracle[[oracle policy id]]
+        tmv[[TreasuryMovementValidator hash = TM NFT policy]]
+    end
+
+    config["config.ak<br/>(Config NFT policy)"]
+    fbtc["bridged-token.ak<br/>(fBTC policy)"]
+    pegin["peg-in.ak"]
+    pegout["peg-out.ak"]
+    cpi["completed-peg-ins-merkle-tree.ak"]
+    cpo["completed-peg-outs-merkle-tree.ak"]
+    gs["general-spend.ak"]
+    reg["spos-registry.ak<br/>(registry policy)"]
+    tinfo["treasury.ak<br/>(Treasury NFT policy)"]
+    bans["spo-bans.ak"]
+    fv["fault-verifier policies"]
+    wsh[[some withdraw script hash]]
+
+    cfg0 --> config
+    config -->|config NFT policy + asset name| fbtc
+    config -->|config NFT policy + asset name| pegin
+    config -->|config NFT policy + asset name| pegout
+    config -->|config NFT policy + asset name| cpi
+    config -->|config NFT policy + asset name| cpo
+    config -->|config NFT policy + asset name| gs
+    cpi0 --> cpi
+    cpo0 --> cpo
+    oracle --> pegin
+    oracle --> pegout
+    tmv -->|tm_nft_policy_id| pegin
+    reg0 --> reg
+    reg -->|registry policy id| tinfo
+    reg -->|registration script hash| bans
+    fv -->|fault-proof policy allow-list| bans
+    ban0 --> bans
+    wsh --> gs
+```
+
+Notes:
+
+* **Deployment order** follows the arrows: Binocular first, then `config.ak` (its hash depends
+  only on its own outpoint), then everything parameterized by the config NFT policy; on the SPO
+  side `spos-registry.ak` before `treasury.ak` and `spo-bans.ak`.
+* **The config ↔ fBTC circularity is resolved at datum level.** `bridged-token.ak` is
+  *parameterized* by the config NFT identity, while the Config *datum* field 0 names the fBTC
+  policy. Parameterization fixes hashes in dependency order (config hash → fBTC hash); the
+  datum is only data, written at mint time after both hashes are known. The same holds for
+  every script-hash field in `ConfigDatum` – that is what lets the wiring reference scripts
+  that are themselves parameterized by the config NFT.
+* **Run-time one-shots.** Not every uniqueness anchor is a compile-time parameter: the Treasury
+  NFT (asset name = hash of the outpoint consumed at mint), each PegInRequest NFT (asset name =
+  hash of a consumed outpoint), and each FaultProof mint take their consumed outpoint from the
+  redeemer instead. Same mechanism, chosen per mint rather than per script.
+* `spo-bans.ak` is additionally parameterized by ban policy constants
+  (`base_ban_duration_ms`, `max_faults_before_permanent`, `max_validity_window_ms`).
+* `treasury-movement.ak` and `watchtower.ak` in this repository take no parameters and validate
+  permissively (placeholders); the canonical TM validator lives in binocular.
+
+### Run-time dependency graph: peg side
+
+Solid arrows are reference-input reads; thick arrows spend/recreate a singleton; dashed arrows
+are withdraw-script delegation ("this script must run in the same transaction"). Hexagons are
+withdraw handlers, cylinders are UTxOs.
+
+```mermaid
+flowchart LR
+    ConfigU[(Config UTxO)]
+    OracleU[(Binocular ChainState UTxO)]
+    TMU[(TM record UTxO, Confirmed)]
+    CPIU[(Completed-peg-ins UTxO)]
+    CPOU[(Completed-peg-outs UTxO)]
+    PIR[(PegInRequest UTxO)]
+    POR[(PegOut request UTxO)]
+
+    fbtc{{fBTC mint policy}}
+    piw{{peg-in withdraw}}
+    pow{{peg-out withdraw}}
+    ver1{{TM + peg-out produced verifier}}
+    ver2{{TM + peg-out not-produced verifier}}
+
+    fbtc -->|ref input: fields 0,1,4,5| ConfigU
+    fbtc -.->|positive mint requires| piw
+    fbtc -.->|burn requires| pow
+
+    piw -->|ref input| ConfigU
+    piw -->|ref input: deposit + TM proofs| OracleU
+    piw -->|ref input: btc_txid, swept ids| TMU
+    piw ==>|spends + recreates root| CPIU
+    piw ==>|spends on complete or close| PIR
+
+    pow -->|ref input| ConfigU
+    pow -->|ref input| OracleU
+    pow ==>|spends + recreates root| CPOU
+    pow ==>|spends on complete or cancel| POR
+    pow -.->|CompletePegOut requires| ver1
+    pow -.->|Cancel requires| ver2
+
+    PIR -.->|spend delegates to own hash| piw
+    POR -.->|spend delegates to own hash| pow
+    CPIU -.->|spend requires CompletePegIn| piw
+    CPOU -.->|spend requires CompletePegOut| pow
+```
+
+Reading the graph: the fBTC policy is a pure presence delegator – it anchors itself via the
+Config (`config[0] == own policy id`, single asset name) and requires the peg-in withdraw
+script for mints, the peg-out withdraw script for burns. All actual peg logic lives in the two
+withdraw handlers, which read the oracle and the Confirmed TM record, spend the request UTxO,
+and roll the corresponding completed-peg MPF root forward. The spend handlers of `peg-in.ak`,
+`peg-out.ak` and the two tree singletons are thin forwarders: they only check that the
+authoritative withdraw script runs in the same transaction (the trees additionally pin the
+withdraw redeemer's action to the completing variant). `general-spend.ak` follows the same
+pattern for arbitrary protocol-owned UTxOs: read the Config, require its parameterized
+withdraw script.
+
+### Run-time dependency graph: SPO and governance side
+
+```mermaid
+flowchart LR
+    RegRoot[(Registry root + nodes)]
+    TreasU[(Treasury state UTxO)]
+    BanRoot[(Ban-list root + nodes)]
+    FaultU[(FaultProof token UTxO)]
+    ConfigU[(Config UTxO)]
+
+    regmint{{registry mint: Register / Deregister}}
+    banw{{spo-bans withdraw: ApplyBan}}
+    auth{{update_auth authority}}
+
+    regmint ==>|inserts / removes node| RegRoot
+    regmint ==>|spends: updates bifrost_identity_root| TreasU
+    RegRoot -.->|element spend requires own-policy mint| regmint
+    TreasU -.->|spend requires registry mint in same tx| regmint
+
+    banw ==>|consumes token| FaultU
+    banw -->|ref input: accused registration node| RegRoot
+    banw ==>|mints / updates ban node| BanRoot
+    BanRoot -.->|mint and spend delegate to| banw
+
+    auth ==>|Update or Retire spend| ConfigU
+```
+
+Registration and Treasury state form one atomic unit: a `Register`/`Deregister` mint must spend
+the Treasury state UTxO and update its identity-binding root with an MPF proof, and conversely
+the Treasury state UTxO can only be spent when a registry mint/burn is present. Ban application
+is driven entirely by the `ApplyBan` withdraw handler: both the ban-node mint and any ban-list
+element spend just check that it runs; it consumes exactly one `FaultProof` token from an
+allow-listed verifier policy and derives the ban update (counter, duration, permanence) from
+the accused pool's existing ban node, if any. The Config UTxO sits outside the day-to-day flow:
+its only run-time dependency is on whatever authority `update_auth` names (a signature, script
+presence, or token ownership via `authorizer.ak`), as detailed in §Config UTxO governance.
+
 <!-- G2: new section — the Config UTxO was previously mentioned once and never specified. The
      wiring fields document the implemented config.ak ConfigDatum; the parameters section and the
      governance spend branch are the normative additions (contract change request: the deployed
