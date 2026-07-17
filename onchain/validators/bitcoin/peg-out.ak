@@ -148,11 +148,14 @@ validator peg_out_validator(
               treasury_movement_raw_tx,
             ),
           }
+        let no_bridged_token_mint =
+          quantity_of(self.mint, bridged_token_policy_id, bridged_token_asset_name) == 0
         and {
           user_authorized,
           block_header_included_in_source_chain,
           treasury_movement_tx_included_in_block_header,
           treasury_movement_tx_is_legit_and_does_not_produce_peg_out_utxo,
+          no_bridged_token_mint,
         }
       }
       CompletePegOut {

@@ -200,10 +200,16 @@ validator peg_in_validator(
           peg_in_policy_id,
           burnt_peg_in_nft_asset_name,
         ) == -1
+        //A close/cancel must never mint or burn the bridged token: this is what
+        //keeps bridged_token's presence-only delegation sound (a Cancel can not
+        //smuggle an unconstrained fSAT mint).
+        let no_bridged_token_mint =
+          quantity_of(self.mint, bridged_token_policy_id, bridged_token_asset_name) == 0
         and {
           close_authorized,
           peg_in_nft_in_input,
           peg_in_nft_burnt,
+          no_bridged_token_mint,
         }
       }
       CompletePegIn {
