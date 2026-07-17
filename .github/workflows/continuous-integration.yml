@@ -19,8 +19,13 @@ jobs:
           version: v1.1.23
       - run: aiken check -D
       - run: aiken build
-      # `aiken fmt --check` is intentionally not run. Under v1.1.23 it reformats 17 files on
-      # pristine upstream main (including files new in the config-governance work), so the tree
+      # The blueprint is a committed build artifact: if `aiken build` changes it, the committed
+      # copy was stale (or built with the wrong compiler) and its script hashes are not the
+      # source's. Main carried exactly that for a while — a plutus.json built with v1.1.19
+      # against a v1.1.23 toml pin, drifting 11 validator hashes.
+      - run: git diff --exit-code plutus.json
+      # `aiken fmt --check` is intentionally not run. Under v1.1.23 it reformats 16 files on
+      # pristine upstream main (including files new in the governance and Variant B work), so the tree
       # is simply not fmt-formatted. Enabling it here would be red from day one for reasons
       # unrelated to any change under test. Adopting fmt needs a one-off tree-wide reformat
       # agreed with upstream; until then it is noise, not signal.
