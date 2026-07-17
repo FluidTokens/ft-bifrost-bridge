@@ -808,7 +808,8 @@ live in the Operational parameters UTxO (next section):
 | 10 | `update_auth` | Option\<AuthorizationMethod\> | governance — the authority allowed to Update/Retire the Config; `None` = permanently frozen (see *Config UTxO governance*) |
 
 These 11 fields are the complete datum. Two further per-instance values are specified elsewhere
-in this document but not yet implemented (contract-CR): the **genesis treasury outpoint**
+in this document but not yet implemented (contract-CR — see §External inputs of a bridge
+instance for the full inventory of deployer-supplied values): the **genesis treasury outpoint**
 (`genesis_treasury_utxo_id`, 36 B txid ‖ vout LE — the TM-chain anchor, which must exist on
 Bitcoin before the Config mint; see *Post signed TM*) and the **Operational-params NFT identity**
 (next section). Whether each lands as an appended datum field (#11+, under the append-only rule
@@ -962,6 +963,43 @@ the state they change).
 
 <!-- G36: drafted from the implemented deployment (binocular deploy-bridge / deploy-script-refs);
      all originally-open placeholders resolved during the 2026-07 gap review. -->
+## External inputs of a bridge instance
+
+Everything the protocol enforces on-chain derives from values that enter the system from
+outside. This section is the complete inventory of those inputs: what each is, who supplies it,
+when it becomes fixed, where it is recorded, and whether it can change afterwards. An instance's
+trust assumptions are exactly these rows — nothing else enters the system.
+
+### Fixed at instance creation (deployer-supplied)
+
+| Input | Supplied by | Recorded where | Change path |
+|---|---|---|---|
+| one-shot outpoint(s) | deployer wallet UTxOs, consumed at the bootstrap mints (config, CPI/CPO trees, registry/ban roots) | policy ids and NFT names derive from them | never — they are the instance's identity |
+| bridged-token asset name (deployed: `fSAT`; `fDOGE`, `fLTC`, … for other chains) | deployer | Config #1 | governance Update can rewrite it, but must not on a live instance — circulating tokens keep the old asset id |
+| governance authority (`update_auth`) | deployer | Config #10 | rotates itself: dev key → SPO governance script → optionally `None` (renounced) |
+| `min_stake` | deployer | Config #9 (reserved, off-chain) | governance Update |
+| header-oracle identity (Binocular oracle NFT policy) | the oracle's own bootstrap | **validator parameter** of the peg validators | never — a different oracle is a different instance |
+| Treasury state NFT identity | K1 bootstrap (consumes a chosen outpoint; name = `sha256(serialiseData(outpoint))`) | **validator parameter** | never — a different treasury state is a different instance |
+| genesis treasury outpoint (`genesis_treasury_utxo_id`) | deployer, **on Bitcoin**, funded and confirmed *before* the Config mint (see the creation flow) | instance wiring — datum append or validator parameter (open contract-CR) | never — it anchors the TM chain |
+| Operational parameters (initial values) + params NFT identity | deployer | the params UTxO; its identity in instance wiring (open contract-CR) | values: group-signed *Update operational parameters* txs (see §Operational parameters UTxO) |
+| TM authorized-minter key (interim) | deployer | TM-control datum (`TMCTRL`) | interim only — retired by the permissionless TM-posting design (see *Post signed TM*) |
+| authorized fault-verifier policies | deployer/governance | fault-proof policy set (mock today — contract-CR, see §9.2) | contract-CR |
+
+### Continuous inputs during operation
+
+| Input | Enters via | Trust anchor |
+|---|---|---|
+| Bitcoin chain state (headers, tx inclusion) | the Binocular header oracle (`ChainState` reference input) | PoW verification in the oracle validator; watchtower liveness |
+| Cardano stake distribution (registration gate, candidate set) | off-chain snapshot reads at protocol-defined slots | the Cardano ledger itself + the determinism rule (§Operational parameters UTxO) |
+| Bitcoin fee market | roster-group-signed params updates (`fee_rate_sat_per_vb`) | 51% roster honesty; snapshot semantics |
+| depositor authorizations | BIP-322 signatures over protocol messages | depositor key possession |
+| governance actions | `update_auth`-authorized Config Update / Retire | the authority named in Config #10 (see *Config UTxO governance*) |
+
+The two rows marked *open contract-CR* — the genesis treasury outpoint and the params NFT
+identity — are external inputs whose on-chain **storage location** (an appended Config field vs.
+a validator parameter) is not yet settled; the values themselves and the moments they become
+fixed are normative as described above.
+
 ## Bridge instance creation flow
 
 A **bridge instance** is the complete set of on-chain state that one bridged asset (e.g. fBTC for
