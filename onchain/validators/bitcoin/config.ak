@@ -155,25 +155,16 @@ const t_own_ref: OutputReference =
 fn t_datum(update_auth) -> ConfigDatum {
   ConfigDatum {
     bridged_token_policy_id: #"aa111111111111111111111111111111111111111111111111111111",
-    bridged_token_asset_name: "fBTC",
-    source_chain_merkle_tree_policy_id: #"aa222222222222222222222222222222222222222222222222222222",
-    source_chain_merkle_tree_asset_name: "sourceChain",
-    block_header_merkle_tree_policy_id: #"aa333333333333333333333333333333333333333333333333333333",
-    block_header_merkle_tree_asset_name: "blockHeaders",
+    bridged_token_asset_name: "fSAT",
     completed_peg_ins_merkle_tree_policy_id: #"aa444444444444444444444444444444444444444444444444444444",
-    completed_peg_ins_merkle_tree_asset_name: "completedPegIns",
     completed_peg_outs_merkle_tree_policy_id: #"aa555555555555555555555555555555555555555555555555555555",
-    completed_peg_outs_merkle_tree_asset_name: "completedPegOuts",
     peg_in_withdraw_script_hash: #"aa666666666666666666666666666666666666666666666666666666",
     peg_out_withdraw_script_hash: #"aa777777777777777777777777777777777777777777777777777777",
     peg_in_close_verifier_script_hash: #"aa888888888888888888888888888888888888888888888888888888",
     legit_treasury_movement_and_peg_out_produced_verifier_script_hash: #"aa999999999999999999999999999999999999999999999999999999",
     legit_treasury_movement_and_peg_out_not_produced_verifier_script_hash: #"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    treasury_nft_policy_id: #"aabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    treasury_nft_asset_name: "treasuryNFT",
     min_stake: 100_000_000,
     update_auth,
-    bridged_token_mint_checker_script_hash: #"aadddddddddddddddddddddddddddddddddddddddddddddddddddddd",
   }
 }
 
@@ -334,7 +325,7 @@ test update_allows_changing_bridged_token_identity() {
     ConfigDatum {
       ..old_datum,
       bridged_token_policy_id: #"ff222222222222222222222222222222222222222222222222222222",
-      bridged_token_asset_name: "fBTC2",
+      bridged_token_asset_name: "fSAT2",
     }
   let tx = t_update_tx(old_datum, [t_config_output(new_datum)])
   t_spend(old_datum, Update, tx)

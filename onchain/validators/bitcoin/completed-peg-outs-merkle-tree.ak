@@ -1,11 +1,12 @@
 use aiken/collection/dict
 use aiken/collection/list
 use aiken/option
+use bifrost/constants
 use bifrost/types/config
 use bifrost/types/peg_out.{CompletePegOut, PegOutWithdrawRedeemer}
 use bifrost/utils
 use cardano/address.{Address, Script}
-use cardano/assets.{PolicyId, flatten, tokens, without_lovelace}
+use cardano/assets.{PolicyId, tokens}
 use cardano/script_context.{ScriptContext}
 use cardano/transaction.{
   InlineDatum, OutputReference, Transaction, Withdraw, find_input,
@@ -13,11 +14,6 @@ use cardano/transaction.{
 
 pub type CompletedPegOutsMerkleTreeDatum {
   root: ByteArray,
-}
-
-pub type MintRedeemer {
-  input_ref: OutputReference,
-  config_ref_input_index: Int,
 }
 
 pub type SpendRedeemer {
@@ -28,12 +24,11 @@ pub type SpendRedeemer {
 validator completed_peg_outs_merkle_tree_validator(
   configNFTPolicyId: ByteArray,
   configNFTAssetName: ByteArray,
-  _one_shot_input_ref: OutputReference,
+  one_shot_input_ref: OutputReference,
 ) {
-  mint(redeemer: MintRedeemer, policy_id: PolicyId, self: Transaction) {
-    let input_ref_hash = utils.hash_output_ref(redeemer.input_ref)
-    let is_input_ref_spent =
-      option.is_some(find_input(self.inputs, redeemer.input_ref))
+  mint(_redeemer: Data, policy_id: PolicyId, self: Transaction) {
+    let is_one_shot_spent =
+      option.is_some(find_input(self.inputs, one_shot_input_ref))
 
     expect [completed_peg_outs_merkle_tree_output] =
       list.filter(
@@ -41,18 +36,12 @@ validator completed_peg_outs_merkle_tree_validator(
         fn(output) { output.address.payment_credential == Script(policy_id) },
       )
 
-    //Minted tokens from this policy id must be only 1 and with quantity 1
-    expect [Pair(_this_token_asset_name, 1)] =
+    //Exactly one token of this policy, quantity 1, with the constant name
+    expect [Pair(minted_asset_name, 1)] =
       dict.to_pairs(tokens(self.mint, policy_id))
+    let correct_asset_name =
+      minted_asset_name == constants.completed_peg_outs_root_asset_name
 
-    //AssetName must be correct
-    expect [(this_token_policy_id, this_token_asset_name, 1)] =
-      flatten(without_lovelace(completed_peg_outs_merkle_tree_output.value))
-    let only_minted_token_is_correctly_in_output = and {
-        this_token_policy_id == policy_id,
-        this_token_asset_name == input_ref_hash,
-      }
-    //Output must contain proper InlineDatum
     let output_has_correct_datum =
       completed_peg_outs_merkle_tree_output.datum == InlineDatum(
         CompletedPegOutsMerkleTreeDatum {
@@ -60,7 +49,6 @@ validator completed_peg_outs_merkle_tree_validator(
         },
       )
 
-    //Output with the minted token must go to this script
     let output_goes_to_this_script =
       completed_peg_outs_merkle_tree_output.address == Address {
         payment_credential: Script(policy_id),
@@ -68,8 +56,8 @@ validator completed_peg_outs_merkle_tree_validator(
       }
 
     and {
-      is_input_ref_spent,
-      only_minted_token_is_correctly_in_output,
+      is_one_shot_spent,
+      correct_asset_name,
       output_has_correct_datum,
       output_goes_to_this_script,
     }

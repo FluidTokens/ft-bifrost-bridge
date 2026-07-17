@@ -4,6 +4,7 @@ use aiken/merkle_patricia_forestry as mpf
 use aiken_design_patterns/stake_validator
 use bifrost/authorizer.{authorize_action, create_auth}
 use bifrost/bitcoin
+use bifrost/constants
 use bifrost/types/config
 use bifrost/types/general.{ChainState}
 use bifrost/types/peg_out.{
@@ -42,7 +43,7 @@ validator peg_out_validator(
     let completed_peg_outs_merkle_tree_policy_id =
       config.get_completed_peg_outs_merkle_tree_policy_id(config_fields)
     let completed_peg_outs_merkle_tree_asset_name =
-      config.get_completed_peg_outs_merkle_tree_asset_name(config_fields)
+      constants.completed_peg_outs_root_asset_name
     let legit_treasury_movement_and_peg_out_produced_verifier_script_hash =
       config.get_legit_treasury_movement_and_peg_out_produced_verifier_script_hash(
         config_fields,

@@ -7,6 +7,7 @@ use aiken/option
 use aiken/primitive/bytearray
 use bifrost/bip322
 use bifrost/bitcoin
+use bifrost/constants
 use bifrost/types/config
 use bifrost/types/general.{ChainState}
 use bifrost/types/peg_in.{
@@ -156,7 +157,7 @@ validator peg_in_validator(
     let completed_peg_ins_merkle_tree_policy_id =
       config.get_completed_peg_ins_merkle_tree_policy_id(config_fields)
     let completed_peg_ins_merkle_tree_asset_name =
-      config.get_completed_peg_ins_merkle_tree_asset_name(config_fields)
+      constants.completed_peg_ins_root_asset_name
     // The peg-in CLOSE verifier (slot vacated by the retired legit_TM_verifier). The Cancel path
     // delegates the F4/F5 close checks to it (see below). It is a config-NFT field (runtime), so
     // the close verifier can be deployed + wired via a config update with no peg_in recompile /
