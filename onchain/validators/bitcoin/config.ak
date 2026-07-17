@@ -94,7 +94,7 @@ validator config(tx0: ByteArray, index0: Int, config_asset_name: ByteArray) {
         //datum shape evolution is an explicit goal (readers use positional
         //getters, see bifrost/types/config). The authority is responsible
         //for writing a datum that (a) current readers can parse and (b)
-        //keeps field 18 parseable as Option<AuthorizationMethod> - anything
+        //keeps field 10 parseable as Option<AuthorizationMethod> - anything
         //else halts the bridge or freezes the config until/unless a later
         //Update can fix it.
         expect InlineDatum(_new_datum_raw) = config_output.datum
@@ -331,7 +331,7 @@ test update_allows_changing_bridged_token_identity() {
   t_spend(old_datum, Update, tx)
 }
 
-//Shape evolution: appending a 20th field to the datum is a legal update
+//Shape evolution: appending a 12th field to the datum is a legal update
 test update_allows_appending_datum_fields() {
   let old_datum = t_datum(Some(CardanoSignature { hash: t_dev_pkh }))
   let old_datum_data: Data = old_datum
@@ -425,7 +425,7 @@ test update_allows_any_update_auth_rotation() {
 }
 
 //Any inline datum is accepted, even one no current reader can parse. The
-//authority is responsible for writing a datum whose field 18 still parses
+//authority is responsible for writing a datum whose field 10 still parses
 //as Option<AuthorizationMethod>, otherwise the config freezes.
 test update_allows_arbitrary_datum_shape() {
   let old_datum = t_datum(Some(CardanoSignature { hash: t_dev_pkh }))
