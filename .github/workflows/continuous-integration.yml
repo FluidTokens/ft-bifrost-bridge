@@ -16,11 +16,11 @@ jobs:
       - uses: aiken-lang/setup-aiken@v1
         with:
           # Must match onchain/aiken.toml.
-          version: v1.1.21
+          version: v1.1.23
       - run: aiken check -D
       - run: aiken build
-      # `aiken fmt --check` is intentionally not run. Under v1.1.21 it reformats four files on
-      # pristine upstream main (bitcoin.ak, peg-in.ak, spo-bans.ak, spos-registry.ak, ~210 lines)
-      # because the tree was formatted with an older aiken. Enabling it here would be red from day
-      # one for reasons unrelated to any change under test. Adopting fmt needs a one-off tree-wide
-      # reformat agreed with upstream; until then it is noise, not signal.
+      # `aiken fmt --check` is intentionally not run. Under v1.1.23 it reformats 17 files on
+      # pristine upstream main (including files new in the config-governance work), so the tree
+      # is simply not fmt-formatted. Enabling it here would be red from day one for reasons
+      # unrelated to any change under test. Adopting fmt needs a one-off tree-wide reformat
+      # agreed with upstream; until then it is noise, not signal.
