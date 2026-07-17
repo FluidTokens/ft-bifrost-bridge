@@ -96,8 +96,8 @@ restarts from this 11-field baseline (acceptable – nothing deployed).
 Add to `lib/bifrost/constants.ak`:
 
 ```aiken
-pub const completed_peg_ins_root_asset_name = "cpi-root"
-pub const completed_peg_outs_root_asset_name = "cpo-root"
+pub const completed_peg_ins_root_asset_name = "CPI"
+pub const completed_peg_outs_root_asset_name = "CPO"
 ```
 
 Rewrite the `completed-peg-ins-merkle-tree.ak` (and `-outs-`) mint handler to
@@ -199,7 +199,7 @@ field 1).
   `input_ref`.
 - `BifrostContracts.scala`: remove `FbtcMintCheckerContract`;
   `CompletedPegIns/OutsContract.assetName` become the constants
-  (`cpi-root`/`cpo-root`), not `sha2_256(...)`.
+  (`CPI`/`CPO`), not `sha2_256(...)`.
 - `PegInCompleteTx.scala` / `PegOutCompleteTx.scala`: remove the checker
   withdrawal and its reward-index handling (peg-in reverts to one script
   withdrawal; peg-out to two).
@@ -245,7 +245,7 @@ mainnet).
   guard. (User, 2026-07-17.)
 - **Clean-rebuild ConfigDatum** (drop 6 dead fields + checker; re-index):
   nothing on mainnet, cheapest cleanup moment.
-- **cpi/cpo asset names → constants** (`cpi-root`/`cpo-root`): harmonize with
+- **cpi/cpo asset names → constants** (`CPI`/`CPO`): harmonize with
   the existing `reg-root`/`ban-root` singleton convention; only policy ids are
   per-deploy.
 - **`bridged_token_asset_name` stays a config field**: per-deployment token
