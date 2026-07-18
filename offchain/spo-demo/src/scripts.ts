@@ -16,12 +16,10 @@ import {
   DEMO_BASE_BAN_DURATION_MS,
   DEMO_MAX_BAN_VALIDITY_WINDOW_MS,
   DEMO_MAX_FAULTS_BEFORE_PERMANENT,
-  DEMO_UNUSED_FAULT_POLICY_ID_1,
-  DEMO_UNUSED_FAULT_POLICY_ID_2,
 } from "./constants.js";
 
 const registryParamsType = Type.Tuple([Type.String(), Type.Number()]);
-const treasuryParamsType = Type.Tuple([Type.String()]);
+const scriptHashParamsType = Type.Tuple([Type.String()]);
 const bansParamsType = Type.Tuple([
   Type.String(),
   Type.Array(Type.String()),
@@ -81,7 +79,9 @@ export function deriveScriptHashes(
 ): ScriptHashes {
   return {
     registryPolicyId: scripts.registry.hash(),
-    faultProofPolicyId: scripts.faultVerifier.hash(),
+    faultProofRound1PolicyId: scripts.faultVerifierRound1.hash(),
+    faultProofRound2PolicyId: scripts.faultVerifierRound2.hash(),
+    faultProofEquivocationPolicyId: scripts.faultVerifierEquivocation.hash(),
     treasuryPolicyId: scripts.treasury.hash(),
     bansPolicyId: scripts.bans.hash(),
   };
@@ -99,16 +99,49 @@ export function parameterizeScripts(
   );
   const registry = cborToScript(registryCode, "PlutusV3");
 
-  const faultVerifier = cborToScript(
-    validatorByTitle(blueprint, "bitcoin/fault_verifier.fault_verifier.mint")
-      .compiledCode,
+  const faultVerifierRound1Code = applyScriptParams(
+    validatorByTitle(
+      blueprint,
+      "bitcoin/fault_verifier_round1.fault_verifier_round1.mint",
+    ).compiledCode,
+    scriptHashParamsType,
+    [registry.hash()],
+  );
+  const faultVerifierRound1 = cborToScript(
+    faultVerifierRound1Code,
+    "PlutusV3",
+  );
+
+  const faultVerifierRound2Code = applyScriptParams(
+    validatorByTitle(
+      blueprint,
+      "bitcoin/fault_verifier_round2.fault_verifier_round2.mint",
+    ).compiledCode,
+    scriptHashParamsType,
+    [registry.hash()],
+  );
+  const faultVerifierRound2 = cborToScript(
+    faultVerifierRound2Code,
+    "PlutusV3",
+  );
+
+  const faultVerifierEquivocationCode = applyScriptParams(
+    validatorByTitle(
+      blueprint,
+      "bitcoin/fault_verifier_equivocation.fault_verifier_equivocation.mint",
+    ).compiledCode,
+    scriptHashParamsType,
+    [registry.hash()],
+  );
+  const faultVerifierEquivocation = cborToScript(
+    faultVerifierEquivocationCode,
     "PlutusV3",
   );
 
   const treasuryCode = applyScriptParams(
     validatorByTitle(blueprint, "bitcoin/treasury.treasury_info.mint")
       .compiledCode,
-    treasuryParamsType,
+    scriptHashParamsType,
     [registry.hash()],
   );
   const treasury = cborToScript(treasuryCode, "PlutusV3");
@@ -119,9 +152,9 @@ export function parameterizeScripts(
     [
       registry.hash(),
       [
-        faultVerifier.hash(),
-        DEMO_UNUSED_FAULT_POLICY_ID_1,
-        DEMO_UNUSED_FAULT_POLICY_ID_2,
+        faultVerifierRound1.hash(),
+        faultVerifierRound2.hash(),
+        faultVerifierEquivocation.hash(),
       ],
       DEMO_BASE_BAN_DURATION_MS,
       DEMO_MAX_FAULTS_BEFORE_PERMANENT,
@@ -134,7 +167,9 @@ export function parameterizeScripts(
 
   return {
     registry: registry as Core.Script,
-    faultVerifier: faultVerifier as Core.Script,
+    faultVerifierRound1: faultVerifierRound1 as Core.Script,
+    faultVerifierRound2: faultVerifierRound2 as Core.Script,
+    faultVerifierEquivocation: faultVerifierEquivocation as Core.Script,
     treasury: treasury as Core.Script,
     bans: bans as Core.Script,
   };
