@@ -33,85 +33,109 @@ services:
       timeout: 5s
       retries: 20
 
-  # Local Cardano dev chain with the blockfrost-compatible yaci-store API on
-  # :8080 (the URL heimdall's `cardano.blockfrost_url` and binocular's deploy
-  # path consume). VERIFY: the exact startup command against the pinned
-  # yaci-devkit version (the image historically shipped an interactive CLI;
-  # newer tags support non-interactive autostart).
+  # yaci-devkit, exactly as its own docker distribution runs it (see
+  # yaci-devkit scripts/docker-compose.yml): the container idles and the
+  # devnet is created by exec-ing the CLI one-shot —
+  #   docker compose exec -d yaci-devkit /app/yaci-cli.sh \
+  #     create-node -o --block-time 1 --epoch-length 60 --start
+  # (scripts/00-lib.sh::yaci_create_node does this). Short epochs collapse
+  # the 2-epoch stake-activation delay to ~2 minutes. The blockfrost-
+  # compatible store API (:8080) serves heimdall + binocular; the admin API
+  # (:10000, /local-cluster/api) serves faucet topups. Devnet magic is 42.
   yaci-devkit:
-    image: ${YACI_DEVKIT_IMAGE:-bloxbean/yaci-devkit:0.10.5}
+    image: ${YACI_CLI_IMAGE:-bloxbean/yaci-cli:0.11.0-beta1}
+    entrypoint: ["sleep", "infinity"]
+    environment:
+      yaci_store_enabled: "true"
+      ogmios_enabled: "false"
+      kupo_enabled: "false"
+      node: node1
+      yaci_cli_mode: native
+      yaci_store_mode: native
     ports:
+      - "3001:3001" # cardano-node n2n
       - "8080:8080" # yaci-store (blockfrost-compatible API)
       - "8090:8090" # tx submit API
-      - "3001:3001" # cardano-node relay port
+      - "10000:10000" # local-cluster admin API (topup, utxos)
     volumes:
       - ./data/yaci:/clusters
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/api/v1/blocks/latest || exit 1"]
-      interval: 5s
-      timeout: 5s
-      retries: 60
 
   # The watchtower: binocular oracle + bridge deploy tooling. Scenario
-  # scripts drive it (init-oracle, deploy, daemon); the service default is
-  # the oracle daemon once scenario 1 has initialized it.
+  # scripts drive one-shot commands via `docker compose run --rm bitfrost
+  # --config /etc/binocular.conf <cmd>`; the service default runs the
+  # combined watchtower daemon (oracle sync + TM relay + TM confirm) once
+  # scenario 1 has deployed + initialized everything.
   bitfrost:
     build:
-      context: ${BINOCULAR_SRC:-../../lantr/binocular}
+      context: ${BINOCULAR_SRC:-../../../lantr/binocular}
       dockerfile: ${PWD}/docker/binocular.Dockerfile
-    command: ${BITFROST_CMD:---help}
+    command: ["--config", "/etc/binocular.conf", "watchtower"]
+    environment:
+      WALLET_MNEMONIC: ${WALLET_MNEMONIC:-all all all all all all all all all all all all}
+      ORACLE_TX_OUT_REF: ${ORACLE_TX_OUT_REF:-}
+      ORACLE_OWNER_PKH: ${ORACLE_OWNER_PKH:-}
     depends_on:
       bitcoind:
         condition: service_healthy
       yaci-devkit:
-        condition: service_healthy
+        condition: service_started
     volumes:
+      - ./config/binocular.conf:/etc/binocular.conf:ro
       - ./keys:/keys
       - ./data/bitfrost:/data
       - ../onchain/plutus.json:/contracts/plutus.json:ro
 
+  # In registry mode heimdall finds itself by its bifrost key and listens on
+  # the port from its REGISTERED URL (http://heimdall-spoN:1850N), so no
+  # --index/--base-port. Configs are rendered by scripts/01-bootstrap-dkz.sh
+  # from config/heimdall-spoN.toml into data/generated/ (registry ids filled
+  # in), then these services are started with the demo command.
   heimdall-spo1: &heimdall
     build:
-      context: ${HEIMDALL_SRC:-../../lantr/heimdall}
+      context: ${HEIMDALL_SRC:-../../../lantr/heimdall}
       dockerfile: ${PWD}/docker/heimdall.Dockerfile
-    # Scenario scripts start the epoch loop (`docker compose run`); the
-    # long-running service form is used from scenario 1 onward.
-    command: ${HEIMDALL_CMD:---help}
+    command: ["demo", "--config", "/etc/heimdall/heimdall.toml", "--deterministic"]
+    environment: &heimdall-env
+      HEIMDALL_MNEMONIC: ${HEIMDALL_MNEMONIC:-test walk nut penalty hip pave soap entry language right filter choice}
     depends_on:
       bitcoind:
         condition: service_healthy
       yaci-devkit:
-        condition: service_healthy
+        condition: service_started
     volumes:
-      - ./config/heimdall-spo1.toml:/etc/heimdall/heimdall.toml:ro
+      - ./data/generated/heimdall-spo1.toml:/etc/heimdall/heimdall.toml:ro
       - ./keys:/keys
       - ./data/spo1:/state
+      - ../onchain/plutus.json:/contracts/plutus.json:ro
     ports:
       - "18501:18501"
 
   heimdall-spo2:
     <<: *heimdall
     volumes:
-      - ./config/heimdall-spo2.toml:/etc/heimdall/heimdall.toml:ro
+      - ./data/generated/heimdall-spo2.toml:/etc/heimdall/heimdall.toml:ro
       - ./keys:/keys
       - ./data/spo2:/state
+      - ../onchain/plutus.json:/contracts/plutus.json:ro
     ports:
       - "18502:18502"
 
   heimdall-spo3:
     <<: *heimdall
     volumes:
-      - ./config/heimdall-spo3.toml:/etc/heimdall/heimdall.toml:ro
+      - ./data/generated/heimdall-spo3.toml:/etc/heimdall/heimdall.toml:ro
       - ./keys:/keys
       - ./data/spo3:/state
+      - ../onchain/plutus.json:/contracts/plutus.json:ro
     ports:
       - "18503:18503"
 
   heimdall-spo4:
     <<: *heimdall
     volumes:
-      - ./config/heimdall-spo4.toml:/etc/heimdall/heimdall.toml:ro
+      - ./data/generated/heimdall-spo4.toml:/etc/heimdall/heimdall.toml:ro
       - ./keys:/keys
       - ./data/spo4:/state
+      - ../onchain/plutus.json:/contracts/plutus.json:ro
     ports:
       - "18504:18504"

@@ -70,7 +70,7 @@ scripts; they change with every compiler bump.
 
 | # | Script | Flow | Status |
 |---|---|---|---|
-| 1 | `01-bootstrap-dkz.sh` | Fund regtest → genesis treasury outpoint → deploy bridge (binocular single-tx bootstrap) → init oracle → register 4 SPOs → start heimdall ×4 → full DKG → assert identical `Y_51`/treasury address across all 4 | scaffold — wire up as first target |
+| 1 | `01-bootstrap-dkz.sh` | Devnet up → fund wallet (faucet) → genesis treasury outpoint on regtest → 4 real stake pools (`register_pool`, 2-epoch activation + `active_stake` gate) → registry bootstrap (`bootstrap-treasury-info` → `bootstrap-registry` → `deploy-registry-ref`) → `register-spo` ×4 → `show-roster` → heimdall ×4 registry-driven DKG → assert identical `Y_51` across all 4 | **wired** (automates run-dkz's "local yaci devnet / WI-024" path; first live run pending — extraction patterns are teed to `data/logs/` for iteration) |
 | 2 | `02-fraud-dkz.sh` | DKG with one misbehaving/absent SPO → exclusion evidence + equivocation detection → ceremony completes 3-of-4 → (ban pipeline) | partially blocked: on-chain fault proofs are **N4** (mock verifier today); evidence + reduced-rerun assertions work now |
 | 3 | `03-federation-switch.sh` | Mine past `federation_csv_blocks` → federation key spends treasury via script leaf → oracle proves the spend → key rotated to `y_federation` | Bitcoin-side spend testable now; on-chain federation-reset is **N10b** (+ witness-walker reuse **N15**) |
 
