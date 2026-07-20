@@ -1,6 +1,6 @@
 use aiken/collection/dict
 use aiken/collection/pairs
-use bifrost/types/config.{ConfigDatum}
+use bifrost/types/config.{ConfigDatum, ScheduleParams}
 use bifrost/types/general.{CardanoSignature}
 use bifrost/utils
 use cardano/address.{Address, Script}
@@ -91,6 +91,22 @@ fn t_config_datum() -> ConfigDatum {
     min_stake: 0,
     update_auth: Some(CardanoSignature { hash: #"aadd" }),
     initial_btc_treasury_utxo: #"aaee",
+    fee_rate_sat_per_vb: 1,
+    per_pegout_fee: 1000,
+    min_peg_out_fbtc: 10000,
+    leader_reward: 2_000_000,
+    schedule: ScheduleParams {
+      dkg_r1_deadline: 3600,
+      dkg_r2_deadline: 7200,
+      update_y_deadline: 10800,
+      tm_batch_interval: 21600,
+      sign_r1_window: 1800,
+      sign_r2_window: 1800,
+      leader_slot_t: 600,
+      tm_recovery_window: 129600,
+      final_tm_cutoff: 345600,
+      stability_window: 129600,
+    },
   }
 }
 
