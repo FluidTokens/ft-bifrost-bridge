@@ -1571,8 +1571,8 @@ flowchart LR
 | Role | Content |
 |------|---------|
 | **Inputs** | Poster's UTxO — fees + MIN_ADA |
-| **Reference inputs** | Config UTxO — supplies `initial_btc_treasury_utxo` (implemented field #11), located by the config NFT (`Genesis` redeemer, first movement only); **or** the predecessor `Confirmed TM tx` UTxO, located by the redeemer's reference-input index and authenticated by its TM NFT (`Chain` redeemer, every subsequent movement) |
-| **Mint** | +1 TM NFT — identity carried through the Unconfirmed → Confirmed lifecycle (records are permanent, see *Confirm TM tx*); minting is permissionless, gated by the linkage check. Redeemer: `TmMintRedeemer = Genesis \| Chain(prev_tm_ref_input_index)` |
+| **Reference inputs** | Config UTxO — supplies `initial_btc_treasury_utxo` (implemented field #11), located by the redeemer's reference-input index and authenticated by the config NFT (`Genesis` redeemer, first movement only); **or** the predecessor `Confirmed TM tx` UTxO, located by the redeemer's reference-input index and authenticated by its TM NFT (`Chain` redeemer, every subsequent movement) |
+| **Mint** | +1 TM NFT — identity carried through the Unconfirmed → Confirmed lifecycle (records are permanent, see *Confirm TM tx*); minting is permissionless, gated by the linkage check. Redeemer: `TmMintRedeemer = Genesis(config_ref_input_index) \| Chain(prev_tm_ref_input_index)` |
 | **Outputs** | `Unconfirmed TM tx` UTxO @ `TreasuryMovementValidator`; datum = `Unconfirmed { signed_btc_tx }` – the single-field shape; ordering and identity come from the TM chain itself, so no sequence/poster fields |
 | **Validity interval** | unconstrained (a stale or out-of-turn post is inert — it can never confirm) |
 | **Required signers** | poster (fee spend) — permissionless |
@@ -1584,7 +1584,7 @@ flowchart LR
   the TM script address with an inline `Unconfirmed { signed_btc_tx }` datum – without this
   binding the linkage check would gate nothing.
 * **TM-chain linkage**: input 0 (the treasury input) of `signed_btc_tx` is
-  - `Genesis`: the **initial treasury outpoint** (`initial_btc_treasury_utxo`, implemented Config field #11, read from the config NFT-authenticated reference input) — the first movement after bridge creation; **or**
+  - `Genesis(i)`: the **initial treasury outpoint** (`initial_btc_treasury_utxo`, implemented Config field #11, read from the reference input at index `i`, which must carry the config NFT) — the first movement after bridge creation; **or**
   - `Chain(i)`: `(btc_txid, 0)` of the **referenced predecessor `Confirmed TM tx`** record at reference-input index `i` (authenticated by its TM NFT).
 
 **Checks delegated off-chain**
