@@ -1,0 +1,117 @@
+# Bifrost E2E test bench: bitcoind(regtest) + yaci-devkit + binocular
+# watchtower ("bitfrost") + 4 heimdall SPOs. See README.md for the
+# bitcoind-in-compose decision and version pinning.
+name: bitfrost-test-scenarios
+
+services:
+  bitcoind:
+    image: ${BITCOIND_IMAGE:-bitcoin/bitcoin:28.1}
+    command:
+      - -regtest=1
+      - -server=1
+      - -txindex=1
+      - -fallbackfee=0.0001
+      - -rpcbind=0.0.0.0
+      - -rpcallowip=0.0.0.0/0
+      - -rpcuser=${BITCOIN_RPC_USER:-bifrost}
+      - -rpcpassword=${BITCOIN_RPC_PASS:-bifrost}
+    ports:
+      - "18443:18443"
+    volumes:
+      - ./data/bitcoind:/home/bitcoin/.bitcoin
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bitcoin-cli",
+          "-regtest",
+          "-rpcuser=${BITCOIN_RPC_USER:-bifrost}",
+          "-rpcpassword=${BITCOIN_RPC_PASS:-bifrost}",
+          "getblockchaininfo",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Local Cardano dev chain with the blockfrost-compatible yaci-store API on
+  # :8080 (the URL heimdall's `cardano.blockfrost_url` and binocular's deploy
+  # path consume). VERIFY: the exact startup command against the pinned
+  # yaci-devkit version (the image historically shipped an interactive CLI;
+  # newer tags support non-interactive autostart).
+  yaci-devkit:
+    image: ${YACI_DEVKIT_IMAGE:-bloxbean/yaci-devkit:0.10.5}
+    ports:
+      - "8080:8080" # yaci-store (blockfrost-compatible API)
+      - "8090:8090" # tx submit API
+      - "3001:3001" # cardano-node relay port
+    volumes:
+      - ./data/yaci:/clusters
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/api/v1/blocks/latest || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  # The watchtower: binocular oracle + bridge deploy tooling. Scenario
+  # scripts drive it (init-oracle, deploy, daemon); the service default is
+  # the oracle daemon once scenario 1 has initialized it.
+  bitfrost:
+    build:
+      context: ${BINOCULAR_SRC:-../../lantr/binocular}
+      dockerfile: ${PWD}/docker/binocular.Dockerfile
+    command: ${BITFROST_CMD:---help}
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+      yaci-devkit:
+        condition: service_healthy
+    volumes:
+      - ./keys:/keys
+      - ./data/bitfrost:/data
+      - ../onchain/plutus.json:/contracts/plutus.json:ro
+
+  heimdall-spo1: &heimdall
+    build:
+      context: ${HEIMDALL_SRC:-../../lantr/heimdall}
+      dockerfile: ${PWD}/docker/heimdall.Dockerfile
+    # Scenario scripts start the epoch loop (`docker compose run`); the
+    # long-running service form is used from scenario 1 onward.
+    command: ${HEIMDALL_CMD:---help}
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+      yaci-devkit:
+        condition: service_healthy
+    volumes:
+      - ./config/heimdall-spo1.toml:/etc/heimdall/heimdall.toml:ro
+      - ./keys:/keys
+      - ./data/spo1:/state
+    ports:
+      - "18501:18501"
+
+  heimdall-spo2:
+    <<: *heimdall
+    volumes:
+      - ./config/heimdall-spo2.toml:/etc/heimdall/heimdall.toml:ro
+      - ./keys:/keys
+      - ./data/spo2:/state
+    ports:
+      - "18502:18502"
+
+  heimdall-spo3:
+    <<: *heimdall
+    volumes:
+      - ./config/heimdall-spo3.toml:/etc/heimdall/heimdall.toml:ro
+      - ./keys:/keys
+      - ./data/spo3:/state
+    ports:
+      - "18503:18503"
+
+  heimdall-spo4:
+    <<: *heimdall
+    volumes:
+      - ./config/heimdall-spo4.toml:/etc/heimdall/heimdall.toml:ro
+      - ./keys:/keys
+      - ./data/spo4:/state
+    ports:
+      - "18504:18504"

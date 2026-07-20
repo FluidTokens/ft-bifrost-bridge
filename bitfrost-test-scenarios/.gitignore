@@ -1,0 +1,6 @@
+# Local environment + generated secrets/state — never commit.
+.env
+keys/
+data/
+!keys/.gitkeep
+!data/.gitkeep
