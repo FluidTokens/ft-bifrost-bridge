@@ -53,8 +53,8 @@ config update without changing the token.
 | 4 | `peg_in_withdraw_script_hash` | peg-in completion script (mint delegate) |
 | 5 | `peg_out_withdraw_script_hash` | peg-out completion script (burn delegate) |
 | 6 | `peg_in_close_verifier_script_hash` | dormant (F1–F6) |
-| 7 | `legit_tm_and_peg_out_produced_verifier_script_hash` | peg-out completion |
-| 8 | `legit_tm_and_peg_out_not_produced_verifier_script_hash` | dormant (F1–F6) |
+| 7 | `legit_treasury_movement_and_peg_out_produced_verifier_script_hash` | peg-out completion |
+| 8 | `legit_treasury_movement_and_peg_out_not_produced_verifier_script_hash` | dormant (F1–F6) |
 | 9 | `min_stake` | Int; off-chain use |
 | 10 | `update_auth` | `Option<AuthorizationMethod>`; None = frozen |
 
