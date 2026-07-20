@@ -78,7 +78,6 @@ membership.
 | `peg-in.ak` (mint + withdraw) | Yes | ZK stub = True |
 | `btc-mint.ak` (mint) | Yes | — |
 | `peg-out-private.ak` (mint + withdraw) | Yes | ZK stub = True |
-| `general-spend.ak` | Yes | — |
 | `registered-SPOs.ak` | Partial | `Register` path requires Ed25519 |
 
 ---

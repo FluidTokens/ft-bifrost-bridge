@@ -165,6 +165,7 @@ fn t_datum(update_auth) -> ConfigDatum {
     legit_treasury_movement_and_peg_out_not_produced_verifier_script_hash: #"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     min_stake: 100_000_000,
     update_auth,
+    initial_btc_treasury_utxo: #"aabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb00000000",
   }
 }
 

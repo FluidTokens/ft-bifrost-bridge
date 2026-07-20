@@ -3,8 +3,6 @@ use aiken/collection/dict
 use aiken/collection/list
 use aiken/crypto
 use aiken/merkle_patricia_forestry as mpf
-use bifrost/constants
-use bifrost/types/watchtower.{OracleState}
 use cardano/address.{Address, Script, VerificationKey}
 use cardano/assets.{AssetName, PolicyId, Value, quantity_of, tokens}
 use cardano/transaction.{InlineDatum, Input, Output, OutputReference}
@@ -87,21 +85,6 @@ pub fn find_singleton_asset_output_at_script(
     )
 
   output
-}
-
-pub fn get_oracle_state(
-  oracle_state_ref_input: Input,
-  btc_oracle_policy_id: ByteArray,
-) {
-  expect
-    quantity_of(
-      oracle_state_ref_input.output.value,
-      btc_oracle_policy_id,
-      constants.btc_oracle_asset_name,
-    ) > 0
-  expect InlineDatum(outputDatum) = oracle_state_ref_input.output.datum
-  expect parsed_oracle_state: OracleState = outputDatum
-  parsed_oracle_state
 }
 
 /// Returns `True` if `predicate(index, element)` holds for every element of the list.

@@ -24,6 +24,11 @@ pub type ConfigDatum {
   min_stake: Int,
   //Authority allowed to Update/Retire the config UTxO. None = frozen.
   update_auth: Option<AuthorizationMethod>,
+  //The initial (anchor) Bitcoin treasury outpoint the first Treasury Movement
+  //must spend: 36 bytes = txid (internal byte order) ++ vout (4-byte LE).
+  //Subsequent TMs chain from the previous Confirmed TM record instead.
+  //Re-pointable via config Update (e.g. after an emergency federation sweep).
+  initial_btc_treasury_utxo: ByteArray,
 }
 
 //----------------------------------------------------------------------------
@@ -106,6 +111,10 @@ pub fn get_update_auth(
   update_auth
 }
 
+pub fn get_initial_btc_treasury_utxo(config_fields: List<Data>) -> ByteArray {
+  builtin.un_b_data(safe_list_at(config_fields, 11))
+}
+
 //Pins every getter index to its ConfigDatum record field: reordering record
 //fields or getter indexes independently makes this fail.
 test config_getters_match_datum_fields() {
@@ -122,6 +131,7 @@ test config_getters_match_datum_fields() {
       legit_treasury_movement_and_peg_out_not_produced_verifier_script_hash: #"aa08",
       min_stake: 9,
       update_auth: Some(CardanoSignature { hash: #"aa10" }),
+      initial_btc_treasury_utxo: #"aa11",
     }
   let datum_data: Data = datum
   let fields = builtin.unconstr_fields(datum_data)
@@ -137,5 +147,6 @@ test config_getters_match_datum_fields() {
     get_legit_treasury_movement_and_peg_out_not_produced_verifier_script_hash(fields) == datum.legit_treasury_movement_and_peg_out_not_produced_verifier_script_hash,
     get_min_stake(fields) == datum.min_stake,
     get_update_auth(fields) == datum.update_auth,
+    get_initial_btc_treasury_utxo(fields) == datum.initial_btc_treasury_utxo,
   }
 }

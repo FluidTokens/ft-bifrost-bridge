@@ -90,6 +90,7 @@ fn t_config_datum() -> ConfigDatum {
     legit_treasury_movement_and_peg_out_not_produced_verifier_script_hash: #"aa88",
     min_stake: 0,
     update_auth: Some(CardanoSignature { hash: #"aadd" }),
+    initial_btc_treasury_utxo: #"aaee",
   }
 }
 
