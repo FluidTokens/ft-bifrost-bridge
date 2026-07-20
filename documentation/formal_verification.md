@@ -74,7 +74,6 @@ Most Bifrost validators do not call crypto builtins on their primary paths. The 
 | `peg-in.ak` (mint + withdraw) | Yes | ZK stub = True |
 | `btc-mint.ak` (mint) | Yes | — |
 | `peg-out-private.ak` (mint + withdraw) | Yes | ZK stub = True |
-| `general-spend.ak` | Yes | — |
 | `registered-SPOs.ak` | Partial | `Register` path requires Ed25519 |
 
 ---
