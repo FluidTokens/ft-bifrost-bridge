@@ -1,6 +1,10 @@
-# SPO 2 of 4 — bitfrost-test-scenarios compose bench.
-# Port convention: 18502 (compose maps it 1:1); the scenario scripts pass
-# the matching --index / --base-port on the CLI.
+# SPO 2 of 4 — bitfrost-test-scenarios compose bench (yaci devnet, regtest).
+# TEMPLATE: scripts/01-bootstrap-dkz.sh renders it to
+# data/generated/heimdall-spo2.toml, replacing the @...@ placeholders with
+# the identifiers minted by the registry bootstrap. The compose services
+# mount the RENDERED file. In registry mode heimdall finds itself by its
+# bifrost key and listens on the port of its registered URL
+# (http://heimdall-spo2:18502) — no --index.
 
 [protocol]
 # Compose-tuned DKG pacing. The window MUST exceed dkg_round2_offset by more
@@ -30,9 +34,19 @@ pegin_refund_timeout_blocks = 144
 federation_csv_blocks = 144
 
 [cardano]
-# yaci-devkit's blockfrost-compatible API (yaci-store).
-blockfrost_url = "http://yaci-devkit:8080/api/v1"
-blockfrost_project_id = "dummy"
+# yaci-store, blockfrost-compatible. project_id is ignored by yaci-store but
+# heimdall's URL routing only engages when it is non-empty.
+blockfrost_url = "http://yaci-devkit:8080/api/v1/"
+blockfrost_project_id = "devnet"
+# Registry-driven roster (rendered by the bootstrap script).
+registry_blueprint = "/contracts/plutus.json"
+registry_bootstrap = "@REGISTRY_BOOTSTRAP@"
+treasury_info_asset_name = "@TREASURY_INFO_ASSET_NAME@"
+# Devnet pools carry small equal stake; pass R2 with any stake at all.
+min_stake_lovelace = 1
+demo_exclude_unstaked = true
+# DKG + key publication only; no oracle post from the bench SPOs.
+submit_oracle = false
 
 [http]
 bind_address = "0.0.0.0"
