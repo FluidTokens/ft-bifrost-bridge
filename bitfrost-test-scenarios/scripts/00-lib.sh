@@ -80,7 +80,7 @@ yaci_topup() {
 # First UTxO of an address as TX:IDX (store API, blockfrost field names).
 yaci_first_utxo() {
   curl -sf "$STORE_API/addresses/$1/utxos" |
-    python3 -c 'import json,sys; u=json.load(sys.stdin)[0]; print(f"{u[\"tx_hash\"]}:{u[\"output_index\"]}")'
+    python3 -c 'import json,sys; u=json.load(sys.stdin)[0]; print(u["tx_hash"], u["output_index"], sep=":")'
 }
 
 wait_cardano_tx() {
