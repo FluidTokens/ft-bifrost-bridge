@@ -1573,7 +1573,7 @@ flowchart LR
 | **Inputs** | Poster's UTxO — fees + MIN_ADA |
 | **Reference inputs** | Config UTxO — supplies `initial_btc_treasury_utxo` (implemented field #11), located by the config NFT (`Genesis` redeemer, first movement only); **or** the predecessor `Confirmed TM tx` UTxO, located by the redeemer's reference-input index and authenticated by its TM NFT (`Chain` redeemer, every subsequent movement) |
 | **Mint** | +1 TM NFT — identity carried through the Unconfirmed → Confirmed lifecycle (records are permanent, see *Confirm TM tx*); minting is permissionless, gated by the linkage check. Redeemer: `TmMintRedeemer = Genesis \| Chain(prev_tm_ref_input_index)` |
-| **Outputs** | `Unconfirmed TM tx` UTxO @ `TreasuryMovementValidator`; datum = `Unconfirmed { signed_btc_tx }` — the single-field shape; ordering and identity come from the TM chain itself, so no sequence/poster fields |
+| **Outputs** | `Unconfirmed TM tx` UTxO @ `TreasuryMovementValidator`; datum = `Unconfirmed { signed_btc_tx }` – the single-field shape; ordering and identity come from the TM chain itself, so no sequence/poster fields |
 | **Validity interval** | unconstrained (a stale or out-of-turn post is inert — it can never confirm) |
 | **Required signers** | poster (fee spend) — permissionless |
 | **Size (est.)** | ~10.5–15.5 KB depending on the signing variant and batch size (datum carries the full signed BTC tx, up to ~15 KB). The **16 KB Cardano tx limit is the binding constraint**, and it drives the per-variant max batch sizes listed under *Treasury Movement (Bitcoin)* above. Fee ≈ 0.67 ADA at ~10.5 KB; ≈ 0.9 ADA near the 15 KB ceiling. |
@@ -1581,7 +1581,7 @@ flowchart LR
 **Checks enforced on-chain** (the `TreasuryMovementValidator` mint branch)
 
 * Exactly +1 of the TM NFT is minted, and it is **bound**: the unique output carrying it sits at
-  the TM script address with an inline `Unconfirmed { signed_btc_tx }` datum — without this
+  the TM script address with an inline `Unconfirmed { signed_btc_tx }` datum – without this
   binding the linkage check would gate nothing.
 * **TM-chain linkage**: input 0 (the treasury input) of `signed_btc_tx` is
   - `Genesis`: the **initial treasury outpoint** (`initial_btc_treasury_utxo`, implemented Config field #11, read from the config NFT-authenticated reference input) — the first movement after bridge creation; **or**
@@ -1629,7 +1629,7 @@ flowchart LR
 | **Inputs** | `Unconfirmed TM tx` UTxO; Prover UTxO (fees) |
 | **Reference inputs** | Binocular Oracle — supplies the confirmed-chain root |
 | **Mint** | — (the TM NFT is carried over to the Confirmed output) |
-| **Outputs** | `Confirmed TM tx` UTxO @ `TreasuryMovementValidator` — datum = `Confirmed { btc_txid, swept_peg_in_utxo_ids, fulfilled_peg_outs: [{scriptPubKey, amount}] }` — the lean three-field shape; ordering comes from the chain, so no sequence/poster fields |
+| **Outputs** | `Confirmed TM tx` UTxO @ `TreasuryMovementValidator` — datum = `Confirmed { btc_txid, swept_peg_in_utxo_ids, fulfilled_peg_outs: [{scriptPubKey, amount}] }` – the lean three-field shape; ordering comes from the chain, so no sequence/poster fields |
 | **Witness data (redeemer)** | Merkle proof of `btc_txid` in a BTC block header; Binocular inclusion proof of that block header (the raw BTC tx itself is read from the consumed `Unconfirmed` datum, not duplicated) |
 | **Validity interval** | unconstrained |
 | **Required signers** | prover (fee spend) — permissionless |
