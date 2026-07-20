@@ -158,8 +158,8 @@ roster_log="$LOGS/show-roster.log"
 # show-roster needs the registry ids — re-render with the real values.
 render_configs "$BOOT_REF" "$K1_NAME"
 hd show-roster "${HD_CFG[@]}" 2>&1 | tee "$roster_log" >/dev/null || true
-n=$(grep -cE '^\s*#[0-9]+ pk' "$roster_log" || true)
-[ "$n" = "4" ] || log "WARNING: roster shows $n participants (want 4) — see $roster_log"
+n=$(grep -cE '^\s+pool [0-9a-f]+ \(pool1' "$roster_log" || true)
+[ "$n" = "4" ] || die "roster shows $n participants (want 4) — see $roster_log"
 
 log "step 9: start the 4 SPOs — health gate + window grid align them, then DKG"
 docker compose up -d heimdall-spo1 heimdall-spo2 heimdall-spo3 heimdall-spo4
