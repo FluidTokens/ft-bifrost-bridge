@@ -138,7 +138,7 @@ This section collects the acronyms, protocol terms, on-chain validators, mathema
 * **Taproot tree / Merkle root**: script tree structure committing alternative spending paths for a Taproot output.
 * **Timeout cascade (leader)**: slot-indexed schedule under which subsequent SPOs become eligible to submit a TM.
 * **Treasury**: Bitcoin Taproot UTxO holding all consolidated bridged BTC.
-* **TM chain**: the sequence of Confirmed TM records, each proving its treasury input is either the genesis outpoint (Config #18) or output 0 of the previous Confirmed record. The current treasury outpoint is the chain's tip, derived off-chain — there is no mutable on-chain pointer register (see *Post signed TM*).
+* **TM chain**: the sequence of Confirmed TM records, each proving its treasury input is either the initial treasury outpoint (Config's `initial_btc_treasury_utxo`; implemented field #11) or output 0 of the previous Confirmed record. The current treasury outpoint is the chain's tip, derived off-chain — there is no mutable on-chain pointer register (see *Post signed TM*).
 * **Treasury Movement (TM) Transaction**: Bitcoin transaction sweeping confirmed PegInRequests, fulfilling PegOuts, and moving the treasury to the next-epoch Treasury address.
 * **Treasury state UTxO**: the NFT-authenticated reference UTxO at `treasury.ak` storing the current treasury group keys and the Bifrost identity root (the completed peg-ins/outs trees live in their own singletons — see *Completed peg-ins trie* / *Completed peg-outs tree*).
 * **Tweak / Tweaked key**: `Y + tagged_hash("TapTweak", Y ‖ merkle_root) · G`, per BIP341 [4].
@@ -336,7 +336,7 @@ Bifrost logic is fully encapsulated in the following solutions:
   * **peg_in.ak**: watchtowers (or anyone) create PegInRequest UTxOs here by minting a PegInRequest NFT and providing a Binocular inclusion proof of the Bitcoin deposit transaction. The datum contains the raw Bitcoin peg-in transaction bytes. SPOs do not have direct access to Bitcoin chain state, so PegInRequest UTxOs serve as their trusted source of Bitcoin deposit data for constructing Treasury Movement transactions.
   * **peg_out.ak**: when a withdrawer wants to unlock the bridged assets on the proper source blockchain, he locks his bridged assets at this smart contract. The datum contains the source blockchain destination address where assets should be sent and the source-chain treasury outpoint the paying Treasury Movement must spend (pinning the peg-out to exactly one possible TM). SPOs read these UTxOs to include peg-out payments in the Treasury Movement transaction.
   * **treasury.ak**: stores the Treasury state UTxO. It carries the currently available Treasury FROST group public keys (for the 51% mode after DKG completes), the federation fallback key $Y_{federation}$, and a Merkle Patricia Trie root for active Bifrost identity bindings `bifrost_id_pk -> pool_id`. Depositors and validators read the current Treasury keys to derive valid spend/mint paths; registration and revocation transactions update the Bifrost-identity trie root to preserve global uniqueness of active Bifrost keys. The completed peg-ins and completed peg-outs trees live in **separate** NFT-authenticated singletons (see below) — deliberately, for contention isolation: fBTC mints and peg-out completions are frequent and permissionless, and co-locating their tries with the SPO state would serialize every mint against registrations, key rotations, and TM confirmations. For the first epoch, the initial Treasury public keys and trie roots are set during protocol bootstrap.
-  * **TreasuryMovementValidator**: signed source blockchain Treasury Movement transactions are posted here (permissionlessly — see *Post signed TM*). The `Unconfirmed` datum contains the serialized signed transaction plus `epoch`, `tm_sequence`, and the poster's reward identity; the swept peg-in and fulfilled peg-out sets are **implicit in the transaction bytes** and are parsed out at the Confirm step. Watchtowers monitor this contract and relay the signed transactions to the source blockchain.
+  * **TreasuryMovementValidator**: signed source blockchain Treasury Movement transactions are posted here (permissionlessly — see *Post signed TM*). The `Unconfirmed` datum contains the serialized signed transaction; the swept peg-in and fulfilled peg-out sets are **implicit in the transaction bytes** and are parsed out at the Confirm step. Ordering comes from the TM chain itself (each record spends its predecessor's treasury output), so the datum carries no sequence fields. Watchtowers monitor this contract and relay the signed transactions to the source blockchain.
   * **bridged_asset.ak**: minting and burning of bridged assets (e.g. fBTC). The depositor mints fBTC by spending the PegInRequest UTxO and providing: a Binocular inclusion proof of the confirmed Treasury Movement transaction, a reference to the corresponding `TreasuryMovementValidator` UTxO (to verify the confirmed transaction matches what SPOs signed and posted), a non-inclusion proof against the completed peg-ins Merkle Patricia Trie in `treasury.ak` (preventing double minting), and a **BIP-322** signature (from the Taproot address whose output key is the beacon's `Q_auth`) proving ownership. The validator verifies the Binocular-confirmed txid matches the `TreasuryMovementValidator` datum (proving the confirmed transaction matches what was posted by the protocol's signing cascade), parses the raw TM transaction to verify the depositor's peg-in txid+vout appears as an input (proving the Treasury Movement actually swept the deposit), verifies the depositor's BIP-322 signature against the `Q_auth` recorded in the PegInDatum (bound to the deposit's beacon at mint time), verifies the peg-in is not already in the completed trie, and mints the correct amount of fBTC to whatever Cardano address the depositor specifies in the transaction outputs. The minting transaction also inserts the peg-in into the completed-peg-ins tree. The withdrawer (authorized by the PegOut datum's `owner_auth`) burns the locked fBTC by spending the PegOut UTxO, providing the raw Treasury Movement transaction with a Binocular inclusion proof of its confirmation; the validator verifies the TM spends the treasury outpoint named in the datum and pays the destination, and records the completion in the completed-peg-outs tree.
 
 ## Components relationships
@@ -800,7 +800,7 @@ is wiring (#19–20 below):
 | 14 | `legit_treasury_movement_and_peg_out_not_produced_verifier_script_hash` | ByteArray (script hash) | **immutable** — peg-out cancel verifier |
 | 15–16 | `treasury_nft_policy_id` / `..._asset_name` | PolicyId / AssetName | **immutable** — Treasury state UTxO identity |
 | 17 | `min_stake` | Int (lovelace) | **vestigial** — kept for positional compatibility with the deployed datum; the authoritative `min_stake` lives in the Operational parameters UTxO |
-| 18 | `genesis_treasury_utxo_id` | ByteArray (36 B: txid ‖ vout LE) | the bridge's initial Bitcoin treasury outpoint; anchor of the **TM chain** (the first-movement branch of the TM linkage check, see *Post signed TM*). Must exist on Bitcoin before the Config mint. |
+| 18 | `initial_btc_treasury_utxo` | ByteArray (36 B: txid ‖ vout LE) | the bridge's initial Bitcoin treasury outpoint; anchor of the **TM chain** (the first-movement branch of the TM linkage check, see *Post signed TM*). Must exist on Bitcoin before the first TM. Re-pointable via a config Update (e.g. after an emergency federation sweep). **Implemented** as field #11 of the deployed 12-field `ConfigDatum` (`lib/bifrost/types/config.ak`), appended via the config Update path. |
 | 19–20 | `operational_params_nft_policy_id` / `..._asset_name` | PolicyId / AssetName | identity of the Operational parameters UTxO (next section) |
 
 Fields 18–20 are appended after the implemented datum's last field (`min_stake`, #17), so the
@@ -981,10 +981,11 @@ operator performs:
 5. **Mint the completed-peg-ins tree NFT** — its UTxO carries the MPF root, initialized to the
    empty root (32 zero bytes).
 6. **Mint the completed-peg-outs tree NFT** — likewise with the empty root.
-7. ~~Mint the TM-control UTxO~~ — **not needed in the normative design**: TM records mint
-   permissionlessly, gated by the TM-chain linkage check against the Config's genesis outpoint or
-   the predecessor Confirmed record (see *Post signed TM*). The currently deployed `TMCTRL`
-   authorized-minter singleton is an interim artifact, retired by this design.
+7. ~~Mint the TM-control UTxO~~ — **removed**: TM records mint permissionlessly, gated by the
+   TM-chain linkage check against the Config's initial treasury outpoint or the predecessor
+   Confirmed record (see *Post signed TM*). The interim `TMCTRL` authorized-minter singleton has
+   been retired: the `TreasuryMovementValidator` is now parameterized by `(oracle script hash,
+   config NFT policy, config NFT asset name)` and its mint branch implements the linkage check.
 8. **Bootstrap the SPO-side state** (see §SPO Bootstrap Flow): the Treasury state NFT + UTxO at
    `treasury.ak` (initial keys and an empty `bifrost_identity_root`), the registration-list root
    (`reg-root`), and the ban-list root (`ban-root`).
@@ -1003,7 +1004,8 @@ operator performs:
     *before* step 4: derive the Phase-1 treasury address (ordinary derivation, internal key = the
     K1 datum key), fund it on Bitcoin with a minimal anchor amount (its value is
     protocol-irrelevant — it exists to anchor the TM chain), wait for confirmation, then record
-    the outpoint as Config field #18. The first TM spends it as Input 0 (see *Post signed TM*).
+    the outpoint as the Config's `initial_btc_treasury_utxo` (implemented field #11). The first
+    TM spends it as Input 0 (see *Post signed TM*).
 
 ## User peg-in flow
 
@@ -1560,7 +1562,7 @@ flowchart LR
   poster["Poster UTxO<br/>fees"] --> tx{{"Post signed TM<br/>MINT: +1 TM NFT"}}
   cfg_ref[["Config UTxO<br/>(reference)"]] -. ref .-> tx
   prev_ref[["Predecessor Confirmed TM<br/>(reference; omitted for the first TM)"]] -. ref .-> tx
-  tx --> unconf["Unconfirmed TM tx UTxO<br/>@ TreasuryMovementValidator<br/>datum: { signed_btc_tx, epoch,<br/>tm_sequence, poster, reward }"]
+  tx --> unconf["Unconfirmed TM tx UTxO<br/>@ TreasuryMovementValidator<br/>datum: { signed_btc_tx }"]
   tx --> change["Change → poster"]
 ```
 
@@ -1569,27 +1571,28 @@ flowchart LR
 | Role | Content |
 |------|---------|
 | **Inputs** | Poster's UTxO — fees + MIN_ADA |
-| **Reference inputs** | Config UTxO — supplies `genesis_treasury_utxo_id` (#18) and the TM policy identities; predecessor `Confirmed TM tx` UTxO (omitted for the first movement) |
-| **Mint** | +1 TM NFT — identity carried through the Unconfirmed → Confirmed lifecycle (records are permanent, see *Confirm TM tx*); minting is permissionless, gated by the linkage check |
-| **Outputs** | `Unconfirmed TM tx` UTxO @ `TreasuryMovementValidator`; datum = `{ signed_btc_tx, epoch, tm_sequence, poster, leader_reward }` (`poster` = the reward identity; `leader_reward` pinned from the Operational params at post — see *Leader reward*) |
+| **Reference inputs** | Config UTxO — supplies `initial_btc_treasury_utxo` (implemented field #11), located by the config NFT (`Genesis` redeemer, first movement only); **or** the predecessor `Confirmed TM tx` UTxO, located by the redeemer's reference-input index and authenticated by its TM NFT (`Chain` redeemer, every subsequent movement) |
+| **Mint** | +1 TM NFT — identity carried through the Unconfirmed → Confirmed lifecycle (records are permanent, see *Confirm TM tx*); minting is permissionless, gated by the linkage check. Redeemer: `TmMintRedeemer = Genesis \| Chain(prev_tm_ref_input_index)` |
+| **Outputs** | `Unconfirmed TM tx` UTxO @ `TreasuryMovementValidator`; datum = `Unconfirmed { signed_btc_tx }` — the single-field shape; ordering and identity come from the TM chain itself, so no sequence/poster fields |
 | **Validity interval** | unconstrained (a stale or out-of-turn post is inert — it can never confirm) |
 | **Required signers** | poster (fee spend) — permissionless |
 | **Size (est.)** | ~10.5–15.5 KB depending on the signing variant and batch size (datum carries the full signed BTC tx, up to ~15 KB). The **16 KB Cardano tx limit is the binding constraint**, and it drives the per-variant max batch sizes listed under *Treasury Movement (Bitcoin)* above. Fee ≈ 0.67 ADA at ~10.5 KB; ≈ 0.9 ADA near the 15 KB ceiling. |
 
-**Checks enforced on-chain**
+**Checks enforced on-chain** (the `TreasuryMovementValidator` mint branch)
 
+* Exactly +1 of the TM NFT is minted, and it is **bound**: the unique output carrying it sits at
+  the TM script address with an inline `Unconfirmed { signed_btc_tx }` datum — without this
+  binding the linkage check would gate nothing.
 * **TM-chain linkage**: input 0 (the treasury input) of `signed_btc_tx` is
-  - the **genesis treasury outpoint** (`genesis_treasury_utxo_id`, Config #18) and `tm_sequence = 0` — the first movement after bridge creation; **or**
-  - `(btc_txid, 0)` of the **referenced predecessor `Confirmed TM tx`** record (authenticated by its TM NFT) and `tm_sequence = predecessor.tm_sequence + 1`.
-* The TM NFT is minted uniquely and paired with exactly one output carrying the declared datum.
-* `leader_reward` in the datum equals the Operational-params value (params UTxO as reference input) — the pin that mints later enforce.
+  - `Genesis`: the **initial treasury outpoint** (`initial_btc_treasury_utxo`, implemented Config field #11, read from the config NFT-authenticated reference input) — the first movement after bridge creation; **or**
+  - `Chain(i)`: `(btc_txid, 0)` of the **referenced predecessor `Confirmed TM tx`** record at reference-input index `i` (authenticated by its TM NFT).
 
 **Checks delegated off-chain**
 
 * `signed_btc_tx` is a well-formed Bitcoin tx with valid signatures that sweeps the frozen PegInRequest / PegOut batch. If malformed, it fails to confirm on Bitcoin and Confirm TM tx never fires — a correct resubmission is required. The peg-in and peg-out sets are implicit in `signed_btc_tx` (Confirm TM tx parses them out).
 
 > **The TM chain — how the treasury pointer works (G15).** There is **no mutable on-chain pointer
-> register**. The Config's genesis outpoint anchors a chain: every Confirmed TM record proves (via
+> register**. The Config's initial treasury outpoint anchors a chain: every Confirmed TM record proves (via
 > the linkage check at post time + Bitcoin confirmation at confirm time) that its treasury input
 > is the genesis outpoint or its predecessor's output 0. Because a Bitcoin outpoint is spendable
 > exactly once, **at most one TM chaining from any given predecessor can ever confirm** — the
@@ -1615,7 +1618,7 @@ flowchart LR
   unconf["Unconfirmed TM tx UTxO"] --> tx{{"Confirm TM tx"}}
   prover["Prover UTxO (fees)"] --> tx
   binoc[["Binocular Oracle<br/>(reference)"]] -. ref .-> tx
-  tx --> conf["Confirmed TM tx UTxO<br/>@ TreasuryMovementValidator<br/>datum: { btc_txid, epoch,<br/>swept_peg_in_utxo_ids,<br/>fulfilled_peg_outs }"]
+  tx --> conf["Confirmed TM tx UTxO<br/>@ TreasuryMovementValidator<br/>datum: { btc_txid,<br/>swept_peg_in_utxo_ids,<br/>fulfilled_peg_outs }"]
   tx --> change["Change → prover"]
 ```
 
@@ -1626,7 +1629,7 @@ flowchart LR
 | **Inputs** | `Unconfirmed TM tx` UTxO; Prover UTxO (fees) |
 | **Reference inputs** | Binocular Oracle — supplies the confirmed-chain root |
 | **Mint** | — (the TM NFT is carried over to the Confirmed output) |
-| **Outputs** | `Confirmed TM tx` UTxO @ `TreasuryMovementValidator` — datum = `{ btc_txid, epoch, tm_sequence, poster, swept_peg_in_utxo_ids, fulfilled_peg_outs: [{scriptPubKey, amount}] }` (`epoch`, `tm_sequence`, `poster`, `leader_reward` carried from the Unconfirmed input) |
+| **Outputs** | `Confirmed TM tx` UTxO @ `TreasuryMovementValidator` — datum = `Confirmed { btc_txid, swept_peg_in_utxo_ids, fulfilled_peg_outs: [{scriptPubKey, amount}] }` — the lean three-field shape; ordering comes from the chain, so no sequence/poster fields |
 | **Witness data (redeemer)** | Merkle proof of `btc_txid` in a BTC block header; Binocular inclusion proof of that block header (the raw BTC tx itself is read from the consumed `Unconfirmed` datum, not duplicated) |
 | **Validity interval** | unconstrained |
 | **Required signers** | prover (fee spend) — permissionless |
@@ -1638,7 +1641,7 @@ flowchart LR
 * `btc_txid` is Merkle-included in the supplied block header.
 * That block header is in Binocular's confirmed-chain root.
 * `Confirmed` datum fields (`swept_peg_in_utxo_ids`, `fulfilled_peg_outs`) are populated by parsing the inputs and outputs of `Unconfirmed.signed_btc_tx` respectively. The old treasury input and the new treasury output are included in these lists — they are inert, because no PegInRequest can satisfy the depositor Schnorr-sig check against the TM tx's inputs (no `BFR` OP_RETURN), and no PegOut will match the new treasury destination + amount.
-* TM NFT is carried from the Unconfirmed input to the Confirmed output (preserving identity), together with the `epoch`, `tm_sequence`, and `poster` datum fields — the Confirmed record thereby becomes a link of the **TM chain** (see *Post signed TM*): its `btc_txid` is the txid of the current treasury outpoint until the next record extends the chain.
+* TM NFT is carried from the Unconfirmed input to the Confirmed output (preserving identity) — the Confirmed record thereby becomes a link of the **TM chain** (see *Post signed TM*): its `btc_txid` is the txid of the current treasury outpoint until the next record extends the chain.
 
 <!-- G17ii, ratified 2026-07-15: records are permanent; no GC path. -->
 TM records are **permanent** — there is deliberately no garbage-collection path. Reclaiming a
@@ -3382,7 +3385,7 @@ After FROST signing completes, a single SPO must submit the result on Cardano �
 
 `leader_index = hash("bifrost-leader" || prev_tm_txid || tm_sequence) mod roster_size`
 
-where `prev_tm_txid` is the `btc_txid` of the predecessor `Confirmed TM tx` record — the TM-chain tip, equivalently the txid of the current treasury outpoint (the genesis outpoint's txid for the first movement) — and `tm_sequence` is the sequence number of the current TM within the epoch (0-indexed, carried in the TM record datum and enforced by the linkage check). For key publication after DKG, `tm_sequence` is replaced by the literal `"dkg"`.
+where `prev_tm_txid` is the `btc_txid` of the predecessor `Confirmed TM tx` record — the TM-chain tip, equivalently the txid of the current treasury outpoint (the initial treasury outpoint's txid for the first movement) — and `tm_sequence` is the sequence number of the current TM within the epoch (0-indexed; an off-chain signing-namespace counter — the on-chain TM datum carries no sequence field, ordering comes from the chain). For key publication after DKG, `tm_sequence` is replaced by the literal `"dkg"`.
 
 **Timeout cascade.** If the primary leader does not submit within $T$ slots (protocol parameter, e.g. 60 slots ≈ 1 minute), the next SPO in roster order becomes eligible. After another $T$ slots the next one, and so on (wrapping around). Concretely, SPO at roster index $i$ becomes eligible at slot:
 
@@ -3609,7 +3612,7 @@ Bifrost's watchtower design relies on a minimal trust assumption: only one hones
 
 | Parameter(s) | Home | Kind | Consumers |
 |---|---|---|---|
-| wiring #0–16, `genesis_treasury_utxo_id` (#18), params NFT identity (#19–20) | Config datum | immutable (instance identity) | all validators, as reference input |
+| wiring #0–16, `initial_btc_treasury_utxo` (#18; implemented #11), params NFT identity (#19–20) | Config datum | immutable (instance identity) | all validators, as reference input |
 | `min_stake` | Operational params #0 | updatable | off-chain candidate enumeration |
 | `fee_rate_sat_per_vb` | Operational params #1 | updatable (effect: next batch) | TM builders |
 | `per_pegout_fee` (floor) | Operational params #2 | updatable (effect: next batch) | skip rule; pinned copies in PegOutDatums |

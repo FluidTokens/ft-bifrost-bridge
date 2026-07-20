@@ -29,7 +29,7 @@
 **Interfaces:**
 - Produces: `ConfigDatum.initial_btc_treasury_utxo: ByteArray` (field index 11), `get_initial_btc_treasury_utxo(config_fields: List<Data>) -> ByteArray`.
 
-- [ ] **Step 1: Add the field, getter, and pin-test line**
+- [x] **Step 1: Add the field, getter, and pin-test line**
 
 In `ConfigDatum`, after `update_auth`:
 
@@ -56,12 +56,12 @@ In `config_getters_match_datum_fields`, add to the datum literal
 `initial_btc_treasury_utxo: #"aa11",` and to the `and { }` block
 `get_initial_btc_treasury_utxo(fields) == datum.initial_btc_treasury_utxo,`.
 
-- [ ] **Step 2: Run checks**
+- [x] **Step 2: Run checks**
 
 Run: `cd onchain && aiken check`
 Expected: all tests pass, including the pin test. Fix any fixture in the repo that constructs `ConfigDatum` (search: `rg -l 'ConfigDatum {' onchain`) by appending the new field.
 
-- [ ] **Step 3: `aiken build` and commit**
+- [x] **Step 3: `aiken build` and commit**
 
 Run: `cd onchain && aiken build` (regenerates `plutus.json`).
 
@@ -83,7 +83,7 @@ git add onchain && git commit -m "feat(onchain): config field 11 initial_btc_tre
   `TreasuryMovementValidator.validate(oracleScriptHash, configNftPolicy, configNftName, scData)`.
 - Deletes: `TmControlDatum`, `findControlInput`, `signedByAuthority`, control-NFT params.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Rewrite the mint fixtures/tests in `TreasuryMovementValidatorTest.scala`. Replace `controlNftPolicy`/`controlNftName`/`authorityPkh`/`controlRefInput`/`mintContext` and the five mint tests with:
 
@@ -275,12 +275,12 @@ Mint tests (replace the old five):
     }
 ```
 
-- [ ] **Step 2: Run tests, verify the new ones fail to compile**
+- [x] **Step 2: Run tests, verify the new ones fail to compile**
 
 Run: `cd offchain/bitcoin-watchtower/binocular && sbt "testOnly binocular.TreasuryMovementValidatorTest"`
 Expected: compile error (`TmMintRedeemer` not found).
 
-- [ ] **Step 3: Implement the validator changes**
+- [x] **Step 3: Implement the validator changes**
 
 In `TreasuryMovementValidator.scala`:
 
@@ -443,12 +443,12 @@ match how `ChainState` handling decodes raw fields elsewhere in the file.)
 7. Update the file's top scaladoc: delete step 6 "NOT YET ENFORCED" and describe
    mint-time linkage instead.
 
-- [ ] **Step 4: Run tests until green**
+- [x] **Step 4: Run tests until green**
 
 Run: `cd offchain/bitcoin-watchtower/binocular && sbt "testOnly binocular.TreasuryMovementValidatorTest"`
 Expected: PASS (all confirm-path tests unchanged and passing too).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A && git commit -m "feat(tm): permissionless TM mint gated by confirmed-chain linkage"
@@ -473,7 +473,7 @@ git add -A && git commit -m "feat(tm): permissionless TM mint gated by confirmed
 - Consumes: `TreasuryMovementContract.contract(oracleScriptHash, configNftPolicy, configNftName)` from Task 2.
 - Produces: `ConfigDatum.initialBtcTreasuryUtxo: ByteString` (12th field); `BridgeConfig.initialBtcTreasuryUtxo: String` (`TXID:VOUT` display form); helper `outpointFromDisplay(s: String): ByteString` that reverses the txid hex to internal order and appends the 4-byte LE vout.
 
-- [ ] **Step 1: ConfigDatum + BridgeConfig**
+- [x] **Step 1: ConfigDatum + BridgeConfig**
 
 Append to `ConfigDatum` (and extend the layout comment: "11 initial_btc_treasury_utxo"):
 
@@ -508,7 +508,7 @@ object BridgeConfig {
 }
 ```
 
-- [ ] **Step 2: DeployBridgeCommand**
+- [x] **Step 2: DeployBridgeCommand**
 
 - Remove the TMCTRL one-shot ref, `TmControlAssetName` const, control-UTxO output
   (`TmControlDatum(...)`), and the `--authorized-minter` option/validation.
@@ -519,7 +519,7 @@ object BridgeConfig {
   `initialBtcTreasuryUtxo = BridgeConfig.outpointFromDisplay(bridgeConfig.initialBtcTreasuryUtxo)`
   (fail fast with a clear message when unset).
 
-- [ ] **Step 3: TmScriptCommand / CreateTmtxCommand / ConfirmTmtxCommand**
+- [x] **Step 3: TmScriptCommand / CreateTmtxCommand / ConfirmTmtxCommand**
 
 - `TmScriptCommand`: build the script from `(oracle hash, config NFT policy, config NFT name)`;
   replace the "tm-control-nft-policy unset" warning with a config-NFT-unset warning.
@@ -530,7 +530,7 @@ object BridgeConfig {
 - Sweep `src/main/resources` and `example/` configs for `tm-control` / `tm-authorized-minter`
   keys: delete them, add `initial-btc-treasury-utxo = ""` where bridge config lives.
 
-- [ ] **Step 4: Full test run and commit**
+- [x] **Step 4: Full test run and commit**
 
 Run: `cd offchain/bitcoin-watchtower/binocular && sbt test`
 Expected: PASS. `BinocularBlueprintTest`/`BifrostContractsTest` may pin script hashes or blueprint
@@ -552,7 +552,7 @@ git add -A && git commit -m "feat(bridge): config-anchored TM deploy, drop TM co
 - Consumes: `ConfigDatum` (12 fields) from Task 3; the deployed config UTxO located by config NFT.
 - Produces: CLI `update-config --initial-btc-treasury-utxo TXID:VOUT --peg-in-withdraw-hash HEX`.
 
-- [ ] **Step 1: Implement the command**
+- [x] **Step 1: Implement the command**
 
 Follow the structure of `ConfirmTmtxCommand`/`TreasuryMovementTx.buildAndSubmitConfirm` for wallet,
 provider, and submission plumbing, and `DeployBridgeCommand` for locating the config script/NFT:
@@ -568,7 +568,7 @@ provider, and submission plumbing, and `DeployBridgeCommand` for locating the co
    (`oracle.owner-pkh` wallet — same signing setup the deploy command uses).
 5. Print the old and new datum hex and the tx hash.
 
-- [ ] **Step 2: Test**
+- [x] **Step 2: Test**
 
 `sbt compile` + a unit test for the datum rewrite function (pure: fields list in, fields list
 out) in `src/test/scala/binocular/cli/`:
@@ -585,7 +585,7 @@ test("update-config datum rewrite appends field 11 and swaps field 4") {
 
 (Expose the pure rewrite as `UpdateConfigCommand.rewriteFields(fields, newPegInHash, anchor)`.)
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add -A && git commit -m "feat(cli): update-config command - append treasury anchor, swap peg-in hash"
@@ -609,7 +609,7 @@ git add -A && git commit -m "feat(cli): update-config command - append treasury 
   `tm_chain::parse_confirmed_datum(data: &PlutusData) -> Option<([u8; 32], [u8; 36], u64)>`;
   `outpoint_bytes(op: &bitcoin::OutPoint) -> [u8; 36]`.
 
-- [ ] **Step 1: Write failing tests in `tm_chain.rs`**
+- [x] **Step 1: Write failing tests in `tm_chain.rs`**
 
 ```rust
 #[cfg(test)]
@@ -668,13 +668,13 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run tests, verify failure**
+- [x] **Step 2: Run tests, verify failure**
 
 Run: `cd offchain/SPO/heimdall && cargo test tm_chain`
 Expected: compile error (module not found). Add `pub mod tm_chain;` to `src/cardano/mod.rs` first
 so the failure is the missing types, not the missing module.
 
-- [ ] **Step 3: Implement `tm_chain.rs`**
+- [x] **Step 3: Implement `tm_chain.rs`**
 
 ```rust
 //! Walk the Treasury Movement Confirmed chain.
@@ -761,12 +761,12 @@ pub fn parse_confirmed_datum(data: &PlutusData) -> Option<([u8; 32], [u8; 36], u
 (Adjust the `BigInt`/`Array` pattern names to the pallas version in `Cargo.lock`; `swept.first()`
 on a `MaybeIndefArray` may need `.iter().next()`.)
 
-- [ ] **Step 4: Run tests until green**
+- [x] **Step 4: Run tests until green**
 
 Run: `cargo test tm_chain`
 Expected: PASS.
 
-- [ ] **Step 5: config.rs + toml cleanup**
+- [x] **Step 5: config.rs + toml cleanup**
 
 - Delete from `BitcoinConfig`: `treasury_txid`, `treasury_vout`, `treasury_amount_sat` (+ defaults).
   Fix all usages: `rg 'treasury_txid|treasury_vout|treasury_amount_sat' src/` - the SPO daemon
@@ -787,7 +787,7 @@ Expected: PASS.
 - `heimdall.toml` / `heimdall.testnet4.toml`: remove the deleted keys and their comment blocks;
   add the three new `[cardano]` keys with comments.
 
-- [ ] **Step 6: blockfrost_chain.rs rewrite of `query_treasury` + submit tracking**
+- [x] **Step 6: blockfrost_chain.rs rewrite of `query_treasury` + submit tracking**
 
 - Struct: drop `tm_control_ref`; add `config_address: Option<String>`,
   `config_nft_unit: Option<String>` (policy+name concatenated), and
@@ -857,7 +857,7 @@ Expected: PASS.
   these fresh inside `submit_signed_tm` (one `query_config_anchor`-style lookup returning also
   the UTxO ref; extend the helper to return `(anchor, (tx_hash, index))`).
 
-- [ ] **Step 7: publish.rs redeemer + reference input**
+- [x] **Step 7: publish.rs redeemer + reference input**
 
 Replace the `control_ref` parameter of `build_oracle_update_tx` with:
 
@@ -888,13 +888,13 @@ Replace the `control_ref` parameter of `build_oracle_update_tx` with:
 - Update the module doc comment: the marker is the real TM NFT gated by chain linkage; the
   always-ok scaffold remains the no-script fallback.
 
-- [ ] **Step 8: main.rs wiring**
+- [x] **Step 8: main.rs wiring**
 
 `apply_tm_policy` (src/main.rs:776-795): drop the `tm_control_ref` pairing logic; when
 `tm_script_cbor` is set, require `config_address`/`config_nft_policy_id` set too and call
 `chain.with_tm_policy(cbor).with_config_utxo(addr, unit)`.
 
-- [ ] **Step 9: Full test run and commit**
+- [x] **Step 9: Full test run and commit**
 
 Run: `cargo test` and `cargo clippy --all-targets`
 Expected: PASS; fix fallout (MockCardanoChain in `src/epoch/` implements the same trait - it
@@ -916,7 +916,7 @@ git add -A && git commit -m "feat(treasury): resolve treasury via confirmed TM c
 - Modify: `offchain/SPO/heimdall/Design.md`, `offchain/SPO/heimdall/DecisionsLog.md`
 - Modify: binocular docs mentioning TMCTRL / authorized minter (`rg -l 'TMCTRL|authorized.minter' docs/ *.md`)
 
-- [ ] **Step 1: technical_documentation.md**
+- [x] **Step 1: technical_documentation.md**
 
 - "Post signed TM": replace the authorized-minter/level-B text with the permissionless
   chain-linkage mint (Genesis/Chain redeemer, checks list from the spec).
@@ -926,7 +926,7 @@ git add -A && git commit -m "feat(treasury): resolve treasury via confirmed TM c
 - Keep the lean `Confirmed` shape as normative (drop `epoch`/`tm_sequence`/`poster`/
   `leader_reward` from the datum descriptions; note ordering comes from the chain).
 
-- [ ] **Step 2: Heimdall Design.md + DecisionsLog.md**
+- [x] **Step 2: Heimdall Design.md + DecisionsLog.md**
 
 - Design.md section 6.2/4.x: treasury input source is the Confirmed-chain tip (config anchor at
   genesis), not local config.
@@ -935,7 +935,7 @@ git add -A && git commit -m "feat(treasury): resolve treasury via confirmed TM c
   TM Control NFT removed), consequences (local treasury config deleted; `btc_confirmed` =
   own-submitted txid reached the tip).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add -A && git commit -m "docs: TM confirmed-chain treasury tracking"
@@ -948,7 +948,7 @@ git add -A && git commit -m "docs: TM confirmed-chain treasury tracking"
 **Files:**
 - Create: `documentation/tm-chain-migration-runbook.md`
 
-- [ ] **Step 1: Write the runbook**
+- [x] **Step 1: Write the runbook**
 
 Operator steps (not executable in this session - requires keys):
 
@@ -966,7 +966,7 @@ Operator steps (not executable in this session - requires keys):
 7. Verify: heimdall `query_treasury` resolves the anchor (genesis state), post a TM, watch
    binocular confirm it, verify the next epoch chains from the Confirmed record.
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add documentation/tm-chain-migration-runbook.md && git commit -m "docs: TM chain preprod migration runbook"
