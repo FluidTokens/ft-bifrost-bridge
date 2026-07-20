@@ -185,3 +185,30 @@ else.
 - Heimdall `Design.md` update + new DecisionsLog entry (chain-walk treasury
   resolution, removal of local treasury config).
 - Binocular docs where they mention TMCTRL / authorized minter.
+
+## Addendum (2026-07-20): TM record provenance and grace-period GC
+
+Supersedes the "out of scope" note above for Confirmed-record cleanup.
+
+- `TmDatum` gains provenance on both variants: `creator` (the poster's payment
+  key hash) and `created` (POSIX ms), carried verbatim through the Confirm
+  transition.
+- A `Confirmed` record becomes spendable by its creator after a 30-day grace
+  period (`created + 30d`): the spend must burn the TM NFT, be signed by the
+  creator, and have a validity interval entirely after the deadline. By then
+  all swept peg-ins / fulfilled peg-outs are expected to be completed, so the
+  record is no longer needed as proof material and its min-ADA is reclaimed.
+- `created` is anchored at mint: the mint requires
+  `validRange.isEntirelyBefore(created + 1h)` (a finite `invalid_hereafter`),
+  so a permissionless poster cannot backdate `created` to shortcut the timer.
+- The mint additionally requires the TM NFT (empty asset name) to be the ONLY
+  asset name touched under the TM policy in the tx.
+- Operational rule (accepted residual risk): the creator must not GC the
+  chain-TIP record — the next TM's `Chain` mint references it. While active,
+  a successor lands well within the grace period; after a >30-day quiet
+  spell, recovery is a config Update re-anchoring `initial_btc_treasury_utxo`.
+- Off-chain: heimdall posts `[signed_btc_tx, creator = wallet pkh,
+  created = latest block time ms]` with `invalid_hereafter = latest slot +
+  30 min`; binocular's confirm carries creator/created into the Confirmed
+  datum; parsers accept the extended shapes.
+- Stale `Unconfirmed` records remain unreclaimable (unchanged).

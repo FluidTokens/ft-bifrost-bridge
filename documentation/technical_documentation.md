@@ -1562,7 +1562,7 @@ flowchart LR
   poster["Poster UTxO<br/>fees"] --> tx{{"Post signed TM<br/>MINT: +1 TM NFT"}}
   cfg_ref[["Config UTxO<br/>(reference)"]] -. ref .-> tx
   prev_ref[["Predecessor Confirmed TM<br/>(reference; omitted for the first TM)"]] -. ref .-> tx
-  tx --> unconf["Unconfirmed TM tx UTxO<br/>@ TreasuryMovementValidator<br/>datum: { signed_btc_tx }"]
+  tx --> unconf["Unconfirmed TM tx UTxO<br/>@ TreasuryMovementValidator<br/>datum: { signed_btc_tx,<br/>creator, created }"]
   tx --> change["Change → poster"]
 ```
 
@@ -1572,17 +1572,21 @@ flowchart LR
 |------|---------|
 | **Inputs** | Poster's UTxO — fees + MIN_ADA |
 | **Reference inputs** | Config UTxO — supplies `initial_btc_treasury_utxo` (implemented field #11), located by the redeemer's reference-input index and authenticated by the config NFT (`Genesis` redeemer, first movement only); **or** the predecessor `Confirmed TM tx` UTxO, located by the redeemer's reference-input index and authenticated by its TM NFT (`Chain` redeemer, every subsequent movement) |
-| **Mint** | +1 TM NFT — identity carried through the Unconfirmed → Confirmed lifecycle (records are permanent, see *Confirm TM tx*); minting is permissionless, gated by the linkage check. Redeemer: `TmMintRedeemer = Genesis(config_ref_input_index) \| Chain(prev_tm_ref_input_index)` |
-| **Outputs** | `Unconfirmed TM tx` UTxO @ `TreasuryMovementValidator`; datum = `Unconfirmed { signed_btc_tx }` – the single-field shape; ordering and identity come from the TM chain itself, so no sequence/poster fields |
-| **Validity interval** | unconstrained (a stale or out-of-turn post is inert — it can never confirm) |
+| **Mint** | +1 TM NFT — identity carried through the Unconfirmed → Confirmed lifecycle (records live until the creator GCs them after the grace period, see *Confirm TM tx*); minting is permissionless, gated by the linkage check. Redeemer: `TmMintRedeemer = Genesis(config_ref_input_index) \| Chain(prev_tm_ref_input_index)` |
+| **Outputs** | `Unconfirmed TM tx` UTxO @ `TreasuryMovementValidator`; datum = `Unconfirmed { signed_btc_tx, creator, created }` – `creator` (the poster's payment key hash) may reclaim the record's min-ADA after the GC grace period; `created` (POSIX ms) starts that timer. Ordering still comes from the TM chain itself, so no sequence fields |
+| **Validity interval** | finite `invalid_hereafter` REQUIRED: the mint anchors `created` to the validity upper bound (`validRange.isEntirelyBefore(created + 1h)`), so the GC timer cannot be backdated. A stale or out-of-turn post is still inert — it can never confirm |
 | **Required signers** | poster (fee spend) — permissionless |
 | **Size (est.)** | ~10.5–15.5 KB depending on the signing variant and batch size (datum carries the full signed BTC tx, up to ~15 KB). The **16 KB Cardano tx limit is the binding constraint**, and it drives the per-variant max batch sizes listed under *Treasury Movement (Bitcoin)* above. Fee ≈ 0.67 ADA at ~10.5 KB; ≈ 0.9 ADA near the 15 KB ceiling. |
 
 **Checks enforced on-chain** (the `TreasuryMovementValidator` mint branch)
 
-* Exactly +1 of the TM NFT is minted, and it is **bound**: the unique output carrying it sits at
-  the TM script address with an inline `Unconfirmed { signed_btc_tx }` datum – without this
-  binding the linkage check would gate nothing.
+* Exactly +1 of the TM NFT is minted — and it is the ONLY asset name touched under the TM policy
+  in this tx — and it is **bound**: the output carrying it sits at the TM script address with an
+  inline `Unconfirmed { signed_btc_tx, creator, created }` datum – without this binding the
+  linkage check would gate nothing.
+* `created` is anchored to the tx's validity interval: `validRange.isEntirelyBefore(created +
+  1h)` — forces a finite `invalid_hereafter` and prevents backdating `created` to shortcut the
+  GC grace period.
 * **TM-chain linkage**: input 0 (the treasury input) of `signed_btc_tx` is
   - `Genesis(i)`: the **initial treasury outpoint** (`initial_btc_treasury_utxo`, implemented Config field #11, read from the reference input at index `i`, which must carry the config NFT) — the first movement after bridge creation; **or**
   - `Chain(i)`: `(btc_txid, 0)` of the **referenced predecessor `Confirmed TM tx`** record at reference-input index `i` (authenticated by its TM NFT).
@@ -1618,7 +1622,7 @@ flowchart LR
   unconf["Unconfirmed TM tx UTxO"] --> tx{{"Confirm TM tx"}}
   prover["Prover UTxO (fees)"] --> tx
   binoc[["Binocular Oracle<br/>(reference)"]] -. ref .-> tx
-  tx --> conf["Confirmed TM tx UTxO<br/>@ TreasuryMovementValidator<br/>datum: { btc_txid,<br/>swept_peg_in_utxo_ids,<br/>fulfilled_peg_outs }"]
+  tx --> conf["Confirmed TM tx UTxO<br/>@ TreasuryMovementValidator<br/>datum: { btc_txid,<br/>swept_peg_in_utxo_ids,<br/>fulfilled_peg_outs,<br/>creator, created }"]
   tx --> change["Change → prover"]
 ```
 
@@ -1629,7 +1633,7 @@ flowchart LR
 | **Inputs** | `Unconfirmed TM tx` UTxO; Prover UTxO (fees) |
 | **Reference inputs** | Binocular Oracle — supplies the confirmed-chain root |
 | **Mint** | — (the TM NFT is carried over to the Confirmed output) |
-| **Outputs** | `Confirmed TM tx` UTxO @ `TreasuryMovementValidator` — datum = `Confirmed { btc_txid, swept_peg_in_utxo_ids, fulfilled_peg_outs: [{scriptPubKey, amount}] }` – the lean three-field shape; ordering comes from the chain, so no sequence/poster fields |
+| **Outputs** | `Confirmed TM tx` UTxO @ `TreasuryMovementValidator` — datum = `Confirmed { btc_txid, swept_peg_in_utxo_ids, fulfilled_peg_outs: [{scriptPubKey, amount}], creator, created }` – `creator`/`created` carried verbatim from the Unconfirmed input (they drive the GC path); ordering comes from the chain, so no sequence fields |
 | **Witness data (redeemer)** | Merkle proof of `btc_txid` in a BTC block header; Binocular inclusion proof of that block header (the raw BTC tx itself is read from the consumed `Unconfirmed` datum, not duplicated) |
 | **Validity interval** | unconstrained |
 | **Required signers** | prover (fee spend) — permissionless |
@@ -1643,12 +1647,19 @@ flowchart LR
 * `Confirmed` datum fields (`swept_peg_in_utxo_ids`, `fulfilled_peg_outs`) are populated by parsing the inputs and outputs of `Unconfirmed.signed_btc_tx` respectively. The old treasury input and the new treasury output are included in these lists — they are inert, because no PegInRequest can satisfy the depositor Schnorr-sig check against the TM tx's inputs (no `BFR` OP_RETURN), and no PegOut will match the new treasury destination + amount.
 * TM NFT is carried from the Unconfirmed input to the Confirmed output (preserving identity) — the Confirmed record thereby becomes a link of the **TM chain** (see *Post signed TM*): its `btc_txid` is the txid of the current treasury outpoint until the next record extends the chain.
 
-<!-- G17ii, ratified 2026-07-15: records are permanent; no GC path. -->
-TM records are **permanent** — there is deliberately no garbage-collection path. Reclaiming a
-record's min-ADA would require on-chain claim tracking ("has every swept peg-in been minted?")
-for negligible recovery, and the Confirmed records double as the TM chain's on-chain history.
-Likewise a stale `Unconfirmed` record — a dead fork, a genesis-linked repost, a superseded
-fee-bump loser — simply remains inert forever; its min-ADA is the cost of posting.
+<!-- G17ii (records permanent, no GC) superseded 2026-07-20: grace-period GC by the creator. -->
+**Garbage collection (grace-period reclaim).** A `Confirmed` record is spendable by its
+**creator** once its grace period elapses: the spend must burn the TM NFT, carry the creator's
+signature, and have a validity interval entirely after `created + 30 days`. By then every swept
+peg-in / fulfilled peg-out is expected to be completed, so the record is no longer needed as
+proof material; the creator reclaims the min-ADA. `created` cannot be backdated (anchored at
+mint), so the grace period is real. **Operational rule**: the creator must NOT GC the chain-TIP
+record — the next TM's `Chain` mint references it (and `Genesis` no longer applies once the
+anchor outpoint is spent). While the bridge is active a successor lands well within the grace
+period; after a >30-day quiet spell, recovery is a config Update re-anchoring
+`initial_btc_treasury_utxo` to the current treasury outpoint. A stale `Unconfirmed` record — a
+dead fork, a superseded fee-bump loser — still remains inert forever; its min-ADA is the cost of
+posting.
 
 ### Complete peg-in / mint fBTC (Cardano)
 
