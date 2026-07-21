@@ -1,8 +1,6 @@
 import { Core } from "@blaze-cardano/sdk";
 
 import {
-  DEMO_FAULT_EVIDENCE_HASH,
-  DEMO_FAULT_NAMESPACE_HASH,
   DEMO_BIFROST_URL,
   DEMO_SPOS_FROST_KEY,
   DEMO_TREASURY_ADDRESS,
@@ -266,23 +264,25 @@ export function banWithdrawRedeemer(args: {
   ]);
 }
 
-export function faultProofDatum(poolId: string): Core.PlutusData {
-  return constrData(0, [
-    constrData(0, []),
-    bytesData(poolId),
-    bytesData(DEMO_FAULT_NAMESPACE_HASH),
-    bytesData(DEMO_FAULT_EVIDENCE_HASH),
-  ]);
-}
-
-export function faultProofPublishRedeemer(args: {
-  inputRef: OutputRef;
+export function equivocationPublishRedeemer(args: {
+  registrationRefInputIndex: number;
   poolId: string;
+  payloadA: string;
+  signatureA: string;
+  payloadB: string;
+  signatureB: string;
+  evidenceHash: string;
 }): Core.PlutusData {
   return constrData(0, [
-    outputRefData(args.inputRef),
-    bytesData(args.poolId),
-    faultProofDatum(args.poolId),
+    constrData(0, [
+      intData(args.registrationRefInputIndex),
+      bytesData(args.poolId),
+      bytesData(args.payloadA),
+      bytesData(args.signatureA),
+      bytesData(args.payloadB),
+      bytesData(args.signatureB),
+      bytesData(args.evidenceHash),
+    ]),
   ]);
 }
 

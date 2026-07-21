@@ -22,7 +22,7 @@ import {
   bootstrapTreasuryState,
   createBootstrapNonceUtxos,
   deregisterDemoSpo,
-  publishMockFaultProof,
+  publishEquivocationFaultProof,
   registerBanWithdrawCredential,
   registerDemoSpo,
 } from "./transactions.js";
@@ -94,9 +94,9 @@ async function main(): Promise<void> {
   );
   await registerBanWithdrawCredential(blaze, wallet, scripts, state);
 
-  // Showcase phase: exercise every zkFold-owned SPO script path once.
+  // Showcase phase: register, prove a direct fault, apply the ban, then deregister.
   await registerDemoSpo(blaze, provider, wallet, scripts, state);
-  await publishMockFaultProof(blaze, wallet, scripts, state);
+  await publishEquivocationFaultProof(blaze, provider, wallet, scripts, state);
   await applyFirstBan(blaze, provider, wallet, scripts, state);
   await deregisterDemoSpo(blaze, provider, wallet, scripts, state);
 

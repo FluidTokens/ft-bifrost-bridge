@@ -108,7 +108,7 @@ This section collects the acronyms, protocol terms, on-chain validators, mathema
 * **Depositor**: user who locks BTC on Bitcoin to mint fBTC on Cardano.
 * **Eligible roster**: `registration_list \ active_ban_list` for the relevant protocol time.
 * **Epoch boundary**: Cardano epoch transition; the moment registration snapshots, stake distribution snapshots, and roster handoffs occur.
-* **Equivocation**: two distinct signed payloads from the same SPO under the same `namespace_hash`.
+* **Equivocation**: two distinct signed DKG payloads from the same SPO for the same protocol namespace.
 * **FaultProof token**: singleton NFT minted by an authorized fault verifier policy after a direct fault is established. Its token name is `blake2b_256(pool_id || evidence_hash)`, and `spo_bans.ak` consumes it to apply a ban.
 * **Federation / $Y_{federation}$**: pre-defined fallback signing entity used for emergency Treasury Movement signing.
 * **Group public key ($Y$, $Y_{51}$)**: FROST aggregate public key produced by the DKG.
@@ -119,7 +119,7 @@ This section collects the acronyms, protocol terms, on-chain validators, mathema
 * **Leader (TM submission)**: SPO selected (with timeout cascade) to post the signed TM to Cardano (see §Cardano submission and leader reward).
 * **Live subset**: SPOs that published valid Round 1 payloads before the Round 1 deadline of an attempt.
 * **Mode (`51` / federation)**: active threshold path used for the current TM signing attempt.
-* **`namespace_hash`**: `blake2b_256(phase ‖ epoch ‖ threshold_or_mode ‖ attempt ‖ txid?)`, scoping a fault to a single protocol round.
+* **Protocol namespace**: the canonical domain/version, round tag, epoch, threshold label or mode, attempt, and sender pool identity that scope a signed payload to one protocol round.
 * **New roster**: roster derived from registrations at the upcoming epoch boundary; takes control after treasury handoff.
 * **PegInRequest**: UTxO at `peg_in.ak` carrying the raw Bitcoin peg-in transaction and an NFT, marking a confirmed deposit available for SPOs to sweep.
 * **PegOut request**: UTxO at `peg_out.ak` locking fBTC plus MIN_ADA with a Bitcoin destination address in the datum.
@@ -154,7 +154,7 @@ Source code for the Aiken validators listed here is published in the Bifrost on-
 | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
 | `spos_registry.ak`     | Pool-scoped registration linked-list.                                                                                                             |
 | `spo_bans.ak`          | Pool-scoped temporary and permanent ban linked-list; consumes authorized `FaultProof` tokens to apply bans.                                       |
-| `fault_verifier.ak`    | Mock verifier policy for direct-fault records. Production uses separate authorized policies for Round 1, Round 2, and equivocation faults.          |
+| `fault-verifier-round1.ak`, `fault-verifier-round2.ak`, `fault-verifier-equivocation.ak` | Specialized policies that authorize DKG Round 1 faults, DKG Round 2 faults, and DKG equivocation faults. |
 | `peg_in.ak`            | Holds PegInRequest UTxOs created from confirmed Bitcoin deposits.                                                                                 |
 | `peg_out.ak`           | Holds PegOut UTxOs from withdrawers; consumed once the TM is confirmed on Bitcoin.                                                                |
 | `completed-peg-outs-merkle-tree.ak` | NFT-authenticated singleton holding the MPF root of completed peg-outs (keyed by PegOut UTxO outpoint); spent and recreated on every completion. |
@@ -331,7 +331,7 @@ Bifrost logic is fully encapsulated in the following solutions:
   * **config.ak**: mints the one-shot Config NFT and holds the Config UTxO — the immutable spine of the instance, recording every cross-referenced script hash, token identity, and the genesis treasury outpoint (see §Config UTxO). All other validators locate their peers by reading it as a reference input; it is never spent. The tunable values live in the separate **Operational parameters UTxO** (group-signed updates, read by no on-chain validator — see §Operational parameters UTxO).
   * **spos_registry.ak**: SPOs that participate in Bifrost need to register here for the next upcoming epoch. The registry maintains the pool-scoped registration linked-list on-chain. Registration entries are keyed by `pool_id = blake2b_224(cold_vkey)` and store the authorized `bifrost_id_pk` and `bifrost_url` used by the off-chain SPO protocol.
   * **spo_bans.ak**: maintains the pool-scoped ban linked-list on-chain. It consumes verified direct-fault tokens from an allow-list of fault verifier policies and applies time-based ban updates.
-  * **fault_verifier.ak**: mock verifier policy for direct SPO fault evidence. Production uses separate verifier policies for DKG Round 1 faults, DKG Round 2 faults, and equivocation faults. Other scripts, including `spo_bans.ak`, consume the resulting tokens instead of re-verifying the raw evidence.
+  * **fault-verifier-round1.ak / fault-verifier-round2.ak / fault-verifier-equivocation.ak**: specialized verifier policies for DKG Round 1 invalid payloads, DKG Round 2 invalid payloads, and DKG equivocation. Other scripts, including `spo_bans.ak`, consume the resulting tokens instead of re-verifying the raw evidence.
   * **Binocular**: The watchtowers (anyone) post the best chain of blocks here, other watchtowers eventually challenge it by posting a better version and the winner gets rewarded by the end of the availability window.
   * **peg_in.ak**: watchtowers (or anyone) create PegInRequest UTxOs here by minting a PegInRequest NFT and providing a Binocular inclusion proof of the Bitcoin deposit transaction. The datum contains the raw Bitcoin peg-in transaction bytes. SPOs do not have direct access to Bitcoin chain state, so PegInRequest UTxOs serve as their trusted source of Bitcoin deposit data for constructing Treasury Movement transactions.
   * **peg_out.ak**: when a withdrawer wants to unlock the bridged assets on the proper source blockchain, he locks his bridged assets at this smart contract. The datum contains the source blockchain destination address where assets should be sent and the source-chain treasury outpoint the paying Treasury Movement must spend (pinning the peg-out to exactly one possible TM). SPOs read these UTxOs to include peg-out payments in the Treasury Movement transaction.
@@ -568,10 +568,8 @@ classDiagram
     Confirmed *-- PegOutEntry
 
     class FaultProof_UTxO {
-        <<fault-verifier policy · token = hash of pool_id and evidence>>
-        kind : FaultKind
-        accused_pool_id : ByteArray
-        namespace_hash : ByteArray
+        <<authorized fault-verifier policy>>
+        token_name : blake2b_256(pool_id || evidence_hash)
         evidence_hash : ByteArray
     }
 
@@ -2837,8 +2835,9 @@ Where `<threshold>` is `51` (one DKG per epoch), and `<attempt>` is the DKG name
 Where:
 - `commitment` is an array of $t$ compressed Secp256k1 points (33 bytes each).
 - `sigma_i` is the Schnorr proof of knowledge (challenge || response, 64 bytes).
-- `poseidon_commit` is the payload's **self-commitment**: `Poseidon(structured_fields)` computed
-  by the publisher over the same fields (see *Authentication* — self-committing payloads).
+- `poseidon_commit` is the payload's self-commitment and fault `evidence_hash`:
+  `Poseidon(structured_fields)` computed by the publisher over the same fields
+  (see *Authentication* — self-committing payloads).
 - `signature` is a BIP340 Schnorr signature over `SHA256(canonical_bytes)` using `bifrost_id_sk`.
 
 **Canonical byte layout** (for authentication and on-chain misbehavior proofs):
@@ -2848,8 +2847,9 @@ Where:
   || φ_{i0} (33B) || ... || φ_{i(t-1)} (33B) || σ_i (64B) || poseidon_commit (32B)
 ```
 
-JSON is for transport; the signature covers `SHA256(canonical_bytes)`; `poseidon_commit` is the
-final 32 bytes of the layout (a fixed-offset trailer, slicable on-chain).
+JSON is for transport; the signature covers `SHA256(canonical_bytes)`;
+`poseidon_commit` is the final 32 bytes of the layout and is sliced on-chain as the
+Round 1 `evidence_hash`.
 
 ##### 6.2 Round 1 Verification
 
@@ -2873,11 +2873,11 @@ For each recipient $P_l$:
 
 1. Generate ephemeral Secp256k1 keypair $(e_i, E_i)$.
 2. Compute shared secret: `ss = ECDH(e_i, bifrost_id_pk_l)`.
-3. Derive symmetric key: `k = Poseidon("bifrost-dkg-share" ‖ ss.x ‖ recipient_pool_id)` — a
-   **ZK-friendly KDF**, chosen so the Round-2 fault circuit can prove the
-   ciphertext↔plaintext relation in-circuit at negligible cost (see §9.2); an HMAC-based KDF
-   would force SHA256 chains into the circuit.
-4. Encrypt share: `ciphertext = f_i(l) XOR k` (32 bytes).
+3. Derive the 32-byte encryption pad `pad` from the shared secret and recipient identity.
+4. Encrypt share: `ciphertext = f_i(l) XOR pad` (32 bytes).
+5. Publish `pad_commit = blake2b_256(pad)` with the encrypted entry. A Round 2 fault proof reveals
+   `pad`; the on-chain verifier checks the hash and XOR opening directly instead of proving the
+   encryption relation in-circuit.
 
 The share is a 32-byte Secp256k1 scalar, encrypted with the derived key.
 
@@ -2896,21 +2896,26 @@ Where `<threshold>` is `51` (one DKG per epoch), and `<attempt>` is the same nam
 ```json
 {
   "shares": [
-    {
-      "recipient_pool_id": "<hex, 28 bytes>",
-      "ephemeral_pk": "<hex, 33 bytes>",
-      "ciphertext": "<hex, 32 bytes>"
-    }
-  ],
-  "poseidon_commit": "<hex, 32 bytes>",
+	    {
+	      "recipient_pool_id": "<hex, 28 bytes>",
+	      "recipient_frost_identifier": "<integer>",
+	      "ephemeral_pk": "<hex, 33 bytes>",
+	      "ciphertext": "<hex, 32 bytes>",
+	      "pad_commit": "<hex, 32 bytes>",
+	      "evidence_hash": "<hex, 32 bytes>"
+	    }
+	  ],
   "signature": "<hex, 64 bytes>"
 }
 ```
 
 Where:
 - `recipient_pool_id` identifies the intended recipient.
+- `recipient_frost_identifier` is the recipient's DKG identifier in the epoch roster.
 - `ephemeral_pk` is the compressed Secp256k1 ephemeral public key $E_i$.
 - `ciphertext` is the XOR-encrypted share.
+- `pad_commit` binds the encrypted share to the pad that may be revealed in a Round 2 fault proof.
+- `evidence_hash` is the domain-separated public statement commitment used as the `FaultProof` evidence hash for this entry.
 - The `shares` array contains one entry per other participant in the current attempt's provisional Round 1 subset.
 - `signature` is a BIP340 Schnorr signature over `SHA256(canonical_bytes)` using `bifrost_id_sk`.
 
@@ -2918,8 +2923,8 @@ Where:
 
 ```
 "bifrost-dkg-r2" || epoch (8B BE) || threshold (8B BE, 51) || attempt (8B BE) || pool_id (28B)
-  || [recipient_pool_id (28B) || ephemeral_pk (33B) || ciphertext (32B)] × m
-  || poseidon_commit (32B)
+  || [recipient_pool_id (28B) || recipient_frost_identifier || ephemeral_pk (33B)
+      || ciphertext (32B) || pad_commit (32B) || evidence_hash (32B)] × m
 ```
 
 Shares are ordered by `recipient_pool_id` (lexicographic) for determinism. Here `m` is the number of other participants in the current attempt's provisional Round 1 subset. JSON is for transport; the signature covers `SHA256(canonical_bytes)`. Because the full encrypted-share vector is published as one public payload, publishing Round 2 at all makes the sender's whole Round 2 state retrievable by every SPO.
@@ -2930,8 +2935,9 @@ Each recipient $P_l$:
 
 1. Fetch Round 2 payload from each sender $P_i$.
 2. Find the entry where `recipient_pool_id == pool_id_l`.
-3. Compute shared secret: `ss = ECDH(bifrost_id_sk_l, ephemeral_pk)`.
-4. Derive key `k = Poseidon("bifrost-dkg-share" ‖ ss.x ‖ recipient_pool_id)` and decrypt: `f_i(l) = ciphertext XOR k`.
+3. Compute shared secret: `ss = ECDH(recipient_bifrost_id_sk, ephemeral_pk)`.
+4. Derive pad `pad` from `ss` and `recipient_pool_id`, check `blake2b_256(pad) == pad_commit`,
+   and decrypt: `f_i(l) = ciphertext XOR pad`.
 5. Verify the share against sender's Round 1 commitment:
 
    $f_i(l) · G = \sum_{j=0}^{t-1} (l^j · φ_{ij})$
@@ -2969,15 +2975,7 @@ Fault handling is split by round and evidence type:
 
 ##### 9.1 Fault Verifier Policies And `FaultProof` Tokens
 
-Misbehavior verification is separated from ban-list updates. Production uses separate authorized verifier policies for DKG Round 1 faults, DKG Round 2 faults, and equivocation faults. When a fault is established, the corresponding policy mints exactly one singleton `FaultProof` token and may create a verifier UTxO carrying metadata:
-
-```json
-{ kind               :: InvalidPayload | Equivocation
-, accused_pool_id    :: ByteArray
-, namespace_hash     :: ByteArray
-, evidence_hash      :: ByteArray
-}
-```
+Misbehavior verification is separated from ban-list updates. Production uses separate authorized verifier policies for DKG Round 1 invalid payloads, DKG Round 2 invalid payloads, and DKG equivocation. FROST signing invalid partial-signature proofs are deferred and are not part of this verifier set. When a fault is established, the corresponding policy mints exactly one singleton `FaultProof` token. Datum metadata may be attached by off-chain indexers, but it is not trusted by consensus.
 
 The `FaultProof` token name is:
 
@@ -2985,7 +2983,7 @@ The `FaultProof` token name is:
 blake2b_256(pool_id || evidence_hash)
 ```
 
-`namespace_hash = blake2b_256(phase || epoch || threshold_or_mode || attempt || txid?)`, where `txid` is omitted for DKG namespaces. `spo_bans.ak` does not trust the metadata datum; it authenticates the fault by checking the token name and the fault verifier policy id against its allow-list.
+`evidence_hash` is globally domain-separated by fault type, statement version, and bridge/protocol domain. `spo_bans.ak` authenticates the fault by checking the token name and the fault verifier policy id against its allow-list.
 
 **Prototype transaction skeleton**:
 
@@ -2996,7 +2994,7 @@ Inputs:
 - one arbitrary claimant-controlled nonce input
 
 Reference Inputs:
-- none
+- accused registration node at `spos_registry.ak`
 
 Withdrawals:
 - none
@@ -3012,11 +3010,7 @@ Outputs:
 - claimant-controlled output containing:
   - fault-proof token
   - min ADA
-  datum:
-  - `kind`
-  - `accused_pool_id`
-  - `namespace_hash`
-  - `evidence_hash`
+  - optional metadata datum ignored by consensus
 
 Required witnesses:
 - normal tx witnesses only
@@ -3029,13 +3023,13 @@ Required validity interval:
 
 Direct proofs are permissionless and do not require roster consensus.
 
-**Invalid payload proofs** use Halo2 ZK proofs. The sign-the-hash scheme (see **Authentication**) enables this: the accused SPO's signed `message_hash` binds them to specific protocol data, and a ZK circuit proves that data is cryptographically invalid without revealing the full payload on-chain.
+**Invalid payload proofs** use Halo2 ZK proofs. The sign-the-hash scheme (see **Authentication**) enables this: the accused SPO's signed `message_hash` binds them to specific protocol data, and a ZK circuit proves that data is cryptographically invalid without making Plutus recompute the expensive secp256k1 arithmetic.
 
 **Invalid payload types and what the ZK circuit proves:**
 
 - **DKG Round 1 — invalid proof of knowledge**: the circuit verifies that $σ_i$ is not a valid Schnorr proof for $φ_{i0}$.
 - **DKG Round 2 — share inconsistent with commitment**: the circuit verifies that $f_i(l) · G ≠ \sum l^j · φ_{ij}$, i.e., the decrypted share does not match the Round 1 commitment polynomial.
-- **FROST signing — invalid partial signature**: the circuit verifies that $z_i$ is inconsistent with the nonce commitment and group parameters.
+- **FROST signing — invalid partial signature**: deferred; not part of the DKG fault verifier policy set.
 
 <!-- G6, ratified 2026-07-15 (Option B): the proof↔signature binding via payload
      self-commitments. On-chain uses only existing builtins; Poseidon runs in-circuit and in
@@ -3047,11 +3041,12 @@ Direct proofs are permissionless and do not require roster consensus.
 2. The fault verifier policy recomputes `message_hash = sha2_256(canonical_bytes)` (builtin) and
    verifies `verifySchnorrSecp256k1Signature(bifrost_id_pk, message_hash, signature)` — the
    accused vouched for exactly these bytes.
-3. It slices `poseidon_commit` — the **final 32 bytes** of the canonical bytes — and requires the
-   ZK proof's public input to equal it.
+3. It extracts `evidence_hash` from signed bytes — the final 32 bytes of a Round 1 payload, or the
+   selected Round 2 share entry's `evidence_hash` — and requires the Halo2 public inputs to be
+   exactly `[evidence_hash, pool_id]`.
 4. It verifies the Halo2 proof, whose statement is: *"I know fields `F` with `Poseidon(F) =
-   public_input`, and `F` exhibits the claimed invalidity."*
-5. On success, the verifier policy mints a `FaultProof` token for `kind = InvalidPayload`.
+   evidence_hash`, and `F` exhibits the claimed invalidity for `pool_id`."*
+5. On success, the specialized verifier policy mints a `FaultProof` token for the domain-separated evidence hash.
 
 > **Why this binds (and why framing is impossible).** The signature pins the commitment to the
 > accused; the circuit pins the invalidity to the commitment's preimage; Poseidon's collision
@@ -3064,14 +3059,11 @@ Direct proofs are permissionless and do not require roster consensus.
 > exactly as if silent (non-publication was never bannable anyway). The on-chain verifier never
 > computes Poseidon — it only slices bytes and compares 32-byte strings.
 
-For the **Round 2 (invalid share)** circuit, the prover is the recipient, and the statement
-additionally binds decryption to the published ciphertext: witness `sk_l` with
-`pk_l = sk_l · G` (the recipient's registered `bifrost_id_pk`), `ss = sk_l · E_i`,
-`k = Poseidon("bifrost-dkg-share" ‖ ss.x ‖ recipient_pool_id)`, `f_i(l) = ciphertext XOR k`, and
-`f_i(l) · G ≠ Σ l^j · φ_{ij}` — where `ciphertext`, `E_i`, and the `φ_{ij}` are bound through the
-accused's `poseidon_commit` (Round 2 and Round 1 payloads respectively). The Poseidon KDF
-(§7.2) is what keeps this affordable: the only heavy in-circuit operations are the two secp256k1
-scalar multiplications.
+For the **Round 2 (invalid share)** circuit, the prover reveals `pad` and `opened_share`.
+The policy checks `blake2b_256(pad) == pad_commit` and `opened_share == ciphertext XOR pad`.
+The circuit then proves `opened_share · G ≠ Σ l^j · φ_{ij}`. The public inputs stay
+`[evidence_hash, pool_id]`; the opened share, recipient identifier, and sender Round 1 commitments
+are bound through the in-circuit Poseidon preimage represented by `evidence_hash`.
 
 **Size**: the on-chain transaction carries the full canonical payload (up to ~10 KB for a
 large-roster Round 2), the signature, the Halo2 proof, and public inputs. Fault proofs are rare,
@@ -3080,13 +3072,13 @@ generated verifier.
 
 **Equivocation proofs** are direct and do not use ZK. The prover submits two distinct signed payloads from the same accused SPO for the same namespace. The equivocation verifier policy verifies:
 
-1. both payloads belong to the same `namespace_hash`;
+1. both payloads belong to the same DKG protocol namespace;
 2. both signatures verify under the accused SPO's `bifrost_id_pk`; and
 3. the two canonical payload hashes are different.
 
 Namespace equality is checked by **fixed-offset prefix comparison**: every canonical layout begins `tag ‖ namespace fields ‖ pool_id`, and the tag determines the message type and hence the exact byte range of the namespace fields — the verifier compares those ranges of the two payloads (this is how the implemented equivocation verifier works).
 
-On success, the equivocation verifier policy mints a `FaultProof` token for `kind = Equivocation`.
+On success, the equivocation verifier policy mints a `FaultProof` token for the domain-separated equivocation evidence hash.
 
 ##### 9.3 Exclusion Of Non-Participants
 
@@ -3329,10 +3321,9 @@ Each SPO $P_i$ in the subset participating in signing performs these steps **for
 
 After computing all $z_{i,j}$:
 5. Each $P_i$ publishes their partial signatures at `<bifrost_url>/sign/<epoch>/<txid>/<mode>/<attempt>/round2/<pool_id>.json`.
-6. Each $P_i$ fetches partial signatures from peers and classifies any observed fault:
+6. Each $P_i$ fetches partial signatures from peers and classifies liveness:
    - missing Round 2 payload from a member of the provisional subset -> exclude that signer from the final signing subset;
-   - two different signed Round 2 payloads for the same peer and namespace -> submit an equivocation proof;
-   - cryptographically invalid partial signature -> submit an invalid-payload proof.
+   - signing-round equivocation and invalid partial-signature proofs are deferred from the DKG fault verifier set.
 7. If the remaining valid partial signatures still satisfy the active threshold, continue.
 8. Each $P_i$ can compute the group's response for each input (the sum of $z_{i,j}$'s), arriving to the same per-input signature $σ_j = (R_j, z_j)$, completing the fully signed transaction.
 
@@ -3472,15 +3463,16 @@ Every payload published by an SPO is authenticated with a **sign-the-hash** sche
 
 This prevents impersonation — an attacker who compromises a `bifrost_url` DNS record or HTTP server cannot produce valid payloads without the corresponding `bifrost_id_sk`.
 
-**Self-committing payloads.** <!-- G6 --> Every payload subject to InvalidPayload fault proofs
-(DKG Round 1, DKG Round 2, signing Round 2) additionally carries `poseidon_commit =
-Poseidon(structured_fields)` as the final 32 bytes of its canonical layout — computed by the
-publisher over its own fields, and covered by the payload signature like everything else. The
+**Self-committing payloads.** <!-- G6 --> Every DKG payload subject to InvalidPayload fault proofs
+carries one or more `evidence_hash = Poseidon(structured_fields)` values computed by the
+publisher and covered by the payload signature like everything else. Round 1 carries one
+`evidence_hash` as the final 32 bytes of the canonical layout; its JSON field is named
+`poseidon_commit`. Round 2 carries one `evidence_hash` per encrypted share entry. The
 commitment is what welds the ZK fault circuits to the signed bytes (see §9.2). **Fetch-time
-rule**: on fetching a payload, a peer recomputes `Poseidon(fields)` and compares it with the
-embedded commitment; on mismatch the payload is **malformed transport — treated exactly as if
-never published** (deterministic exclusion, like silence). Consequently every payload that
-actually enters the protocol has a matching commitment, and is therefore bindable by a fault
+rule**: on fetching a payload, a peer recomputes each `Poseidon(fields)` value and compares it
+with the embedded value; on mismatch the payload is **malformed transport — treated exactly as
+if never published** (deterministic exclusion, like silence). Consequently every payload that
+actually enters the protocol has matching commitments, and is therefore bindable by a fault
 proof.
 
 ### Failure handling

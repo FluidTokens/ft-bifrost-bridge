@@ -4,7 +4,6 @@ import {
   DEMO_BAN_TX_VALIDITY_WINDOW_MS,
   DEMO_BAN_TX_VALIDITY_LOWER_SLACK_MS,
   DEMO_BASE_BAN_DURATION_MS,
-  DEMO_FAULT_EVIDENCE_HASH,
   BAN_ROOT_TOKEN_NAME,
   BOOTSTRAP_NONCE_LOVELACE,
   EMPTY_MPF_ROOT,
@@ -39,9 +38,8 @@ import {
   continuedBanRootDatum,
   continuedRegistryRootDatum,
   deregistrationMintRedeemer,
+  equivocationPublishRedeemer,
   faultProofBurnRedeemer,
-  faultProofDatum,
-  faultProofPublishRedeemer,
   hashOutputRef,
   registrationMintRedeemer,
   registrationNodeDatum,
@@ -53,7 +51,12 @@ import {
   treasuryMintRedeemer,
   treasurySpendRedeemer,
 } from "./plutus-data.js";
-import { demoSpoIdentity, demoSpoRevocation, firstMpfInsertRoot } from "./identity.js";
+import {
+  demoDkgEquivocationEvidence,
+  demoSpoIdentity,
+  demoSpoRevocation,
+  firstMpfInsertRoot,
+} from "./identity.js";
 import { saveState } from "./state.js";
 import type {
   BlazeInstance,
@@ -433,53 +436,72 @@ export async function registerDemoSpo(
   console.log(`Demo SPO registration transaction submitted: ${txHash}`);
 }
 
-export async function publishMockFaultProof(
+export async function publishEquivocationFaultProof(
   blaze: BlazeInstance,
+  provider: Blockfrost,
   wallet: HotWallet,
   scripts: ParameterizedScripts,
   state: DemoState,
 ): Promise<void> {
   if (state.faultProofRef) {
-    console.log("Mocked FaultProof already published in state.json");
+    console.log("Equivocation FaultProof already published in state.json");
     return;
   }
 
-  if (!state.demoPoolId) {
+  if (!state.demoPoolId || !state.registrationNodeRef) {
     throw new Error("Demo SPO must be registered before publishing FaultProof");
   }
 
-  const faultProofPolicyId = scripts.faultVerifier.hash();
+  const registryPolicyId = scripts.registry.hash();
+  const registryAddress = scriptAddress(registryPolicyId);
+  const registrationNodeUtxo = await findScriptUtxoByRef(
+    provider,
+    registryAddress,
+    state.registrationNodeRef,
+  );
+  const evidence = await demoDkgEquivocationEvidence();
+
+  if (evidence.poolId !== state.demoPoolId) {
+    throw new Error("Demo equivocation evidence does not match registered SPO");
+  }
+
+  const faultProofPolicyId = scripts.faultVerifierEquivocation.hash();
   const fundingUtxo = await findFundingUtxo(wallet);
-  const inputRef = utxoRef(fundingUtxo);
   const faultTokenName = faultProofTokenName(
     state.demoPoolId,
-    DEMO_FAULT_EVIDENCE_HASH,
+    evidence.evidenceHash,
   );
   const faultProofUnit = unitOf(faultProofPolicyId, faultTokenName);
 
-  // Showcase: publish one mocked FaultProof token at the wallet address.
+  // Showcase: publish one direct equivocation FaultProof token at the wallet address.
   const tx = await blaze
     .newTransaction()
     .addInput(fundingUtxo)
-    .provideScript(scripts.faultVerifier)
+    .addReferenceInput(registrationNodeUtxo)
+    .provideScript(scripts.faultVerifierEquivocation)
     .addMint(
       Core.PolicyId(faultProofPolicyId),
       new Map([[Core.AssetName(faultTokenName), 1n]]),
-      faultProofPublishRedeemer({
-        inputRef,
+      equivocationPublishRedeemer({
+        registrationRefInputIndex: 0,
         poolId: state.demoPoolId,
+        payloadA: evidence.payloadA,
+        signatureA: evidence.signatureA,
+        payloadB: evidence.payloadB,
+        signatureB: evidence.signatureB,
+        evidenceHash: evidence.evidenceHash,
       }),
     )
     .payAssets(
       wallet.address,
       makeValue(TREASURY_BOOTSTRAP_LOVELACE, [faultProofUnit, 1n]),
-      Core.Datum.newInlineData(faultProofDatum(state.demoPoolId)),
     )
     .complete();
   const signedTx = await blaze.signTransaction(tx);
   const txHash = String(await blaze.submitTransaction(signedTx));
 
   state.faultProofTxHash = txHash;
+  state.faultProofEvidenceHash = evidence.evidenceHash;
   state.faultProofRef = outputRefWithAsset(
     signedTx,
     txHash,
@@ -490,7 +512,7 @@ export async function publishMockFaultProof(
   await waitForWalletOutputsFromTx(wallet, signedTx, txHash);
   await findWalletUtxo(wallet, state.faultProofRef);
 
-  console.log(`Mocked FaultProof transaction submitted: ${txHash}`);
+  console.log(`Equivocation FaultProof transaction submitted: ${txHash}`);
 }
 
 export async function applyFirstBan(
@@ -515,13 +537,16 @@ export async function applyFirstBan(
   }
 
   const registryPolicyId = scripts.registry.hash();
-  const faultProofPolicyId = scripts.faultVerifier.hash();
+  const faultProofPolicyId = scripts.faultVerifierEquivocation.hash();
   const bansPolicyId = scripts.bans.hash();
   const registryAddress = scriptAddress(registryPolicyId);
   const bansAddress = scriptAddress(bansPolicyId);
+  const evidenceHash =
+    state.faultProofEvidenceHash ??
+    (await demoDkgEquivocationEvidence()).evidenceHash;
   const faultTokenName = faultProofTokenName(
     state.demoPoolId,
-    DEMO_FAULT_EVIDENCE_HASH,
+    evidenceHash,
   );
   const banNodeName = banNodeTokenName(state.demoPoolId);
   const banNodeUnit = unitOf(bansPolicyId, banNodeName);
@@ -547,7 +572,7 @@ export async function applyFirstBan(
     faultInputIndex: ledgerInputIndex(inputRefs, state.faultProofRef),
     registrationRefInputIndex: 0,
     accusedPoolId: state.demoPoolId,
-    evidenceHash: DEMO_FAULT_EVIDENCE_HASH,
+    evidenceHash,
     banAnchorInputIndex: ledgerInputIndex(inputRefs, state.banRootRef),
     banAnchorOutputIndex: 0,
     banNodeOutputIndex: 1,
@@ -566,7 +591,7 @@ export async function applyFirstBan(
       .setValidFrom(banTiming.validFrom)
       .setValidUntil(banTiming.validUntil)
       .provideScript(scripts.bans)
-      .provideScript(scripts.faultVerifier)
+      .provideScript(scripts.faultVerifierEquivocation)
       .addMint(
         Core.PolicyId(faultProofPolicyId),
         new Map([[Core.AssetName(faultTokenName), -1n]]),
@@ -594,7 +619,7 @@ export async function applyFirstBan(
         bansAddress,
         makeValue(TREASURY_BOOTSTRAP_LOVELACE, [banNodeUnit, 1n]),
         Core.Datum.newInlineData(
-          banNodeDatum(1, banUntilTime, false, [DEMO_FAULT_EVIDENCE_HASH]),
+          banNodeDatum(1, banUntilTime, false, [evidenceHash]),
         ),
       )
       .complete();
