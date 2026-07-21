@@ -5,7 +5,9 @@ export const NETWORK: NetworkName = "cardano-preprod";
 export const REQUIRED_VALIDATORS = [
   "bitcoin/spos_registry.spo_registry.mint",
   "bitcoin/spos_registry.spo_registry.spend",
-  "bitcoin/fault_verifier.fault_verifier.mint",
+  "bitcoin/fault_verifier_round1.fault_verifier_round1.mint",
+  "bitcoin/fault_verifier_round2.fault_verifier_round2.mint",
+  "bitcoin/fault_verifier_equivocation.fault_verifier_equivocation.mint",
   "bitcoin/spo_bans.spo_bans.mint",
   "bitcoin/spo_bans.spo_bans.spend",
   "bitcoin/spo_bans.spo_bans.withdraw",
@@ -18,13 +20,13 @@ export const SUPPORTING_VALIDATORS = [
 
 export const SHOWCASE_STEPS = [
   "Create bootstrap nonce UTxOs",
-  "Parameterize registry, treasury, fault verifier, and ban scripts",
+  "Parameterize registry, treasury, fault verifiers, and ban scripts",
   "Bootstrap supporting treasury state",
   "Bootstrap SPO registry state",
   "Bootstrap SPO ban-list state",
   "Register SPO ban withdraw credential",
   "Register demo SPO",
-  "Publish mocked FaultProof",
+  "Publish direct equivocation FaultProof",
   "Apply first ban",
   "Deregister demo SPO",
 ] as const;
@@ -49,10 +51,6 @@ export const DEMO_BIFROST_URL = Buffer.from(
   "https://spo.demo.zkfold.io",
   "utf8",
 ).toString("hex");
-export const DEMO_FAULT_NAMESPACE_HASH = "05".repeat(32);
-export const DEMO_FAULT_EVIDENCE_HASH = "06".repeat(32);
-export const DEMO_UNUSED_FAULT_POLICY_ID_1 = "07".repeat(28);
-export const DEMO_UNUSED_FAULT_POLICY_ID_2 = "08".repeat(28);
 
 export const REGISTRY_ROOT_TOKEN_NAME = Buffer.from(
   "reg-root",

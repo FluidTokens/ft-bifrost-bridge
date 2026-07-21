@@ -65,7 +65,7 @@ Drop Phase 3 entirely. The protocol has two phases:
 
 Two modes remain: `51` and `federation`. The cascade machinery is preserved:
 
-- `namespace_hash` still carries a `mode` field.
+- The protocol namespace still carries a `mode` field.
 - Attempt counter is still scoped per `(epoch, mode)` for DKG instances and
   per `(epoch, txid, mode)` for signing instances.
 - The only change is that the set of mode values is `{51, federation}`
@@ -131,7 +131,7 @@ Hard cap of ~15 KB raw bytes is unchanged.
 
 Sections requiring rewrites:
 
-- **Glossary**: update "Attempt counter", "Mode", "`namespace_hash`",
+- **Glossary**: update "Attempt counter", "Mode", "Protocol namespace",
   "Signing cascade / Threshold failover" definitions to reflect
   `{51, federation}` only.
 - **§Taproot address construction** — rewrite the Treasury tree description;
