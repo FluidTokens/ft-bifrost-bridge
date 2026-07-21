@@ -3078,7 +3078,19 @@ generated verifier.
 
 Namespace equality is checked by **fixed-offset prefix comparison**: every canonical layout begins `tag ‖ namespace fields ‖ pool_id`, and the tag determines the message type and hence the exact byte range of the namespace fields — the verifier compares those ranges of the two payloads (this is how the implemented equivocation verifier works).
 
-On success, the equivocation verifier policy mints a `FaultProof` token for the domain-separated equivocation evidence hash.
+On success, the equivocation verifier policy mints a `FaultProof` token named `blake2b_256(pool_id ‖ evidence_hash)`, where — unlike the Round 1 / Round 2 hashes, which are *sliced* from a single signed payload — the equivocation `evidence_hash` is **computed on-chain** from the two conflicting payloads:
+
+```
+evidence_hash = blake2b_256( equivocation_domain ‖ len8(lo) ‖ lo ‖ len8(hi) ‖ hi )
+```
+
+where:
+
+- `equivocation_domain = "bifrost-fault-equiv-v1"` — a fixed 22-byte ASCII domain separator that isolates equivocation evidence from every other fault type, statement version, and protocol domain.
+- `lo` and `hi` are the two conflicting canonical signed payloads sorted by lexicographic byte comparison so that `lo ≤ hi` (when one is a prefix of the other, the shorter compares smaller). Sorting makes the hash **order-independent**: whichever order the two payloads are submitted in, the preimage — and hence the evidence hash and token name — is identical, so an equivocation cannot be re-punished by swapping payload order.
+- `len8(x)` is the byte length of `x` encoded as an **8-byte big-endian** integer. The explicit length prefixes make the concatenation unambiguous — no two distinct payload pairs share a preimage — which a bare `lo ‖ hi` concatenation would not guarantee.
+
+The verifier recomputes this hash from the two submitted payloads and requires the redeemer's `evidence_hash` to equal it, so an off-chain prover must reproduce exactly this construction. `spo_bans.ak` then authenticates the fault by the token name `blake2b_256(pool_id ‖ evidence_hash)` and the verifier policy id, exactly as for the ZK fault types.
 
 ##### 9.3 Exclusion Of Non-Participants
 
