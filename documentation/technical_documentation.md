@@ -2597,7 +2597,7 @@ The protocol supports **temporary and permanent banning** of SPOs who misbehave 
 
 `base_ban_duration_ms * 2^(n - 1)`
 
-The timeout is applied from the transaction validity interval's upper POSIX-time bound. For repeated temporary bans, the new expiry is:
+The timeout is applied from the transaction validity interval's upper POSIX-time bound (`ban_start_time`). The validator requires this interval to be **finite at both ends** — an unbounded validity interval is rejected — and no wider than `max_validity_window_ms`, so `ban_start_time` cannot be pushed to an arbitrary future slot to shorten the effective exclusion. For repeated temporary bans, the new expiry is:
 
 `max(old_ban_until_time, ban_start_time) + duration`
 
@@ -3060,10 +3060,18 @@ Direct proofs are permissionless and do not require roster consensus.
 > computes Poseidon — it only slices bytes and compares 32-byte strings.
 
 For the **Round 2 (invalid share)** circuit, the prover reveals `pad` and `opened_share`.
-The policy checks `blake2b_256(pad) == pad_commit` and `opened_share == ciphertext XOR pad`.
-The circuit then proves `opened_share · G ≠ Σ l^j · φ_{ij}`. The public inputs stay
-`[evidence_hash, pool_id]`; the opened share, recipient identifier, and sender Round 1 commitments
-are bound through the in-circuit Poseidon preimage represented by `evidence_hash`.
+The policy checks `blake2b_256(pad) == pad_commit` and `opened_share == ciphertext XOR pad`, and
+that both `pad` and `opened_share` are canonical 32-byte secp256k1 scalars (strictly less than the
+curve order `n`). The circuit then proves `opened_share · G ≠ Σ l^j · φ_{ij}`. The public inputs stay
+`[evidence_hash, pool_id]` — each byte-encoded into a circuit scalar in **little-endian** order; the
+opened share, recipient identifier, and sender Round 1 commitments are bound through the in-circuit
+Poseidon preimage represented by `evidence_hash`.
+
+Because a Round 2 share is only meaningful relative to the accused's Round 1 commitments, the Round 2
+verifier additionally consumes the accused's canonical **Round 1** payload and verifies **both** the
+Round 1 and Round 2 Bifrost signatures (each over its own canonical payload). This pins the invalid
+share to the same accused's committed Round 1 `φ_{ij}`, so a Round 2 fault cannot be asserted against
+commitments the accused never signed.
 
 **Size**: the on-chain transaction carries the full canonical payload (up to ~10 KB for a
 large-roster Round 2), the signature, the Halo2 proof, and public inputs. Fault proofs are rare,
