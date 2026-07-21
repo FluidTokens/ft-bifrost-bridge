@@ -2436,7 +2436,7 @@ Both the cold key and the Bifrost identity key sign the same message:
 Where:
 - `"bifrost-spo"` is a 10-byte ASCII domain separator.
 - `pool_id` is the 28-byte stake pool identifier derived from `cold_vkey`.
-- `bifrost_id_pk` is the 33-byte compressed Secp256k1 public key.
+- `bifrost_id_pk` is the 32-byte x-only (BIP340) Secp256k1 public key.
 - `bifrost_url` is the variable-length URL encoded as UTF-8 bytes.
 
 The registration transaction therefore carries:
