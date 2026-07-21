@@ -198,9 +198,10 @@ Supersedes the "out of scope" note above for Confirmed-record cleanup.
   creator, and have a validity interval entirely after the deadline. By then
   all swept peg-ins / fulfilled peg-outs are expected to be completed, so the
   record is no longer needed as proof material and its min-ADA is reclaimed.
-- `created` is anchored at mint: the mint requires
-  `validRange.isEntirelyBefore(created + 1h)` (a finite `invalid_hereafter`),
-  so a permissionless poster cannot backdate `created` to shortcut the timer.
+- `created` is anchored at mint: it must EQUAL the tx's finite validity
+  upper bound (`created == validRange.to`), making it a guaranteed upper
+  bound on the real posting time — a permissionless poster cannot backdate
+  `created` to shortcut the timer (future-dating only delays their own GC).
 - The mint additionally requires the TM NFT (empty asset name) to be the ONLY
   asset name touched under the TM policy in the tx.
 - Operational rule (accepted residual risk): the creator must not GC the
@@ -208,7 +209,8 @@ Supersedes the "out of scope" note above for Confirmed-record cleanup.
   a successor lands well within the grace period; after a >30-day quiet
   spell, recovery is a config Update re-anchoring `initial_btc_treasury_utxo`.
 - Off-chain: heimdall posts `[signed_btc_tx, creator = wallet pkh,
-  created = latest block time ms]` with `invalid_hereafter = latest slot +
-  30 min`; binocular's confirm carries creator/created into the Confirmed
+  created = (latest block time + 1800) * 1000 ms]` with `invalid_hereafter =
+  latest slot + 1800` (created equals the upper-bound slot's begin time
+  exactly); binocular's confirm carries creator/created into the Confirmed
   datum; parsers accept the extended shapes.
 - Stale `Unconfirmed` records remain unreclaimable (unchanged).

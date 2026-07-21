@@ -1574,7 +1574,7 @@ flowchart LR
 | **Reference inputs** | Config UTxO — supplies `initial_btc_treasury_utxo` (implemented field #11), located by the redeemer's reference-input index and authenticated by the config NFT (`Genesis` redeemer, first movement only); **or** the predecessor `Confirmed TM tx` UTxO, located by the redeemer's reference-input index and authenticated by its TM NFT (`Chain` redeemer, every subsequent movement) |
 | **Mint** | +1 TM NFT — identity carried through the Unconfirmed → Confirmed lifecycle (records live until the creator GCs them after the grace period, see *Confirm TM tx*); minting is permissionless, gated by the linkage check. Redeemer: `TmMintRedeemer = Genesis(config_ref_input_index) \| Chain(prev_tm_ref_input_index)` |
 | **Outputs** | `Unconfirmed TM tx` UTxO @ `TreasuryMovementValidator`; datum = `Unconfirmed { signed_btc_tx, creator, created }` – `creator` (the poster's payment key hash) may reclaim the record's min-ADA after the GC grace period; `created` (POSIX ms) starts that timer. Ordering still comes from the TM chain itself, so no sequence fields |
-| **Validity interval** | finite `invalid_hereafter` REQUIRED: the mint anchors `created` to the validity upper bound (`validRange.isEntirelyBefore(created + 1h)`), so the GC timer cannot be backdated. A stale or out-of-turn post is still inert — it can never confirm |
+| **Validity interval** | finite `invalid_hereafter` REQUIRED: the mint enforces `created == validRange.to` (exact equality), so `created` is a guaranteed upper bound on the real posting time and the GC timer cannot be backdated. A stale or out-of-turn post is still inert — it can never confirm |
 | **Required signers** | poster (fee spend) — permissionless |
 | **Size (est.)** | ~10.5–15.5 KB depending on the signing variant and batch size (datum carries the full signed BTC tx, up to ~15 KB). The **16 KB Cardano tx limit is the binding constraint**, and it drives the per-variant max batch sizes listed under *Treasury Movement (Bitcoin)* above. Fee ≈ 0.67 ADA at ~10.5 KB; ≈ 0.9 ADA near the 15 KB ceiling. |
 
@@ -1584,9 +1584,10 @@ flowchart LR
   in this tx — and it is **bound**: the output carrying it sits at the TM script address with an
   inline `Unconfirmed { signed_btc_tx, creator, created }` datum – without this binding the
   linkage check would gate nothing.
-* `created` is anchored to the tx's validity interval: `validRange.isEntirelyBefore(created +
-  1h)` — forces a finite `invalid_hereafter` and prevents backdating `created` to shortcut the
-  GC grace period.
+* `created` equals the tx's validity upper bound exactly (`created == validRange.to`, finite
+  bound required) — since the tx cannot be included after that bound, `created` upper-bounds the
+  real posting time, so the GC grace period cannot be shortcut by backdating (future-dating only
+  delays the poster's own reclaim).
 * **TM-chain linkage**: input 0 (the treasury input) of `signed_btc_tx` is
   - `Genesis(i)`: the **initial treasury outpoint** (`initial_btc_treasury_utxo`, implemented Config field #11, read from the reference input at index `i`, which must carry the config NFT) — the first movement after bridge creation; **or**
   - `Chain(i)`: `(btc_txid, 0)` of the **referenced predecessor `Confirmed TM tx`** record at reference-input index `i` (authenticated by its TM NFT).
@@ -1652,8 +1653,8 @@ flowchart LR
 **creator** once its grace period elapses: the spend must burn the TM NFT, carry the creator's
 signature, and have a validity interval entirely after `created + 30 days`. By then every swept
 peg-in / fulfilled peg-out is expected to be completed, so the record is no longer needed as
-proof material; the creator reclaims the min-ADA. `created` cannot be backdated (anchored at
-mint), so the grace period is real. **Operational rule**: the creator must NOT GC the chain-TIP
+proof material; the creator reclaims the min-ADA. `created` cannot be backdated (it must equal the
+mint tx's validity upper bound), so the grace period is real. **Operational rule**: the creator must NOT GC the chain-TIP
 record — the next TM's `Chain` mint references it (and `Genesis` no longer applies once the
 anchor outpoint is spent). While the bridge is active a successor lands well within the grace
 period; after a >30-day quiet spell, recovery is a config Update re-anchoring
