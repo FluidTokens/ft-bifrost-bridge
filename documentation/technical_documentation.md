@@ -553,11 +553,19 @@ classDiagram
     }
     class Unconfirmed {
         signed_btc_tx : ByteArray
+        creator : ByteArray
+        created : Int
+        epoch : Int
+        leader_reward : Int
     }
     class Confirmed {
         btc_txid : ByteArray
         swept_peg_in_utxo_ids : List~ByteArray~
         fulfilled_peg_outs : List~PegOutEntry~
+        creator : ByteArray
+        created : Int
+        epoch : Int
+        leader_reward : Int
     }
     class PegOutEntry {
         script_pub_key : ByteArray
@@ -576,6 +584,25 @@ classDiagram
     Confirmed ..> PegInRequest_UTxO : swept_peg_in_utxo_ids contains peg_in_utxo_id
     Confirmed ..> PegOutRequest_UTxO : fulfilled_peg_outs pays destination
 ```
+
+TM-record datum fields beyond `signed_btc_tx` / `btc_txid` / `swept_peg_in_utxo_ids` /
+`fulfilled_peg_outs`, all carried verbatim from the `Unconfirmed` record into the `Confirmed`
+one by the Confirm transition:
+
+- `creator` — the poster's payment key hash. It authorizes the post-grace **garbage collection**
+  of a `Confirmed` record (burn the TM NFT, reclaim min-ADA; see *Treasury Movement lifecycle*).
+- `created` — POSIX ms, pinned by the TM mint policy to equal the posting tx's validity upper
+  bound, so it is a guaranteed upper bound on real posting time (the GC grace period can start late
+  but never early).
+- `epoch` — the Cardano epoch this TM belongs to.
+- `leader_reward` — a copy of the Config `leader_reward` tunable (§Operational parameters) taken at
+  post time, so a later governance update cannot retroactively change an in-flight TM's reward. The
+  **pin** (the mint validates `leader_reward` against the Config UTxO) and the **payout** land with
+  the leader-reward flow — see *Cardano submission and leader reward*.
+
+There is deliberately **no `tm_sequence` datum field**: `tm_sequence` is an off-chain per-epoch
+signing-namespace counter (§Cardano submission and leader reward); on-chain ordering comes from the
+TM chain itself (each record references its predecessor).
 
 * **PegInRequest** – created permissionlessly with a Binocular inclusion proof of the Bitcoin
   deposit; the mint consumes an arbitrary input whose outpoint hash becomes the NFT asset name
