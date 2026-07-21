@@ -214,3 +214,9 @@ Supersedes the "out of scope" note above for Confirmed-record cleanup.
   exactly); binocular's confirm carries creator/created into the Confirmed
   datum; parsers accept the extended shapes.
 - Stale `Unconfirmed` records remain unreclaimable (unchanged).
+- The Aiken mirror `onchain/lib/bifrost/types/treasury-movement.ak` tracks the
+  extended shapes (supersedes "peg-in.ak: no source change" above): Aiken's
+  `expect` on raw Data validates exact constructor arity, so without the
+  creator/created fields every `CompletePegIn` would fail at the Confirmed
+  datum decode. This changes the compiled peg-in script hash; the migration
+  runbook already computes the hash from the current build at step 2.
