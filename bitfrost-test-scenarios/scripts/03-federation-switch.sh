@@ -15,6 +15,7 @@
 # dead code until N15 revives it.
 . "$(dirname "$0")/00-lib.sh"
 check_pins
+check_dkg_pacing
 
 log "scenario 3: assumes scenario 1 completed (treasury under a FROST Y_51 exists)"
 

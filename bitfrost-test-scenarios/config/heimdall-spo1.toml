@@ -7,14 +7,32 @@
 # (http://heimdall-spo1:18501) — no --index.
 
 [protocol]
-# Compose-tuned DKG pacing. The window MUST exceed dkg_round2_offset by more
-# than the ~2s retry backoff (self-healing inequality — see heimdall
-# EpochConfig::dkg_window docs): 60 + 2 < 90.
+# Compose-tuned DKG pacing. TWO invariants, and the second was violated until
+# 2026-07-22:
+#
+#  (1) the window MUST exceed dkg_round2_offset by more than the ~2s retry
+#      backoff (self-healing inequality — see heimdall EpochConfig::dkg_window
+#      docs): 60 + 2 < 90.
+#
+#  (2) a whole ceremony MUST fit inside ONE devnet epoch, and the window MUST
+#      NOT exceed it. The candidate set, the ban filter and the schedule anchor
+#      (schedule_anchor_ms = epoch_start_ms) are all epoch-scoped, so a ceremony
+#      that outlives its epoch is anchored to a boundary the chain has already
+#      left behind — and nodes that re-enter after an abort capture DIFFERENT
+#      epochs, whose namespaces then reject each other's payloads.
+#      Previously: epoch 60s, window 90s, join wait 300s — a ceremony spanned
+#      FIVE epochs and the window was longer than the epoch containing it.
+#      Now: DEVNET_EPOCH_SLOTS=180 (00-lib.sh), window 45 -> FOUR windows per
+#      epoch, dividing it evenly so no window straddles a boundary. That makes
+#      in-epoch retry the normal recovery: a later window reuses the SAME
+#      boundary-locked candidate set, identifiers and t, advancing only
+#      `attempt`. Crossing a boundary is then the only event that renumbers.
+#      check_dkg_pacing() in 00-lib.sh enforces both invariants.
 dkg_round_timeout_secs = 60
-dkg_window_secs = 90
-dkg_join_wait_secs = 300
-dkg_round1_offset_secs = 30
-dkg_round2_offset_secs = 60
+dkg_window_secs = 45
+dkg_join_wait_secs = 30
+dkg_round1_offset_secs = 15
+dkg_round2_offset_secs = 30
 poll_interval_ms = 1000
 quorum51_timeout_secs = 60
 leader_timeout_secs = 300

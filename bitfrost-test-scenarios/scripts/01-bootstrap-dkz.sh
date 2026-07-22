@@ -12,6 +12,7 @@
 # read the log and fix the pattern in one place.
 . "$(dirname "$0")/00-lib.sh"
 check_pins
+check_dkg_pacing
 
 HD_CFG=(--config /etc/heimdall/heimdall.toml)
 BLUEPRINT=(--blueprint /contracts/plutus.json)

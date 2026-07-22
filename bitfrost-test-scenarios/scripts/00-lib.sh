@@ -57,12 +57,48 @@ btc_mine() {
 # non-interactively) — same invocation as yaci-devkit's own scripts.
 yaci_cli() { docker compose exec -T yaci-devkit /app/yaci-cli.sh "$@"; }
 
+# Epoch length in slots (= seconds at block-time 1). Short so stake activates in
+# ~2 epochs of wall clock, but it MUST still contain a whole DKG ceremony —
+# see check_dkg_pacing below for why 60 was too short.
+DEVNET_EPOCH_SLOTS=${DEVNET_EPOCH_SLOTS:-180}
+
 # Create + start the devnet detached (--start keeps the node running inside
-# the exec session). Short epochs: stake activates in ~2 min.
+# the exec session).
 yaci_create_node() {
-  log "creating yaci devnet (block-time 1s, epoch-length 60 slots)..."
+  log "creating yaci devnet (block-time 1s, epoch-length $DEVNET_EPOCH_SLOTS slots)..."
   docker compose exec -d yaci-devkit /app/yaci-cli.sh \
-    create-node -o --block-time 1 --epoch-length 60 --start
+    create-node -o --block-time 1 --epoch-length "$DEVNET_EPOCH_SLOTS" --start
+}
+
+# The DKG schedule is epoch-scoped: the candidate set, the ban filter and the
+# grid anchor (schedule_anchor_ms = epoch_start_ms) are all fixed at the epoch
+# boundary. A ceremony that outlives its epoch is therefore anchored to a
+# boundary the chain has already passed, and nodes re-entering after an abort
+# capture DIFFERENT epochs — whose payload namespaces (epoch, threshold,
+# attempt) then reject each other, wedging the cluster with
+# "poseidon_commit mismatch". Observed 2026-07-22 with epoch 60s vs window 90s
+# vs join wait 300s, i.e. a ceremony spanning five epochs.
+check_dkg_pacing() {
+  local cfg=config/heimdall-spo1.toml
+  local -i window join_wait round2
+  # sed, not `grep -oP`: -P is a GNU extension and this repo is also run on
+  # macOS (see internal-docs references.md), where BSD grep rejects it — which
+  # would kill every scenario at its first line.
+  local key
+  for key in dkg_window_secs dkg_join_wait_secs dkg_round2_offset_secs; do
+    local v
+    v=$(sed -n "s/^${key} *= *\([0-9][0-9]*\).*/\1/p" "$cfg" | head -1)
+    [ -n "$v" ] || die "check_dkg_pacing: $key not found in $cfg"
+    case "$key" in
+    dkg_window_secs) window=$v ;;
+    dkg_join_wait_secs) join_wait=$v ;;
+    dkg_round2_offset_secs) round2=$v ;;
+    esac
+  done
+  [ "$window" -le "$DEVNET_EPOCH_SLOTS" ] ||
+    die "dkg_window_secs=$window exceeds the devnet epoch ($DEVNET_EPOCH_SLOTS s) — the ceremony grid would span epochs"
+  [ $((join_wait + round2 + 20)) -le "$DEVNET_EPOCH_SLOTS" ] ||
+    die "a ceremony (join_wait $join_wait + round2 $round2 + slack) does not fit in one $DEVNET_EPOCH_SLOTS s epoch"
 }
 
 wait_store_api() {

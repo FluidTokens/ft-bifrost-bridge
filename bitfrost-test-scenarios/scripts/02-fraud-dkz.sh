@@ -20,6 +20,7 @@
 # Requires scenario 1's step 6b to have deployed the fault verifiers + ban list.
 . "$(dirname "$0")/00-lib.sh"
 check_pins
+check_dkg_pacing
 
 FAULT="${1:-absent}" # absent | equivocate
 

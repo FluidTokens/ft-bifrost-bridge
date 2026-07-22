@@ -26,6 +26,7 @@
 #   * 2 survivors  → below quorum  → abort + retry forever          (THIS scenario)
 . "$(dirname "$0")/00-lib.sh"
 check_pins
+check_dkg_pacing
 
 REPORT="$LOGS/scenario4-no-quorum"
 rm -rf "$REPORT" && mkdir -p "$REPORT"
@@ -48,8 +49,8 @@ docker compose up -d "${UP[@]}"
 log "  up: ${UP[*]} — down: ${DOWN[*]} (2 of 4 → below t=3)"
 
 log "step 2: the survivors WAIT at the health gate rather than charging ahead"
-# dkg_join_wait_secs = 300 in the bench configs, so this is a real, bounded wait
-# and it dominates the scenario's runtime. That wait IS the behaviour under test.
+# dkg_join_wait_secs (45s) bounds this wait. It used to be 300s, which made a
+# ceremony outlive its own 60s epoch five times over -- see check_dkg_pacing.
 wait_log heimdall-spo1 'health gate: waiting for peer\(s\)' 180 ||
   die "spo1 never logged the health-gate wait — see $REPORT/"
 log "  spo1 is waiting for the missing peers"
@@ -74,12 +75,27 @@ wait_log heimdall-spo1 'retriable error: DKG aborted.*backing off' 120 ||
   [ "$(docker inspect -f '{{.State.Running}}' "$(docker compose ps -q heimdall-spo1)")" = "true" ] ||
   die "spo1 is not running after the abort — 'no halt' violated"
 # ...and it genuinely re-enters, rather than merely logging that it would: a
-# SECOND ceremony attempt after the first abort is what "retries" means.
+# SECOND abort after the first is what "retries" actually means.
+#
+# This must COUNT, not wait_log: wait_log re-reads `docker compose logs` from the
+# start, so it matches the first, historical occurrence instantly and would
+# report success without a second cycle ever happening. That is the same shape as
+# the false green this bench has already been bitten by once, so the check
+# compares the abort count against its own baseline.
 aborts_before=$(docker compose logs heimdall-spo1 2>/dev/null | grep -c 'DKG aborted' || true)
-wait_log heimdall-spo1 'health gate: waiting for peer\(s\)' 600 || true
-sleep 30
-aborts_after=$(docker compose logs heimdall-spo1 2>/dev/null | grep -c 'DKG aborted' || true)
-log "  still alive; DKG abort cycles observed: $aborts_before → $aborts_after"
+retried=0
+deadline=$((SECONDS + 420))
+while [ $SECONDS -lt $deadline ]; do
+  aborts_after=$(docker compose logs heimdall-spo1 2>/dev/null | grep -c 'DKG aborted' || true)
+  if [ "$aborts_after" -gt "$aborts_before" ]; then
+    retried=1
+    break
+  fi
+  sleep 10
+done
+[ "$retried" = 1 ] ||
+  die "only $aborts_before abort(s) ever seen — the node logged a retry but never ran a second ceremony"
+log "  still alive and retrying: DKG abort cycles $aborts_before → $aborts_after"
 
 log "step 5: assert NO federation transition and NO key publication"
 # Per spec the SPO program must not fail over to the federation, so its absence
