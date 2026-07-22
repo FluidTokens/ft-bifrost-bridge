@@ -186,6 +186,18 @@ extract() {
   printf '%s\n' "$out"
 }
 
+# Wait for a regex to appear in a service's logs, or fail. `docker compose logs`
+# is re-read each poll rather than followed, so a line emitted before this call
+# still counts — the scenarios check for things that may already have happened.
+wait_log() {
+  local svc="$1" pattern="$2" secs="${3:-300}" deadline=$((SECONDS + ${3:-300}))
+  while [ $SECONDS -lt $deadline ]; do
+    docker compose logs "$svc" 2>/dev/null | grep -qE "$pattern" && return 0
+    sleep 5
+  done
+  return 1
+}
+
 # `PublishKeys: group_key = <hex>` from an SPO's logs — the DKG success
 # marker, identical across SPOs by construction.
 spo_group_key() {

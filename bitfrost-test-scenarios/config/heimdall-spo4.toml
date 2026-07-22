@@ -17,7 +17,6 @@ dkg_round1_offset_secs = 30
 dkg_round2_offset_secs = 60
 poll_interval_ms = 1000
 quorum51_timeout_secs = 60
-federation_timeout_secs = 60
 leader_timeout_secs = 300
 pegin_collection_window_secs = 5
 pegin_poll_interval_ms = 1000
