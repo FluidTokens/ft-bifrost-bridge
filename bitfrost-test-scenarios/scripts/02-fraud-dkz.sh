@@ -45,7 +45,13 @@ equivocate)
   # Wipe per-SPO state so this is a NEW ceremony rather than a resume of the
   # completed scenario-1 one — the fault only exists during round 1.
   docker compose rm -sf heimdall-spo1 heimdall-spo2 heimdall-spo3 heimdall-spo4 >/dev/null 2>&1 || true
-  for i in 1 2 3 4; do rm -rf "data/spo$i"; mkdir -p "data/spo$i"; done
+  # Cleared from INSIDE a container: heimdall runs as root there, so the
+  # persisted dkg-epoch-*.json are root-owned and a host-side `rm -rf` fails
+  # with EPERM. Each service mounts its own data/spoN at /state.
+  for i in 1 2 3 4; do
+    docker compose run --rm --no-deps -T --user root --entrypoint sh \
+      "heimdall-spo$i" -c 'rm -rf /state/* /state/.[!.]*' >/dev/null 2>&1 || true
+  done
   SPO4_INJECT_FAULT=--inject-fault=equivocate-round1 \
     docker compose up -d heimdall-spo1 heimdall-spo2 heimdall-spo3 heimdall-spo4
   docker compose logs heimdall-spo4 2>/dev/null | grep -q 'FAULT INJECTION ENABLED' ||
@@ -76,7 +82,10 @@ equivocate)
   # devnet without a trusted setup.
   banned=0
   while [ $SECONDS -lt $deadline ]; do
-    if docker compose logs 2>/dev/null | grep -q '\[fault-ban\] built ApplyBan: first_ban='; then
+    # Assert on SUBMITTED, not "built": `built ApplyBan` is logged before the
+    # tx is sent, so keying on it reports success even when submission is
+    # rejected — which it was, with WithdrawalsNotInRewardsCERTS.
+    if docker compose logs 2>/dev/null | grep -q '\[fault-ban\] submitted apply-ban: tx_hash='; then
       banned=1
       break
     fi

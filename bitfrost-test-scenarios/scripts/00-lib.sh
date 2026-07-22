@@ -91,6 +91,22 @@ yaci_first_utxo() {
     python3 -c 'import json,sys; u=json.load(sys.stdin)[0]; print(u["tx_hash"], u["output_index"], sep=":")'
 }
 
+# Block until an address shows at least N UTxOs (faucet topups are separate
+# txs and land asynchronously).
+wait_utxo_count() {
+  local addr="$1" want="$2" n
+  for _ in $(seq 60); do
+    n=$(curl -sf "$STORE_API/addresses/$addr/utxos" |
+      python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null || echo 0)
+    [ "$n" -ge "$want" ] && {
+      log "  wallet has $n UTxOs"
+      return 0
+    }
+    sleep 2
+  done
+  die "address $addr never reached $want UTxOs (saw ${n:-0})"
+}
+
 # First UTxO of an address that is NOT one of the given refs. One-shot
 # bootstraps each burn a distinct outref (the minting policy is parameterized
 # by it), so the ban-list root cannot reuse the registry's.

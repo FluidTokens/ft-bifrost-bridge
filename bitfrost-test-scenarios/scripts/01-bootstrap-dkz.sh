@@ -20,6 +20,14 @@ BLUEPRINT=(--blueprint /contracts/plutus.json)
 Y_FED_XONLY=0ce472ae5d8993e7609ee4ef33b344f6b8499a1259374bdf528f82240985bf03
 
 log "step 0: infra up (bitcoind + yaci devnet)"
+# Rebuild the heimdall image from HEIMDALL_SRC first. `docker compose up`
+# reuses whatever image already exists, so without this a stale binary runs
+# silently against a fresh checkout — check_pins only warns about the SOURCE
+# ref, which says nothing about what is baked into the image. Subcommands
+# added since the last build fail as clap usage errors (exit 2), which is a
+# confusing way to discover the image is old. Cached when nothing changed.
+log "  building heimdall image from $HEIMDALL_SRC (cached when unchanged)"
+docker compose build heimdall-spo1 heimdall-spo2 heimdall-spo3 heimdall-spo4
 docker compose up -d bitcoind yaci-devkit
 for _ in $(seq 60); do
   [ "$(docker compose ps --format '{{.Health}}' bitcoind)" = "healthy" ] && break
@@ -71,7 +79,13 @@ log "step 2: fund the heimdall fee wallet from the devnet faucet"
 wallet_log="$LOGS/wallet-address.log"
 hd wallet-address "${HD_CFG[@]}" 2>&1 | tee "$wallet_log" >/dev/null
 WALLET_ADDR=$(extract "$wallet_log" 'addr_test1[a-z0-9]+')
-yaci_topup "$WALLET_ADDR" 5000
+# SEVERAL topups, not one: each is its own tx, so each adds a distinct UTxO.
+# One-shot bootstraps consume an outref apiece (registry, then the ban list),
+# and every builder needs at least one more UTxO left over to pay fees from —
+# a single faucet UTxO gets claimed as the bootstrap outref and the next
+# command dies with "no spendable UTxOs besides the registry bootstrap outref".
+for _ in 1 2 3 4; do yaci_topup "$WALLET_ADDR" 5000; done
+wait_utxo_count "$WALLET_ADDR" 4
 
 log "step 3: genesis treasury outpoint on Bitcoin regtest (spec §External inputs)"
 TREASURY_ADDR=$(hd bootstrap-treasury "${HD_CFG[@]}" 2>/dev/null | tr -d '\r' | tail -1)
