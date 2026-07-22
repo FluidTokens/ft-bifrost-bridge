@@ -248,27 +248,33 @@ IS_ARGS=(
 is_log="$LOGS/init-scripts.log"
 hd init-scripts "${HD_CFG[@]}" "${BLUEPRINT[@]}" "${IS_ARGS[@]}" \
   --submit 2>&1 | tee "$is_log" >/dev/null
+log "  credential: $(extract "$is_log" 'reward=stake_test1[a-z0-9]+' | cut -d= -f2)"
+
+# Assert the REGISTRATION, not the submission — the M4 post-mortem's fourth
+# defect was a false green from a log line emitted before the tx was accepted,
+# and a silently-skipped row would sail through a submission-only check.
+#
+# Note what this does NOT do: re-run the dry run and look for [registered].
+# That was the first attempt and it cannot work here — yaci-store's /accounts
+# returns identical 200 payloads for registered and unregistered credentials
+# (see assert_tx_deposit), so heimdall correctly reports "unknown" and the
+# assertion failed on a registration that had in fact succeeded. The deposit
+# equality below is chain-side evidence that yaci can actually provide, and it
+# proves more: the certificate was accepted AND the tx balanced exactly.
 if grep -q 'submitted init-scripts: tx_hash=' "$is_log"; then
-  wait_cardano_tx "$(extract "$is_log" 'submitted init-scripts: tx_hash=[0-9a-f]+' | cut -d= -f2)"
+  is_tx=$(extract "$is_log" 'submitted init-scripts: tx_hash=[0-9a-f]+' | cut -d= -f2)
+  wait_cardano_tx "$is_tx"
+  # Expected total from heimdall's own line, so this scales with the table
+  # rather than hardcoding one credential's 2 ADA.
+  assert_tx_deposit "$is_tx" "$(extract "$is_log" 'locking [0-9]+ lovelace' | awk '{print $2}')"
 elif grep -q 'already registered' "$is_log"; then
-  log "  credentials were already registered — re-run, nothing submitted"
+  # The LEDGER refused a duplicate registration (StakeKeyRegisteredDELEG), which
+  # is itself proof the credential is registered — a stronger statement than any
+  # query, and the only positive signal available on a re-run.
+  log "  credentials already registered — the ledger rejected the duplicate, nothing submitted"
 else
   die "init-scripts neither submitted nor reported already-registered — see $is_log"
 fi
-
-# Assert the REGISTRATION, not the submission. The M4 post-mortem's fourth
-# defect was a false green from asserting on a log line emitted before the tx
-# was accepted; the same trap is open here, and a silently-skipped row would
-# sail through a submission-only check. The dry run re-reads chain state, so
-# this is the chain talking, not heimdall.
-verify_log="$LOGS/init-scripts-verify.log"
-hd init-scripts "${HD_CFG[@]}" "${BLUEPRINT[@]}" "${IS_ARGS[@]}" 2>&1 |
-  tee "$verify_log" >/dev/null
-grep -qE '\[registered\]' "$verify_log" ||
-  die "spo_bans reward account is not registered after init-scripts — see $verify_log"
-! grep -qE '\[(NOT registered|unknown)' "$verify_log" ||
-  die "init-scripts left a credential unregistered or unverifiable — see $verify_log"
-log "  spo_bans reward account registered: $(extract "$verify_log" 'reward=stake_test1[a-z0-9]+' | cut -d= -f2)"
 
 log "step 7: register-spo ×4 (serialized — each spends the registry anchor)"
 for i in 1 2 3 4; do

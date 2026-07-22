@@ -143,6 +143,35 @@ wait_cardano_tx() {
   try_cardano_tx "$1" || die "cardano tx $1 not confirmed"
 }
 
+# Prove a stake registration landed, using only what yaci-store actually serves.
+#
+# `/accounts/{addr}` CANNOT answer this on yaci-store: it returns byte-identical
+# 200 payloads for a registered and an unregistered credential
+# (stake_address/controlled_amount/withdrawable_amount/pool_id, all zeros, no
+# Blockfrost `active` field), and `/txs/{hash}` carries no certificates. Verified
+# 2026-07-22 against both a freshly-registered and a never-registered script
+# credential.
+#
+# So assert the LEDGER EFFECT instead, which is stronger anyway: a deposit-bearing
+# certificate is the only thing that removes value from a transaction beyond its
+# fee, so `inputs - outputs - fee` must equal the deposit exactly. That single
+# equality proves the certificate was accepted AND that the tx balanced to the
+# lovelace — the part heimdall has to hand-correct, because whisky's change
+# balancer drops the deposit for legacy StakeRegistration.
+assert_tx_deposit() {
+  local tx="$1" want="$2" got
+  got=$(curl -sf "$STORE_API/txs/$tx" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+ins = sum(int(a["quantity"])
+          for i in d["inputs"] for a in i["amount"] if a["unit"] == "lovelace")
+print(ins - int(d["total_output"]) - int(d["fees"]))
+') || die "could not read tx $tx from $STORE_API"
+  [ "$got" = "$want" ] ||
+    die "tx $tx removed $got lovelace beyond its fee, expected exactly $want of deposits"
+  log "  deposit verified on chain: $got lovelace (inputs − outputs − fee)"
+}
+
 # ── heimdall (dockerized one-shots) ──────────────────────────────────────
 # Run a heimdall subcommand in a throwaway spo1-shaped container (any config
 # works for wallet-level commands; per-SPO state only matters for `demo`).
