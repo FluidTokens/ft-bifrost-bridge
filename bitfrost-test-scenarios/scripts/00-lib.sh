@@ -10,6 +10,14 @@ cd "$HERE"
 : "${BINOCULAR_SRC:=../../../lantr/binocular}"
 : "${BITCOIN_RPC_USER:=bifrost}"
 : "${BITCOIN_RPC_PASS:=bifrost}"
+# Ban schedule. Rendered into BOTH the SPO configs and the
+# deploy-spo-bans-ref args — spo_bans is parameterized by these, so any drift
+# between the two changes the script hash and the deployed ref stops matching
+# what heimdall recomputes at run time. Devnet-short on purpose.
+: "${BAN_BASE_DURATION_MS:=600000}"        # 10 min first ban (doubles per fault)
+: "${BAN_MAX_FAULTS_BEFORE_PERMANENT:=3}"
+: "${BAN_MAX_VALIDITY_WINDOW_MS:=3600000}" # 1 h cap on an ApplyBan validity interval
+
 STORE_API="http://localhost:8080/api/v1"
 ADMIN_API="http://localhost:10000/local-cluster/api"
 LOGS="$HERE/data/logs"
@@ -81,6 +89,24 @@ yaci_topup() {
 yaci_first_utxo() {
   curl -sf "$STORE_API/addresses/$1/utxos" |
     python3 -c 'import json,sys; u=json.load(sys.stdin)[0]; print(u["tx_hash"], u["output_index"], sep=":")'
+}
+
+# First UTxO of an address that is NOT one of the given refs. One-shot
+# bootstraps each burn a distinct outref (the minting policy is parameterized
+# by it), so the ban-list root cannot reuse the registry's.
+yaci_utxo_excluding() {
+  local addr="$1"
+  shift
+  curl -sf "$STORE_API/addresses/$addr/utxos" |
+    python3 -c '
+import json, sys
+excluded = set(sys.argv[1:])
+for u in json.load(sys.stdin):
+    ref = "%s:%s" % (u["tx_hash"], u["output_index"])
+    if ref not in excluded:
+        print(ref)
+        break
+' "$@"
 }
 
 wait_cardano_tx() {

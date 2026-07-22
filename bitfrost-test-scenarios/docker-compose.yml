@@ -132,6 +132,11 @@ services:
 
   heimdall-spo4:
     <<: *heimdall
+    # The designated misbehaver. Scenario 2 sets
+    # SPO4_INJECT_FAULT=--inject-fault=equivocate-round1; unset (scenario 1 and
+    # every other run) it interpolates away and the command is the honest one,
+    # so the fault is opt-in per scenario rather than baked into the service.
+    command: demo --config /etc/heimdall/heimdall.toml --deterministic ${SPO4_INJECT_FAULT:-}
     volumes:
       - ./data/generated/heimdall-spo4.toml:/etc/heimdall/heimdall.toml:ro
       - ./keys:/keys

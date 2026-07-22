@@ -51,6 +51,36 @@ demo_exclude_unstaked = true
 # DKG + key publication only; no oracle post from the bench SPOs.
 submit_oracle = false
 
+# ── DKG fault proofs + SPO bans (scenario 2) ─────────────────────────────
+# The three fault policy ids are pure functions of the blueprint + registry
+# bootstrap, so 01-bootstrap-dkz.sh learns them from a WALLET-FREE
+# `deploy-fault-ref` dry run and renders them here before minting the
+# ban-list root — `bootstrap-ban-list` reads them back out of this file
+# (BanPolicyParams::from_config), which is why they cannot wait for the
+# deploy txs. Order is fixed at deploy time: round1, round2, equivocation.
+ban_bootstrap = "@BAN_BOOTSTRAP@"
+fault_proof_policies = [
+  "@FAULT_POLICY_ROUND1@",
+  "@FAULT_POLICY_ROUND2@",
+  "@FAULT_POLICY_EQUIVOCATION@",
+]
+# Ban schedule — MUST match the args deploy-spo-bans-ref was parameterized
+# with, or the recomputed spo_bans hash misses the deployed ref. Both sides
+# are rendered from BAN_* in scripts/00-lib.sh.
+base_ban_duration_ms = @BAN_BASE_DURATION_MS@
+max_faults_before_permanent = @BAN_MAX_FAULTS_BEFORE_PERMANENT@
+max_validity_window_ms = @BAN_MAX_VALIDITY_WINDOW_MS@
+# CIP-33 reference scripts, deployed by 01-bootstrap-dkz.sh step 6b.
+spo_bans_ref = "@SPO_BANS_REF@"
+fault_verifier_round1_ref = "@FAULT_REF_ROUND1@"
+fault_verifier_round2_ref = "@FAULT_REF_ROUND2@"
+fault_verifier_equivocation_ref = "@FAULT_REF_EQUIVOCATION@"
+# Deliberately absent from the image. The equivocation path is ZK-free — no
+# SRS is ever opened and the round1/round2 verifier refs are never consumed —
+# but from_config requires the key. A real Round-1/Round-2 proof would fail
+# loudly here rather than silently reading a bogus SRS.
+fault_proof_srs_path = "/contracts/fault-proof-srs.bin"
+
 [http]
 bind_address = "0.0.0.0"
 

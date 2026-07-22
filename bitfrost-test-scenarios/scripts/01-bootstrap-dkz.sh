@@ -34,11 +34,26 @@ wait_store_api
 # missing bind source becomes a root-owned DIRECTORY. Early renders keep the
 # @...@ placeholders (wallet-level commands never read those keys); step 8
 # re-renders with the minted registry ids.
+# The ban-flow ids arrive in waves — policy hashes from a wallet-free dry run,
+# ref UTxOs only once their deploy txs land — so each falls back to its own
+# placeholder and a later re-render fills it in. Re-rendering is idempotent: it
+# always starts from config/, never from the previously generated file.
 render_configs() {
   local boot="${1:-@REGISTRY_BOOTSTRAP@}" k1="${2:-@TREASURY_INFO_ASSET_NAME@}"
   for i in 1 2 3 4; do
     sed -e "s|@REGISTRY_BOOTSTRAP@|$boot|" \
       -e "s|@TREASURY_INFO_ASSET_NAME@|$k1|" \
+      -e "s|@BAN_BOOTSTRAP@|${BAN_BOOTSTRAP:-@BAN_BOOTSTRAP@}|" \
+      -e "s|@FAULT_POLICY_ROUND1@|${FAULT_POLICY_ROUND1:-@FAULT_POLICY_ROUND1@}|" \
+      -e "s|@FAULT_POLICY_ROUND2@|${FAULT_POLICY_ROUND2:-@FAULT_POLICY_ROUND2@}|" \
+      -e "s|@FAULT_POLICY_EQUIVOCATION@|${FAULT_POLICY_EQUIVOCATION:-@FAULT_POLICY_EQUIVOCATION@}|" \
+      -e "s|@SPO_BANS_REF@|${SPO_BANS_REF:-@SPO_BANS_REF@}|" \
+      -e "s|@FAULT_REF_ROUND1@|${FAULT_REF_ROUND1:-@FAULT_REF_ROUND1@}|" \
+      -e "s|@FAULT_REF_ROUND2@|${FAULT_REF_ROUND2:-@FAULT_REF_ROUND2@}|" \
+      -e "s|@FAULT_REF_EQUIVOCATION@|${FAULT_REF_EQUIVOCATION:-@FAULT_REF_EQUIVOCATION@}|" \
+      -e "s|@BAN_BASE_DURATION_MS@|$BAN_BASE_DURATION_MS|" \
+      -e "s|@BAN_MAX_FAULTS_BEFORE_PERMANENT@|$BAN_MAX_FAULTS_BEFORE_PERMANENT|" \
+      -e "s|@BAN_MAX_VALIDITY_WINDOW_MS@|$BAN_MAX_VALIDITY_WINDOW_MS|" \
       config/heimdall-spo$i.toml >data/generated/heimdall-spo$i.toml
   done
 }
@@ -136,6 +151,64 @@ hd deploy-registry-ref "${HD_CFG[@]}" "${BLUEPRINT[@]}" \
 REGISTRY_REF=$(extract "$ref_log" 'registry ref UTxO:\s+[0-9a-f]+:[0-9]+' | grep -oE '[0-9a-f]+:[0-9]+$')
 wait_cardano_tx "${REGISTRY_REF%%:*}"
 log "  registry_bootstrap=$BOOT_REF K1=$K1_NAME registry_ref=$REGISTRY_REF"
+
+log "step 6b: DKG fault verifiers + SPO ban list (scenario 2 needs these)"
+# Order is forced by a dependency cycle: `bootstrap-ban-list` parameterizes
+# spo_bans from the CONFIG (BanPolicyParams::from_config), so the three fault
+# policy ids must already be rendered when it runs — but they are pure
+# functions of the blueprint + registry bootstrap, so a WALLET-FREE dry run
+# yields them without any tx. Hence: learn policies → render → mint the root →
+# deploy the refs → re-render with the ref outrefs.
+for kind in round1 round2 equivocation; do
+  fp_log="$LOGS/fault-policy-$kind.log"
+  hd deploy-fault-ref "${HD_CFG[@]}" "${BLUEPRINT[@]}" \
+    --kind "$kind" --registry-bootstrap "$BOOT_REF" 2>&1 | tee "$fp_log" >/dev/null
+  policy=$(extract "$fp_log" "fault_verifier_$kind policy id:\s+[0-9a-f]{56}" | grep -oE '[0-9a-f]{56}$')
+  case "$kind" in
+  round1) FAULT_POLICY_ROUND1="$policy" ;;
+  round2) FAULT_POLICY_ROUND2="$policy" ;;
+  equivocation) FAULT_POLICY_EQUIVOCATION="$policy" ;;
+  esac
+  log "  fault_verifier_$kind policy = $policy"
+done
+
+# A one-shot outref of its own — the registry already burned BOOT_REF, and the
+# ban-list minting policy is parameterized by the outref it consumes.
+BAN_BOOTSTRAP=$(yaci_utxo_excluding "$WALLET_ADDR" "$BOOT_REF")
+[ -n "$BAN_BOOTSTRAP" ] || die "no spare wallet UTxO for the ban-list one-shot — top up $WALLET_ADDR"
+log "  ban one-shot outref: $BAN_BOOTSTRAP"
+render_configs "$BOOT_REF" "$K1_NAME"
+
+bl_log="$LOGS/bootstrap-ban-list.log"
+hd bootstrap-ban-list "${HD_CFG[@]}" "${BLUEPRINT[@]}" \
+  --registry-bootstrap "$BOOT_REF" --ban-bootstrap "$BAN_BOOTSTRAP" \
+  --submit 2>&1 | tee "$bl_log" >/dev/null
+wait_cardano_tx "$(extract "$bl_log" 'tx_hash=[0-9a-f]+' | cut -d= -f2)"
+
+for kind in round1 round2 equivocation; do
+  fr_log="$LOGS/deploy-fault-ref-$kind.log"
+  hd deploy-fault-ref "${HD_CFG[@]}" "${BLUEPRINT[@]}" \
+    --kind "$kind" --registry-bootstrap "$BOOT_REF" --submit 2>&1 | tee "$fr_log" >/dev/null
+  ref=$(extract "$fr_log" 'fault-verifier ref UTxO:\s+[0-9a-f]+:[0-9]+' | grep -oE '[0-9a-f]+:[0-9]+$')
+  wait_cardano_tx "${ref%%:*}"
+  case "$kind" in
+  round1) FAULT_REF_ROUND1="$ref" ;;
+  round2) FAULT_REF_ROUND2="$ref" ;;
+  equivocation) FAULT_REF_EQUIVOCATION="$ref" ;;
+  esac
+  log "  fault_verifier_${kind}_ref = $ref"
+done
+
+sb_log="$LOGS/deploy-spo-bans-ref.log"
+hd deploy-spo-bans-ref "${HD_CFG[@]}" "${BLUEPRINT[@]}" \
+  --registry-bootstrap "$BOOT_REF" --ban-bootstrap "$BAN_BOOTSTRAP" \
+  --base-ban-duration-ms "$BAN_BASE_DURATION_MS" \
+  --max-faults-before-permanent "$BAN_MAX_FAULTS_BEFORE_PERMANENT" \
+  --max-validity-window-ms "$BAN_MAX_VALIDITY_WINDOW_MS" \
+  --submit 2>&1 | tee "$sb_log" >/dev/null
+SPO_BANS_REF=$(extract "$sb_log" 'spo_bans ref UTxO:\s+[0-9a-f]+:[0-9]+' | grep -oE '[0-9a-f]+:[0-9]+$')
+wait_cardano_tx "${SPO_BANS_REF%%:*}"
+log "  spo_bans_ref = $SPO_BANS_REF (policy $(extract "$sb_log" 'ban-list policy\):\s+[0-9a-f]{56}' | grep -oE '[0-9a-f]{56}$'))"
 
 log "step 7: register-spo ×4 (serialized — each spends the registry anchor)"
 for i in 1 2 3 4; do
