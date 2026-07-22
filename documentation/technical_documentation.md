@@ -1006,6 +1006,20 @@ operator performs:
 5. **Mint the completed-peg-ins tree NFT** — its UTxO carries the MPF root, initialized to the
    empty root (32 zero bytes).
 6. **Mint the completed-peg-outs tree NFT** — likewise with the empty root.
+
+   <!-- G40 -->**6b — Register the withdraw-zero reward accounts.** `peg_in`, `peg_out`, and `peg_out`'s
+   produced verifier (Config field 7). Their hashes have been known since step 3, and peg-in and
+   peg-out completion both authorize through the withdraw-zero pattern, which the ledger admits only
+   from a registered reward account.
+   The `peg_in` / `peg_out` registrations **may be carried by the step-4 bootstrap transaction
+   itself**, and are in the reference deployer: both hashes are config-derived and therefore fresh
+   for every instance, so bundling them can never collide with an earlier deployment. The produced
+   verifier is **parameterless**, so its hash is *constant across deployments* — bundling its
+   registration would make the entire bootstrap transaction fail on the second instance, where that
+   credential is already registered. It is therefore registered by a separate, idempotent
+   transaction. The *not*-produced verifier (field 8) and the close verifier (field 6) stay
+   unregistered by design; see the catalog entry for why, and for the certificate, deposit, ordering
+   and idempotency rules.
 7. ~~Mint the TM-control UTxO~~ — **removed**: TM records mint permissionlessly, gated by the
    TM-chain linkage check against the Config's initial treasury outpoint or the predecessor
    Confirmed record (see *Post signed TM*). The interim `TMCTRL` authorized-minter singleton has
@@ -1316,6 +1330,7 @@ This section is the normative reference for every on-chain transaction the proto
 | `apply_first_ban` / `apply_repeated_ban` | Cardano | §SPO Registration, section 7.2 |
 | `publish_fault_proof` | Cardano | §Misbehavior Handling, section 9.1 |
 | Bootstrap mints (Config, params, cpi/cpo, K1 Treasury state, `reg-root`, `ban-root`) | Cardano | §Bridge instance creation flow; §SPO Bootstrap Flow |
+| Register script reward accounts (the withdraw-zero credentials) | Cardano | this catalog |
 | Binocular oracle updates | Cardano | Binocular [1] (normative for the oracle) |
 
 ### Peg-in deposit (Bitcoin)
@@ -2061,6 +2076,74 @@ first-handoff per §Rollout Phases. The signed message is the Update-Y layout wi
 > posted: the old key remains and the roster carries over (degraded-epoch handling: see the
 > consensus-change flow).
 
+<!-- G40: the withdraw-zero pattern depends on a stake registration that no transaction in this
+     document performed. Deployment-time, but consensus-relevant: without it every withdraw-zero
+     path is rejected by the ledger before phase 2 runs. -->
+### Register script reward accounts (Cardano)
+
+**Purpose**: register the stake credential of each validator that authorizes through the
+**withdraw-zero** pattern, making those withdrawals admissible. A zero-amount reward withdrawal is
+valid only if the reward account it draws from is registered on chain; until then every transaction
+using the pattern is rejected at submission with
+
+    ConwayCertsFailure (WithdrawalsNotInRewardsCERTS
+      (fromList [(RewardAccount {raCredential = ScriptHashObj (ScriptHash …)}, Coin 0)]))
+
+**Who**: the deploying operator — the bridge deployer for the peg credentials, the SPO-side bootstrap
+operator for `spo_bans`.
+**Trigger**: the bootstrap that fixes a withdraw-using validator's parameters, and therefore its
+script hash, has been submitted.
+
+**Which credentials.** Per the validator blueprint the handlers carrying `withdraw` are `peg_in`,
+`peg_out` and `spo_bans`. Each compiles to a **single** script hash shared by its `spend` / `mint` /
+`withdraw` handlers, so the credential to register is the validator's own hash — one certificate per
+validator, not one per handler. `peg_out`'s completion verifier (`peg_out_produced_verifier`, Config
+field 7) is invoked through `validate_withdraw` and needs its own registration. The *not*-produced
+verifier (field 8) and the peg-in close verifier (field 6) are deliberately **left unregistered**
+while the Cancel and Close branches are unbuilt: an unregistered credential makes those paths cleanly
+unsatisfiable rather than subtly wrong.
+
+**Structure**
+
+| Role | Content |
+|------|---------|
+| **Inputs** | operator UTxO (fees + deposits) |
+| **Certificates** | one stake registration per credential, over `ScriptHashObj(script_hash)` |
+| **Reference inputs** | — |
+| **Mint** | — |
+| **Outputs** | change |
+| **Witness data (redeemer)** | — |
+| **Required signers** | the fee payer only |
+
+**Rules**
+
+* **The registered credential executes nothing.** A registration certificate does not run the stake
+  script — only *de*registration does — so the transaction carries no redeemer, no script witness and
+  no collateral on account of these certificates. This is a requirement rather than an economy:
+  `peg_in` fails on any purpose other than `Rewarding`, so a certificate form that executed it would
+  be unsatisfiable.
+* **Deposit.** Each registration locks the protocol stake-key deposit (`keyDeposit`), refundable only
+  by deregistering that credential. Registration is therefore a funded and effectively permanent
+  commitment per credential, and belongs in a deliberate deployment step rather than as a side effect
+  of another transaction.
+* **It cannot be folded into the withdrawing transaction.** Certificates are validated against the
+  ledger state *as it stands before the transaction is applied*, so a withdrawal sharing a transaction
+  with its own registration still observes an unregistered account. The registration must be in an
+  earlier, already-applied transaction.
+* **Ordering.** After the bootstrap that fixes the validator's parameters, and before any transaction
+  exercising its `withdraw` handler. It may be carried by that bootstrap transaction itself — the
+  reference deployer folds the `peg_in` and `peg_out` registrations into the instance bootstrap (see
+  §Bridge instance creation flow) — or submitted separately, which is required for any credential
+  whose hash is constant across deployments (see there).
+* **Idempotency.** Re-registering an already-registered credential is a ledger error
+  (`StakeKeyRegisteredDELEG` in Conway; `StakeKeyAlreadyRegisteredDELEG` in earlier eras), rejected in
+  phase 1 at no cost beyond the failed submission. A deployer must therefore filter **per credential**
+  rather than per transaction, so a partially applied run converges on re-run. Where the chain backend
+  cannot distinguish a registered from an unregistered credential, attempting the registration and
+  treating that specific rejection as success is a sound substitute.
+* Either certificate form is acceptable: the legacy `stake_registration`, whose deposit is taken from
+  the protocol parameters, or Conway's `reg_cert`, which states the deposit explicitly.
+
 ## Guaranteeing censor-resistant peg-ins and peg-outs
 
 The main axiom is: When the user uses any bridge, he is already fully trusting the source (ex. Bitcoin) and the destination (ex. Cardano). Every additional component that the bridge uses and that it can't be under direct control of the user is an additional trust assumption.
@@ -2321,8 +2404,9 @@ Before the first SPO registration, the protocol bootstrap creates the SPO-relate
 1. The treasury bootstrap policy mints the **Treasury state NFT** and creates the Treasury state UTxO at `treasury.ak`, with the initial treasury parameters and an empty `bifrost_identity_root`.
 2. The `spos_registry.ak` minting policy has a one-shot bootstrap branch that consumes a fixed bootstrap nonce UTxO, mints the **registration-list root NFT** (`reg-root`), and creates the empty registration-list root UTxO at `spos_registry.ak`.
 3. The `spo_bans.ak` policy has a one-shot bootstrap branch that consumes a fixed bootstrap nonce UTxO, mints the **ban-list root NFT** (`ban-root`), and creates the empty ban-list root UTxO at `spo_bans.ak`.
+4. <!-- G40 -->The **`spo_bans` reward account is registered** — a stake registration over `ScriptHashObj(spo_bans_script_hash)`. `ban` authorizes through the withdraw-zero pattern, and Conway admits a withdrawal only from a registered reward account, so without this step `apply_first_ban` / `apply_repeated_ban` are rejected by the ledger before any validator runs. It must follow step 3, because `spo_bans` is parameterized by the ban-list bootstrap outref that step consumes and its hash is not final until then. See *Register script reward accounts* in the transaction catalog for the certificate, the deposit it locks, and why it cannot be folded into the ban transaction itself.
 
-These three authenticated UTxOs are the starting point for all later SPO-related transactions. The runtime protocol never creates replacement roots. Instead:
+The three authenticated UTxOs of steps 1–3 are the starting point for all later SPO-related transactions (step 4 creates no UTxO — it registers a credential). The runtime protocol never creates replacement roots. Instead:
 
 - `register` consumes the current registration-list anchor element and the Treasury state UTxO, and produces the updated anchor element, the new registration node, and the updated Treasury state UTxO;
 - `deregister` consumes the current registration node, its anchor element, and the Treasury state UTxO, and produces the updated anchor element and the updated Treasury state UTxO;
