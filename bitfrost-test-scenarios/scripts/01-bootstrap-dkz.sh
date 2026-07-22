@@ -224,6 +224,52 @@ SPO_BANS_REF=$(extract "$sb_log" 'spo_bans ref UTxO:\s+[0-9a-f]+:[0-9]+' | grep 
 wait_cardano_tx "${SPO_BANS_REF%%:*}"
 log "  spo_bans_ref = $SPO_BANS_REF (policy $(extract "$sb_log" 'ban-list policy\):\s+[0-9a-f]{56}' | grep -oE '[0-9a-f]{56}$'))"
 
+log "step 6c: register the spo_bans withdraw credential (scenario 2's ApplyBan needs it)"
+# ApplyBan authorizes via withdraw-zero, and Conway only admits a withdrawal
+# whose reward account is REGISTERED. Nothing above registers one, which is what
+# stopped the 2026-07-22 live run dead at ApplyBan with
+#   ConwayCertsFailure (WithdrawalsNotInRewardsCERTS ... ScriptHashObj 9dbace5d)
+# It cannot be folded into the ApplyBan tx: certificates validate against the
+# PRE-transaction ledger state, so the withdrawal would still see an
+# unregistered account.
+#
+# Placed at the END of 6b for a resource reason, not a dependency one: the
+# certificate only needs the spo_bans HASH, final since the render at the top of
+# this step. But by now bootstrap-ban-list has consumed BAN_BOOTSTRAP, so this
+# tx can no longer be handed the one-shot outref that parameterizes the very
+# script it registers. (init-scripts also filters both bootstrap outrefs out of
+# its own coin selection — belt and braces, since ordering here is convention.)
+IS_ARGS=(
+  --registry-bootstrap "$BOOT_REF" --ban-bootstrap "$BAN_BOOTSTRAP"
+  --base-ban-duration-ms "$BAN_BASE_DURATION_MS"
+  --max-faults-before-permanent "$BAN_MAX_FAULTS_BEFORE_PERMANENT"
+  --max-validity-window-ms "$BAN_MAX_VALIDITY_WINDOW_MS"
+)
+is_log="$LOGS/init-scripts.log"
+hd init-scripts "${HD_CFG[@]}" "${BLUEPRINT[@]}" "${IS_ARGS[@]}" \
+  --submit 2>&1 | tee "$is_log" >/dev/null
+if grep -q 'submitted init-scripts: tx_hash=' "$is_log"; then
+  wait_cardano_tx "$(extract "$is_log" 'submitted init-scripts: tx_hash=[0-9a-f]+' | cut -d= -f2)"
+elif grep -q 'already registered' "$is_log"; then
+  log "  credentials were already registered — re-run, nothing submitted"
+else
+  die "init-scripts neither submitted nor reported already-registered — see $is_log"
+fi
+
+# Assert the REGISTRATION, not the submission. The M4 post-mortem's fourth
+# defect was a false green from asserting on a log line emitted before the tx
+# was accepted; the same trap is open here, and a silently-skipped row would
+# sail through a submission-only check. The dry run re-reads chain state, so
+# this is the chain talking, not heimdall.
+verify_log="$LOGS/init-scripts-verify.log"
+hd init-scripts "${HD_CFG[@]}" "${BLUEPRINT[@]}" "${IS_ARGS[@]}" 2>&1 |
+  tee "$verify_log" >/dev/null
+grep -qE '\[registered\]' "$verify_log" ||
+  die "spo_bans reward account is not registered after init-scripts — see $verify_log"
+! grep -qE '\[(NOT registered|unknown)' "$verify_log" ||
+  die "init-scripts left a credential unregistered or unverifiable — see $verify_log"
+log "  spo_bans reward account registered: $(extract "$verify_log" 'reward=stake_test1[a-z0-9]+' | cut -d= -f2)"
+
 log "step 7: register-spo ×4 (serialized — each spends the registry anchor)"
 for i in 1 2 3 4; do
   cold=$(printf "2$i%.0s" $(seq 32))

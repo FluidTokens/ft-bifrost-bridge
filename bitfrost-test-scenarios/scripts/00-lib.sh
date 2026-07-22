@@ -125,13 +125,22 @@ for u in json.load(sys.stdin):
 ' "$@"
 }
 
-wait_cardano_tx() {
-  local tx="$1"
-  for _ in $(seq 60); do
+# Poll for a tx WITHOUT dying — returns 1 if it never appears. Callers that must
+# collect diagnostics before failing (a scenario that tees a report on its way
+# out) need the non-fatal form: dying here would destroy the very evidence the
+# failure is about.
+try_cardano_tx() {
+  local tx="$1" tries="${2:-60}"
+  for _ in $(seq "$tries"); do
     curl -sf "$STORE_API/txs/$tx" >/dev/null 2>&1 && return 0
     sleep 2
   done
-  die "cardano tx $tx not confirmed"
+  return 1
+}
+
+# Fatal wrapper — the common case, for bootstrap steps with nothing to collect.
+wait_cardano_tx() {
+  try_cardano_tx "$1" || die "cardano tx $1 not confirmed"
 }
 
 # ── heimdall (dockerized one-shots) ──────────────────────────────────────

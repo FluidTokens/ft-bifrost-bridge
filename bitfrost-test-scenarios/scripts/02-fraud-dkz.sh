@@ -81,16 +81,38 @@ equivocate)
   # verifier refs, so this is the one fault kind that runs end-to-end on a
   # devnet without a trusted setup.
   banned=0
+  ban_tx=""
   while [ $SECONDS -lt $deadline ]; do
     # Assert on SUBMITTED, not "built": `built ApplyBan` is logged before the
     # tx is sent, so keying on it reports success even when submission is
     # rejected — which it was, with WithdrawalsNotInRewardsCERTS.
-    if docker compose logs 2>/dev/null | grep -q '\[fault-ban\] submitted apply-ban: tx_hash='; then
+    # `|| true` is load-bearing: under `set -euo pipefail` a no-match grep makes
+    # the pipeline exit 1, and a bare assignment from it is NOT exempt from
+    # set -e (unlike the `if grep -q` form this replaced) — so without it the
+    # scenario dies on the first poll, before any ApplyBan can possibly exist.
+    ban_tx=$(docker compose logs 2>/dev/null |
+      grep -oE '\[fault-ban\] submitted apply-ban: tx_hash=[0-9a-f]{64}' |
+      head -1 | cut -d= -f2) || true
+    if [ -n "$ban_tx" ]; then
       banned=1
       break
     fi
     sleep 5
   done
+
+  # ...and even "submitted" is only heimdall's account of itself: it proves a
+  # request was made, not that the ledger kept it. Ask the chain. This is the M4
+  # false-green lesson generalized — the run that printed
+  # "OK: cheat -> detect -> FaultProof -> ban" while the ApplyBan had in fact
+  # been rejected was caught only by querying the chain by hand.
+  #
+  # try_ not wait_: every failure below must reach the report tee'd in step 4,
+  # and the fatal form would exit first, throwing away the logs that explain why.
+  ban_confirmed=0
+  if [ "$banned" = 1 ]; then
+    log "  ApplyBan submitted as $ban_tx — confirming against the chain"
+    try_cardano_tx "$ban_tx" && ban_confirmed=1
+  fi
 
   log "step 4: collect the report"
   for i in 1 2 3 4; do
@@ -110,9 +132,37 @@ equivocate)
     grep -h '\[fault-ban\]' "$REPORT"/spo*.log || echo "(none)"
   } | tee "$REPORT/summary.txt"
 
-  [ "$banned" = 1 ] ||
-    die "equivocation was detected but no ApplyBan landed — see $REPORT/summary.txt"
-  log "OK: cheat -> detect -> FaultProof -> ban, report in $REPORT/"
+  if [ "$ban_confirmed" != 1 ]; then
+    # Distinguish the three ways this fails. They have completely different
+    # causes, and collapsing them into "no ApplyBan landed" is what made the
+    # 2026-07-22 blocker cost a day: the tx was built and rejected, but the
+    # scenario said only that a ban was missing.
+    [ "$banned" != 1 ] ||
+      die "ApplyBan $ban_tx was submitted but never reached the chain — see $REPORT/summary.txt"
+
+    # Built-but-never-submitted is the signature of a LEDGER rejection, not a
+    # protocol bug. Surface the node's own words so the next deployment gap
+    # diagnoses itself instead of needing a manual chain query.
+    if grep -qh '\[fault-ban\] built ApplyBan' "$REPORT"/spo*.log; then
+      {
+        echo
+        echo "=== APPLYBAN WAS BUILT BUT NEVER LANDED — node rejection follows ==="
+        # Anchored per SPO, from its OWN apply-ban submission onward. A flat
+        # grep across all four picks up the mint-race losers' BadInputsUTxO —
+        # benign, expected, and noisy enough to bury the real rejection.
+        for f in "$REPORT"/spo*.log; do
+          grep -q '\[fault-ban\] built ApplyBan' "$f" || continue
+          echo "--- ${f##*/} ---"
+          sed -n '/\[fault-ban\] submitting apply-ban/,$p' "$f" |
+            grep -m3 'Message: {\|Error: 4[0-9][0-9]\|apply-ban blockfrost tx submit' ||
+            echo "(no submission error logged)"
+        done
+      } | tee -a "$REPORT/summary.txt"
+      die "ApplyBan was built and REJECTED by the node, not merely missing — see the rejection above and $REPORT/summary.txt"
+    fi
+    die "equivocation was detected but no ApplyBan was ever built — see $REPORT/summary.txt"
+  fi
+  log "OK: cheat -> detect -> FaultProof -> ban (ApplyBan $ban_tx confirmed on chain), report in $REPORT/"
   ;;
 *) die "unknown fault: $FAULT (absent|equivocate)" ;;
 esac
