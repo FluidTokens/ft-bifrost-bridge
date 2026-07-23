@@ -2939,7 +2939,12 @@ Where `<threshold>` is `51` (one DKG per epoch), and `<attempt>` is the DKG name
   "commitment": ["<hex, 33 bytes>", ...],
   "sigma_i": "<hex, 64 bytes>",
   "poseidon_commit": "<hex, 32 bytes>",
-  "signature": "<hex, 64 bytes>"
+  "signature": "<hex, 64 bytes>",
+  "view": {
+    "view_digest": "<hex, 32 bytes>",
+    "view_n": <integer>,
+    "view_read_time_ms": <integer>
+  }
 }
 ```
 
@@ -2950,6 +2955,14 @@ Where:
   `Poseidon(structured_fields)` computed by the publisher over the same fields
   (see *Authentication* — self-committing payloads).
 - `signature` is a BIP340 Schnorr signature over `SHA256(canonical_bytes)` using `bifrost_id_sk`.
+- `view` is the publisher's **chain-view** for this ceremony: `view_digest` is the
+  `blake2b_256` of the candidate set's `pool_id`s in canonical (`bifrost_id_pk`) order,
+  `view_n` is the candidate count, and `view_read_time_ms` is the block-time (POSIX ms) of
+  the latest block the candidate set was read at. It is **advisory and UNSIGNED** — it is
+  NOT covered by `signature`, NOT part of the canonical byte layout below, and NOT part of
+  the equivocation comparison (two Round 1 payloads that differ *only* in `view` are the
+  same signed payload, never a misbehavior). It is optional and MAY be absent (e.g. a
+  no-registry fallback). Its use is defined in Section 6.3.
 
 **Canonical byte layout** (for authentication and on-chain misbehavior proofs):
 
@@ -2969,6 +2982,20 @@ Each $P_i$ fetches every Round 1 payload that was published before the common Ro
 If an SPO does not publish Round 1 before the deadline, it simply does not enter the attempt's provisional subset and is not punished for that fact alone.
 
 If a published Round 1 payload is invalid, or if two distinct signed Round 1 payloads for the same sender and namespace are observed, the process proceeds to **Misbehavior Handling** (Section 9).
+
+##### 6.3 Chain-View Publication and Post-Ban Convergence
+
+The candidate set (Section 4) is filtered deterministically by the epoch-boundary time, but the ban linked-list it filters is read at the **current chain tip**. Near a ban — the interval in which an `ApplyBan` transaction has confirmed for some observers but is not yet visible to others — two honest SPOs reading the same epoch can therefore enumerate **different** candidate sets: one that already excludes the banned pool ($n-1$ members) and one that does not ($n$ members). Their Round 1 commitment vectors then have different lengths and different index assignments, so each treats the other as being on a foreign candidate set (Section 6.2), and the ceremony cannot complete until every honest observer has read the chain past the ban's settlement point. This is a **liveness/recovery-time** concern, not a safety one: no wrong key is produced, but completion of the reduced DKG can be delayed by one or more epochs.
+
+To bound this delay, each SPO publishes its chain-view alongside every Round 1 payload (the `view` field, Section 6.1) and applies the following rule on fetch:
+
+1. **Detect.** When $P_i$ fetches $P_l$'s Round 1 payload and `view_digest` differs from $P_i$'s own, the two are on different candidate sets — a genuine cross-view disagreement, distinguished here from a merely corrupt or foreign payload.
+2. **Direct.** The disagreement is resolved by whichever node read the chain **earlier**: if $P_i$'s `view_read_time_ms` is older than $P_l$'s, then $P_i$ read the chain before the disagreeing event had settled into its view, so $P_i$ is the node that re-reads. `view_read_time_ms` is a **block-time**, never a local wall clock, so it is comparable across nodes; the epoch is deliberately not used, because the disagreement occurs *within* one epoch.
+3. **Reconcile.** The stale node re-derives its candidate set from the chain after a settling delay, so the re-read lands after the event has settled, rather than immediately retrying against the same unsettled tip. The fresher-read node does not wait.
+
+The chain-view is a **hint, never authoritative**. The chain remains the sole source of truth: a published view only ever causes a node to *re-read the chain*, never to adopt a peer's value. A peer that publishes a false view therefore gains nothing — its own payload is still verified against the chain and dropped if inconsistent, exactly as without the field.
+
+**Convergence.** Two honest nodes read one canonical chain; a view difference arises only from reading at different points near an unsettled event. Once that event settles (becomes immutable at sufficient depth), every honest re-read returns the identical view, and because the stale node re-reads after settling, the nodes converge. Permanent divergence would require either the chain never settling (a liveness failure, out of scope) or honest nodes following different canonical chains (a $>50\%$ adversary). Under honest-majority and chain liveness, permanent divergence is therefore impossible.
 
 #### 7. Round 2: Secret Share Distribution
 
