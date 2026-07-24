@@ -2070,15 +2070,29 @@ Phase 1 (federation as key-path signer), the roster rebuilds, and the federation
 first-handoff per §Rollout Phases. The signed message is the Update-Y layout with the domain tag
 `"bifrost-update-y-reset"`.
 
-> **How the deadness proof is realized (N10b implementation choice).** The witness-parsed
-> federation-leaf check runs **once, at TM confirmation, in Binocular** — where the raw signed
-> Bitcoin tx (with witnesses) still exists and the inclusion proof is already being checked —
-> rather than as a fresh proof re-verified at reset time. `confirm-tmtx` reconstructs the leaf
-> `<federation_csv_blocks> OP_CSV OP_DROP <y_federation> OP_CHECKSIG` and records a
-> `spent_via_federation_leaf` boolean on the `Confirmed` TM datum; the reset branch references that
-> Confirmed record and gates on the boolean (plus the `y_federation` signature above). This keeps
-> the Bitcoin witness-walk in one place (Binocular's `spentViaLeaf`) instead of porting it into
-> Aiken. **Freshness (anti-replay).** The boolean alone proves *a* federation-leaf sweep occurred,
+> **How the deadness proof is realized (N10b implementation choice).** The federation-leaf check
+> runs **once, at TM confirmation, in Binocular's Treasury-Movement validator** — where the raw
+> signed Bitcoin tx (witnesses intact) still exists and the inclusion proof against the oracle is
+> already being checked — rather than as a fresh proof re-verified at reset time. The `Confirmed` TM
+> datum carries a `spent_via_federation_leaf` boolean; the reset branch references that Confirmed
+> record and gates on the boolean (plus the `y_federation` signature above).
+>
+> The flag is computed **coarsely and enforced on-chain.** The treasury's Taproot tree has a SINGLE
+> script leaf (the federation `<federation_csv_blocks> OP_CSV OP_DROP <y_federation> OP_CHECKSIG`; the
+> internal key `Y_51` is the key-path roster sweep), and the TM's input 0 is pinned to the treasury
+> outpoint at mint — so a **3-item script-path witness on input 0 IS the federation-leaf spend**, with
+> no on-chain `y_federation`/`csv` reconstruction needed. Because the TM is confirmed against the
+> oracle (mined on Bitcoin), that script-path spend necessarily satisfied `OP_CSV`: the tip had aged
+> past `federation_csv_blocks` unmoved — the objective deadness. The Confirm validator computes the
+> boolean (`isValidScriptPathWitness(signed_btc_tx, 0)`) and bakes it into the `Confirmed` datum the
+> continuing output must byte-match, so the **permissionless** confirmer cannot forge it (this matters:
+> a compromised federation could otherwise flag a normal roster-signed TM and demote a live roster —
+> theft, since new deposits then derive to `y_federation`); `confirm-tmtx` computes the same value
+> off-chain to build a matching output. This keeps the Bitcoin witness-walk in Binocular (its Scalus
+> contract) rather than porting it into Aiken. *(Precise leaf reconstruction — `spentViaLeaf` against
+> the rebuilt leaf — is still used for PegInRequest CLOSURE, where the deposit tree has MULTIPLE leaves
+> and the revealed one must be disambiguated; the single-leaf treasury needs only the item count.)*
+> **Freshness (anti-replay).** The boolean alone proves *a* federation-leaf sweep occurred,
 > not that it swept the *current* tip — so on its own a compromised federation could reference a
 > *stale* federation-swept TM to demote a roster that already recovered (a real theft concern, not
 > just DoS: after such a reset, new deposits derive to `y_federation` addresses the federation can
