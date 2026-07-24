@@ -498,11 +498,17 @@ fn t_tm_ref(with_nft: Bool, flag: Bool, btc_txid: ByteArray) -> Input {
       },
       value: value,
       datum: InlineDatum(
+        // Full 8-field shape, matching binocular's real TmDatum.Confirmed (incl. the N7
+        // provenance fields). The mirror must decode this exact field count on-chain.
         Confirmed {
           btc_txid,
           swept_peg_in_utxo_ids: [],
           fulfilled_peg_outs: [],
           spent_via_federation_leaf: flag,
+          creator: #"9493315cd92eb5d8c4304e67b7e16ae36d61d34502694657811a2c8e",
+          created: 1784900811000,
+          epoch: 61,
+          leader_reward: 2000000,
         },
       ),
       reference_script: None,

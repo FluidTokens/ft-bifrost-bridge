@@ -25,14 +25,26 @@ pub type TreasuryMovementDatum {
   // Posted when the signed Bitcoin TM is published to Cardano; carries the full segwit tx bytes.
   Unconfirmed { signed_btc_tx: ByteArray }
   // Produced by binocular `confirm-tmtx` once the TM is Binocular-confirmed: the recomputed txid,
-  // the swept peg-in outpoints (each = 36-byte prev_txid(LE) ++ vout), the fulfilled peg-outs, and
+  // the swept peg-in outpoints (each = 36-byte prev_txid(LE) ++ vout), the fulfilled peg-outs,
   // whether the treasury input was spent via the federation CSV leaf (N10b — the dead-roster
-  // evidence consumed by treasury.ak FederationReset). Appended last so existing readers that
-  // destructure with `..` stay decode-compatible.
+  // evidence consumed by treasury.ak FederationReset), and the N7 provenance fields.
+  //
+  // This MUST list EVERY field of binocular's `TmDatum.Confirmed` in order: Aiken's `expect
+  // Confirmed { .. }` requires the on-chain Constr's field COUNT to match this type exactly (the
+  // `..` ignores unbound fields of THIS type, NOT extra fields in the data). A shorter "prefix"
+  // mirror silently decodes in unit tests but CRASHES on the real 8-field datum on-chain — which is
+  // exactly how the FederationReset / CompletePegIn readers failed live before this was extended.
+  // So keep this in lock-step with binocular `TreasuryMovementValidator.TmDatum.Confirmed`.
   Confirmed {
     btc_txid: ByteArray,
     swept_peg_in_utxo_ids: List<ByteArray>,
     fulfilled_peg_outs: List<PegOutEntry>,
     spent_via_federation_leaf: Bool,
+    // N7 provenance (carried verbatim from the Unconfirmed input; not read on-chain here, but
+    // present in the datum so the decode MUST account for them).
+    creator: ByteArray,
+    created: Int,
+    epoch: Int,
+    leader_reward: Int,
   }
 }

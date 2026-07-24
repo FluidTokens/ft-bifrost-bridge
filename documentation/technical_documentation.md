@@ -562,6 +562,7 @@ classDiagram
         btc_txid : ByteArray
         swept_peg_in_utxo_ids : List~ByteArray~
         fulfilled_peg_outs : List~PegOutEntry~
+        spent_via_federation_leaf : Bool
         creator : ByteArray
         created : Int
         epoch : Int
@@ -589,6 +590,15 @@ TM-record datum fields beyond `signed_btc_tx` / `btc_txid` / `swept_peg_in_utxo_
 `fulfilled_peg_outs`, all carried verbatim from the `Unconfirmed` record into the `Confirmed`
 one by the Confirm transition:
 
+- `spent_via_federation_leaf` — `Bool` at **Constr index 3** (immediately after `fulfilled_peg_outs`,
+  before `creator`). Set by binocular at confirm time iff this TM swept the treasury via the
+  federation CSV leaf; the objective dead-roster evidence `treasury.ak::FederationReset` reads (see
+  *Update-Y federation reset*). Its position is load-bearing: the `Confirmed` datum is the SINGLE
+  canonical shape above, and every on-chain reader — the Aiken `treasury_movement.Confirmed` mirror
+  consumed by `FederationReset` and `peg_in.ak::CompletePegIn` — MUST declare all eight fields in this
+  order. Aiken's `expect Confirmed { .. }` matches the on-chain Constr's field COUNT exactly (the `..`
+  ignores unbound fields of the mirror TYPE, not extra fields in the data), so a shorter "prefix"
+  mirror decodes fine in unit tests but crashes on the real datum on-chain.
 - `creator` — the poster's payment key hash. It authorizes the post-grace **garbage collection**
   of a `Confirmed` record (burn the TM NFT, reclaim min-ADA; see *Treasury Movement lifecycle*).
 - `created` — POSIX ms, pinned by the TM mint policy to equal the posting tx's validity upper
