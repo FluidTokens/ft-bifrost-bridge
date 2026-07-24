@@ -2076,11 +2076,13 @@ first-handoff per §Rollout Phases. The signed message is the Update-Y layout wi
 > signature }`. The `UpdateY` branch verifies `verify_schnorr_signature(spent_datum
 > .current_spos_frost_key, sig_msg, signature)` over the message below and rewrites only
 > `current_spos_frost_key` (record-update spread, so every other field is preserved byte-for-byte);
-> unit-tested against a real BIP340 vector. **Still pending:** the off-chain submission builder
-> (heimdall) and the **federation-reset variant** — the latter needs the datum's `y_federation`
-> field, which arrives with N10b (datum federation fields + vestigial-pointer removal). If the
-> epoch's DKG fails, no Update-Y is posted: the old key remains and the roster carries over
-> (degraded-epoch handling: see the consensus-change flow).
+> unit-tested against a real BIP340 vector. The **off-chain builder is implemented** (heimdall
+> `update-y` CLI + `cardano::update_y`, with the signed message locked to the on-chain one by a
+> shared-vector test) and the whole flow is **live-verified on devnet and preprod** (rotation
+> accepted, bogus signature rejected). **Still pending:** the **federation-reset variant** — it needs
+> the datum's `y_federation` field, which arrives with N10b (datum federation fields +
+> vestigial-pointer removal). If the epoch's DKG fails, no Update-Y is posted: the old key remains
+> and the roster carries over (degraded-epoch handling: see the consensus-change flow).
 
 <!-- G40: the withdraw-zero pattern depends on a stake registration that no transaction in this
      document performed. Deployment-time, but consensus-relevant: without it every withdraw-zero
