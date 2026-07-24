@@ -62,9 +62,9 @@ validator treasury_info(registry_policy_id: PolicyId) {
       treasury_output.datum == InlineDatum(
         TreasuryDatum {
           bifrost_identity_root: mpf.root(mpf.empty),
-          current_treasury_address: redeemer.current_treasury_address,
-          current_treasury_utxo_id: redeemer.current_treasury_utxo_id,
           current_spos_frost_key: redeemer.current_spos_frost_key,
+          y_federation: redeemer.y_federation,
+          federation_csv_blocks: redeemer.federation_csv_blocks,
         },
       )
 
@@ -171,12 +171,11 @@ const t_registry_policy: ByteArray =
 const t_asset_name: ByteArray =
   #"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-// Vestigial pointer fields (any bytes; preserved by every branch).
-const t_addr0: ByteArray =
-  #"5120bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+// Federation fields (preserved by the RegistryUpdate / UpdateY branches).
+const t_yfed: ByteArray =
+  #"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
-const t_utxo0: ByteArray =
-  #"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee00000000"
+const t_csv: Int = 144
 
 const t_root0: ByteArray =
   #"0000000000000000000000000000000000000000000000000000000000000000"
@@ -205,9 +204,9 @@ const t_updatey_sig: ByteArray =
 fn t_datum(root: ByteArray, key: ByteArray) -> TreasuryDatum {
   TreasuryDatum {
     bifrost_identity_root: root,
-    current_treasury_address: t_addr0,
-    current_treasury_utxo_id: t_utxo0,
     current_spos_frost_key: key,
+    y_federation: t_yfed,
+    federation_csv_blocks: t_csv,
   }
 }
 

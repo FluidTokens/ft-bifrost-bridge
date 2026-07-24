@@ -97,11 +97,13 @@ fn updated_treasury_datum(
   treasury_input_datum: TreasuryDatum,
   new_bifrost_identity_root: ByteArray,
 ) -> TreasuryDatum {
+  // Registration/deregistration changes ONLY the identity root; the frost key
+  // and the federation fields are preserved (record-update spread — matches
+  // treasury.ak's RegistryUpdate branch, and stays correct across datum shape
+  // changes).
   TreasuryDatum {
+    ..treasury_input_datum,
     bifrost_identity_root: new_bifrost_identity_root,
-    current_treasury_address: treasury_input_datum.current_treasury_address,
-    current_treasury_utxo_id: treasury_input_datum.current_treasury_utxo_id,
-    current_spos_frost_key: treasury_input_datum.current_spos_frost_key,
   }
 }
 
