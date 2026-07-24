@@ -940,6 +940,7 @@ carrying the NFT forward.
 | 1 | `current_spos_frost_key` | ByteArray (32 B x-only) | the current treasury group key: $Y_{51}$ after the first successful DKG; **$Y_{federation}$ from K1 until then** — which is what makes Phase 1 operation and the governance continuum (Config updates, Update-Y) work unchanged |
 | 2 | `y_federation` | ByteArray (32 B x-only) | the federation fallback key — the script-leaf key of both Taproot trees |
 | 3 | `federation_csv_blocks` | Int | the `timeout_federation` CSV value baked into the federation leaves |
+| 4 | `last_reset_tm_txid` | ByteArray (32 B, empty at bootstrap) | `btc_txid` of the federation-sweep TM that last authorized a Federation reset — the anti-replay anchor (see *Federation reset*). Not part of address derivation. |
 
 Fields 2–3 complete address derivation: a depositor (or SPO) reads this **one** UTxO and derives
 both the Treasury and peg-in Taproot addresses (see *Taproot address construction*).
@@ -953,7 +954,7 @@ both the Treasury and peg-in Taproot addresses (see *Taproot address constructio
 | Deregister / voluntary revoke | `bifrost_identity_root` (remove) | #1–3 |
 | Update-Y (key rotation — see the Transaction catalog) | `current_spos_frost_key` | #0, #2–3 |
 | Federation-key rotation (rare; an Update-Y variant) | `y_federation`, `federation_csv_blocks` | #0–1 — note: this changes every derived address; in-flight peg-ins against old addresses must be swept or refunded first |
-| Federation reset (guarded Update-Y variant — see *Update-Y*) | `current_spos_frost_key` → `y_federation` **only** | #0, #2–3 — requires a Binocular proof that the treasury tip was spent via the federation CSV leaf (roster provably dead) |
+| Federation reset (guarded Update-Y variant — see *Update-Y*) | `current_spos_frost_key` → `y_federation` **only**, and `last_reset_tm_txid` → the consumed sweep's `btc_txid` | #0, #2–3 — requires a Binocular-flagged Confirmed TM proving the tip was swept via the federation CSV leaf (roster provably dead) whose `btc_txid ≠ last_reset_tm_txid` (freshness) |
 
 **Reading the Treasury state.** As with the Config UTxO: on-chain readers take it as a reference
 input and verify the NFT; off-chain readers resolve the NFT to its UTxO and decode the inline
@@ -2068,6 +2069,28 @@ the proof **cannot exist for a live bridge** (see §Federation). Effect: the bri
 Phase 1 (federation as key-path signer), the roster rebuilds, and the federation signs a fresh
 first-handoff per §Rollout Phases. The signed message is the Update-Y layout with the domain tag
 `"bifrost-update-y-reset"`.
+
+> **How the deadness proof is realized (N10b implementation choice).** The witness-parsed
+> federation-leaf check runs **once, at TM confirmation, in Binocular** — where the raw signed
+> Bitcoin tx (with witnesses) still exists and the inclusion proof is already being checked —
+> rather than as a fresh proof re-verified at reset time. `confirm-tmtx` reconstructs the leaf
+> `<federation_csv_blocks> OP_CSV OP_DROP <y_federation> OP_CHECKSIG` and records a
+> `spent_via_federation_leaf` boolean on the `Confirmed` TM datum; the reset branch references that
+> Confirmed record and gates on the boolean (plus the `y_federation` signature above). This keeps
+> the Bitcoin witness-walk in one place (Binocular's `spentViaLeaf`) instead of porting it into
+> Aiken. **Freshness (anti-replay).** The boolean alone proves *a* federation-leaf sweep occurred,
+> not that it swept the *current* tip — so on its own a compromised federation could reference a
+> *stale* federation-swept TM to demote a roster that already recovered (a real theft concern, not
+> just DoS: after such a reset, new deposits derive to `y_federation` addresses the federation can
+> sweep). The datum therefore carries **`last_reset_tm_txid`** (field #4): the reset requires the
+> referenced TM's `btc_txid != last_reset_tm_txid` and writes the consumed txid into it (every other
+> branch preserves it via the record-update spread). Because the treasury is a **single moving
+> UTxO**, at most one un-consumed federation sweep exists at a time, so "≠ the last consumed txid"
+> is sufficient: a stale sweep cannot reset a recovered roster, and producing a *fresh* reset
+> requires the current tip to have actually aged past CSV — i.e. the roster to have genuinely died.
+> No on-chain "which TM is the tip" identification is needed. (The essential guard — a compromised
+> federation cannot reset a *live* roster, the leaf being unspendable until the tip ages — holds
+> independently.)
 
 > **Implementation status.** The Update-Y **key-rotation branch is implemented on-chain**
 > (`treasury.ak`, N10a): `TreasurySpendRedeemer` is now a sum type — `RegistryUpdate` (the
