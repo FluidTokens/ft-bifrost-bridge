@@ -4,7 +4,7 @@ This script demonstrates the zkFold-owned SPO contract flows on Cardano Preprod:
 
 - SPO registration
 - SPO deregistration
-- FaultProof publication
+- direct equivocation FaultProof publication
 - SPO banning
 
 The treasury script is used only as supporting protocol state where the registry
@@ -39,7 +39,9 @@ npm run demo
 ```
 
 The script is intentionally linear and commented so each transaction maps back to
-one protocol step.
+one protocol step. The fault publication step uses the direct equivocation
+policy; Round 1 and Round 2 ZK proofs are heavier production paths and are only
+parameterized here so the ban allow-list matches the on-chain contract.
 
 ## Code Layout
 

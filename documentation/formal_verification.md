@@ -65,7 +65,11 @@ CardanoBlaster formalizes the complete UPLC execution layer in Lean 4:
 
 ### 2.4 Tractable Validators (for future axiom discharge)
 
-Most Bifrost validators do not call crypto builtins on their primary paths. The ZK verification functions are currently stubs returning `True`. Authorization mostly uses `extra_signatories` list membership.
+Most Bifrost validators do not call crypto builtins on their primary paths.
+Invalid-payload fault verifier publish branches call generated Halo2 verifiers;
+they must never use unconditional `True` stubs. Equivocation proofs are direct
+double-signature checks. Authorization mostly uses `extra_signatories` list
+membership.
 
 | Validator | Tractable now? | Blocker |
 |-----------|---------------|---------|

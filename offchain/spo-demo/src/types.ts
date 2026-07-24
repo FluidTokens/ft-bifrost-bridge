@@ -28,14 +28,18 @@ export type BootstrapNonces = {
 
 export type ScriptHashes = {
   registryPolicyId: string;
-  faultProofPolicyId: string;
+  faultProofRound1PolicyId: string;
+  faultProofRound2PolicyId: string;
+  faultProofEquivocationPolicyId: string;
   treasuryPolicyId: string;
   bansPolicyId: string;
 };
 
 export type ParameterizedScripts = {
   registry: Core.Script;
-  faultVerifier: Core.Script;
+  faultVerifierRound1: Core.Script;
+  faultVerifierRound2: Core.Script;
+  faultVerifierEquivocation: Core.Script;
   treasury: Core.Script;
   bans: Core.Script;
 };
@@ -54,6 +58,7 @@ export type DemoState = {
   registrationNodeRef?: OutputRef;
   demoPoolId?: string;
   faultProofTxHash?: string;
+  faultProofEvidenceHash?: string;
   faultProofRef?: OutputRef;
   banTxHash?: string;
   banNodeRef?: OutputRef;
