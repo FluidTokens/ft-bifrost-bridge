@@ -960,15 +960,15 @@ input and verify the NFT; off-chain readers resolve the NFT to its UTxO and deco
 datum. Registration and key-rotation transactions **spend** it (their updates must be atomic with
 the state they change).
 
-> **Implementation status.** The implemented `TreasuryDatum` is `{bifrost_identity_root,
+> **Implementation status.** The implemented `TreasuryDatum` is still `{bifrost_identity_root,
 > current_treasury_address, current_treasury_utxo_id, current_spos_frost_key}`: the two pointer
 > fields are **vestigial** under the TM-chain model (bootstrap-seeded, never advanced, not
-> authoritative — slated for removal), and `y_federation` / `federation_csv_blocks` are not yet
-> present. The implemented `treasury.ak` also has **no spend branch that changes
-> `current_spos_frost_key`** — every registry branch preserves it — so on-chain key rotation
-> (Update-Y) is not yet possible. All of these are items of the standing contract change request.
-> The K1 bootstrap itself is implemented and has run on preprod (heimdall
-> `bootstrap-treasury-info`).
+> authoritative — slated for removal in N10b), and `y_federation` / `federation_csv_blocks` are not
+> yet present (also N10b). On-chain **key rotation now exists** (N10a): `treasury.ak`'s spend
+> redeemer became a sum type, and the new `UpdateY` branch changes `current_spos_frost_key` under a
+> BIP340 signature by the outgoing key, while the `RegistryUpdate` branch now preserves the key
+> itself (the prior writable-yet-pinned contradiction is resolved). The K1 bootstrap is implemented
+> and has run on preprod (heimdall `bootstrap-treasury-info`).
 
 <!-- G36: drafted from the implemented deployment (binocular deploy-bridge / deploy-script-refs);
      all originally-open placeholders resolved during the 2026-07 gap review. -->
@@ -2069,12 +2069,18 @@ Phase 1 (federation as key-path signer), the roster rebuilds, and the federation
 first-handoff per §Rollout Phases. The signed message is the Update-Y layout with the domain tag
 `"bifrost-update-y-reset"`.
 
-> **Implementation status.** The implemented `treasury.ak` has no spend branch that changes
-> `current_spos_frost_key` (every registry branch preserves it) — this entry is the normative
-> target; adding the branch (and the reset variant) is part of the standing contract change
-> request and gates heimdall's K2 (`PublishKeys`). If the epoch's DKG fails, no Update-Y is
-> posted: the old key remains and the roster carries over (degraded-epoch handling: see the
-> consensus-change flow).
+> **Implementation status.** The Update-Y **key-rotation branch is implemented on-chain**
+> (`treasury.ak`, N10a): `TreasurySpendRedeemer` is now a sum type — `RegistryUpdate` (the
+> registry-coupled root update, which preserves `current_spos_frost_key` in `treasury.ak` itself,
+> resolving the prior writable-yet-pinned contradiction) and `UpdateY { new_spos_frost_key, epoch,
+> signature }`. The `UpdateY` branch verifies `verify_schnorr_signature(spent_datum
+> .current_spos_frost_key, sig_msg, signature)` over the message below and rewrites only
+> `current_spos_frost_key` (record-update spread, so every other field is preserved byte-for-byte);
+> unit-tested against a real BIP340 vector. **Still pending:** the off-chain submission builder
+> (heimdall) and the **federation-reset variant** — the latter needs the datum's `y_federation`
+> field, which arrives with N10b (datum federation fields + vestigial-pointer removal). If the
+> epoch's DKG fails, no Update-Y is posted: the old key remains and the roster carries over
+> (degraded-epoch handling: see the consensus-change flow).
 
 <!-- G40: the withdraw-zero pattern depends on a stake registration that no transaction in this
      document performed. Deployment-time, but consensus-relevant: without it every withdraw-zero
@@ -2337,8 +2343,8 @@ the treasury), the **candidates** (registered SPOs for the next epoch), **watcht
 5. **Update-Y (on-chain).** The current roster publishes $Y_{51}'$ to `treasury.ak`, authorized by
    a FROST group signature under the *current* group key; the posting SPO is selected by the
    leader rule with `tm_sequence = "dkg"`. From this point depositors derive peg-in addresses from
-   $Y_{51}'$. (See *Update-Y* in the Transaction catalog; the implemented `treasury.ak` does not
-   yet have the rotation branch — contract change request.)
+   $Y_{51}'$. (See *Update-Y* in the Transaction catalog; the `treasury.ak` rotation branch is
+   implemented on-chain as of N10a — the off-chain submission builder is pending.)
 6. **Final batch.** The last batch opportunity before `final_tm_cutoff` freezes the epoch's final
    TM batch, under the per-batch stability cutoff (see *TM batches and the protocol schedule*).
 7. **Final Treasury Movement.** The current roster deterministically builds the final TM: sweeps
