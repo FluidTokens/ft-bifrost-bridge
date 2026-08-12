@@ -8,14 +8,15 @@ pub type ConfigSpendRedeemer {
   Retire
 }
 
-//The rev-5.4 fifteen-field Config datum (spec §Config datum). update_auth
+//The rev-5.4 Config datum, seventeen fields (spec §Config datum). update_auth
 //comes first, because it is the field that governs every other one.
 //
-//`params` comes LAST, and deliberately. Every field before it is a scalar at a
-//frozen index; a nested record in the middle would have to be renumbered past
-//each time the datum grows. Appending after `params` instead of before it also
-//keeps the [LIB-3] append rule honest — the record never moves, so no reader
-//that already found it has to be rebuilt.
+//`params` is the nested record at index 14, and everything since has been
+//appended AFTER it — which is what this note has asked for since rev 5.4, and
+//what [LIB-3] means in practice. Every field before it is a scalar at a frozen
+//index; a nested record in the middle would have to be renumbered past each
+//time the datum grows, and the record never moving means no reader that
+//already found it has to be rebuilt.
 //
 //Removed from the rev-5.1 layout (spec §Config datum, "Rev 5.1's fields ...
 //are all GONE"):
@@ -79,9 +80,34 @@ pub type ConfigDatum {
   //publishing it is the only way an SPO can avoid typing it.
   treasury_info_asset_name: AssetName,
   //Operational parameters, one nested record so governance can replace it
-  //wholesale without renumbering its neighbours. Last field; see the note
-  //above the record.
+  //wholesale without renumbering its neighbours. The NESTING is what buys that,
+  //not the position: ConfigParams' fields are indexed inside its own constr, so
+  //it can grow wherever it sits. See the note above the record.
   params: ConfigParams,
+  //-- Federation identity. Appended AFTER params rather than grouped with the
+  //-- identity fields it belongs with, because the getter indexes are a frozen
+  //-- contract and an existing Config UTxO may be migrated IN PLACE to this
+  //-- shape (config's Update redeemer accepts any datum) — under a peg_out or
+  //-- CPI validator that is already deployed and still reads index 14 for
+  //-- params.
+  //--
+  //-- These two determine the Bitcoin TREASURY ADDRESS. Y_51 rotates each epoch
+  //-- with the DKG and reaches every SPO over the wire, but the federation leaf
+  //-- does not rotate: each SPO rebuilds the treasury Taproot tree from these,
+  //-- so a node holding a different value derives a different scriptPubKey,
+  //-- signs a different sighash, and produces a FROST share over a message no
+  //-- other signer produced. Nothing errors — the address is well-formed, it
+  //-- just is not the one holding the BTC.
+  //The x-only (32-byte, BIP-340) federation public key. NOT the seed it is
+  //derived from: whoever holds that seed can spend the treasury through the
+  //federation leaf, and a reader only ever needs the public half to build the
+  //tree. Publishing the seed would hand the treasury to anyone who can read a
+  //UTxO.
+  y_federation_pubkey: ByteArray,
+  //Relative-timelock delay (blocks) of the federation recovery leaf. It is both
+  //an input to the address above and the recovery path's timelock, so a wrong
+  //value moves the treasury AND silently changes how long recovery waits.
+  federation_csv_blocks: Int,
 }
 
 //The tunable operational parameters (spec §Operational parameters).
@@ -226,6 +252,18 @@ pub fn get_schedule(config_fields: List<Data>) -> ScheduleParams {
   schedule
 }
 
+//NO on-chain reader, like the identity fields above — Bitcoin's Taproot tree is
+//not something a Cardano validator can check. Published so an SPO reads the
+//treasury's federation leaf instead of typing it, and so an off-chain Aiken
+//consumer never hard-codes the index.
+pub fn get_y_federation_pubkey(config_fields: List<Data>) -> ByteArray {
+  builtin.un_b_data(safe_list_at(config_fields, 15))
+}
+
+pub fn get_federation_csv_blocks(config_fields: List<Data>) -> Int {
+  builtin.un_i_data(safe_list_at(config_fields, 16))
+}
+
 //Pins every getter index to its ConfigDatum record field. The fixture is a
 //real ConfigDatum record, serialized with builtin.unconstr_fields, and each
 //getter's result is compared against the record field it must read. Every
@@ -270,6 +308,8 @@ test config_getters_match_datum_fields() {
       treasury_info_policy_id: #"aa12",
       treasury_info_asset_name: "aa13",
       params,
+      y_federation_pubkey: #"aa15",
+      federation_csv_blocks: 16,
     }
   let datum_data: Data = datum
   let fields = builtin.unconstr_fields(datum_data)
@@ -307,5 +347,68 @@ test config_getters_match_datum_fields() {
     get_per_pegout_fee(fields) == params.per_pegout_fee,
     get_min_peg_out_fbtc(fields) == params.min_peg_out_fbtc,
     get_schedule(fields) == params.schedule,
+    //index 15
+    get_y_federation_pubkey(fields) == datum.y_federation_pubkey,
+    //index 16
+    get_federation_csv_blocks(fields) == datum.federation_csv_blocks,
+  }
+}
+
+//The federation fields sit AFTER the nested params record, so params' index is
+//unchanged by their arrival. That is the whole reason they were appended rather
+//than grouped with the identity fields they belong with: a Config UTxO migrated
+//in place to this shape must still read correctly under an ALREADY-DEPLOYED
+//validator compiled against the fifteen-field datum, which would otherwise find
+//a ByteArray at index 14 where it expects the params constr. This test fails if
+//anyone "tidies" the record by moving params back to the end.
+test params_index_survives_the_federation_fields() {
+  let schedule =
+    ScheduleParams {
+      dkg_r1_deadline: 1,
+      dkg_r2_deadline: 2,
+      update_y_deadline: 3,
+      tm_batch_interval: 4,
+      sign_r1_window: 5,
+      sign_r2_window: 6,
+      leader_slot_t: 7,
+      tm_recovery_window: 8,
+      final_tm_cutoff: 9,
+      stability_window: 10,
+    }
+  let params =
+    ConfigParams {
+      fee_rate_sat_per_vb: 12,
+      per_pegout_fee: 13,
+      min_peg_out_fbtc: 14,
+      schedule,
+    }
+  let datum =
+    ConfigDatum {
+      update_auth: None,
+      bridged_token_policy: #"aa01",
+      completed_peg_ins_policy: #"aa02",
+      bridge_state_policy: #"aa03",
+      tm_script_hash: #"aa04",
+      peg_in_script_hash: #"aa05",
+      peg_out_script_hash: #"aa06",
+      spo_bans_policy_id: #"aa07",
+      base_ban_duration_ms: 8,
+      max_faults_before_permanent: 9,
+      max_validity_window_ms: 10,
+      spos_registry_policy_id: #"aa11",
+      treasury_info_policy_id: #"aa12",
+      treasury_info_asset_name: "aa13",
+      params,
+      y_federation_pubkey: #"aa15",
+      federation_csv_blocks: 16,
+    }
+  let datum_data: Data = datum
+  let fields = builtin.unconstr_fields(datum_data)
+  //Read index 14 as the params constr, exactly as a validator deployed before
+  //this change does.
+  and {
+    get_fee_rate_sat_per_vb(fields) == 12,
+    get_per_pegout_fee(fields) == 13,
+    get_min_peg_out_fbtc(fields) == 14,
   }
 }

@@ -828,9 +828,13 @@ NFT — discovery fields in the sense of *The Config as the discovery root*. Fie
 operational tunables: unlike the wiring they are expected to change, and **no Aiken validator
 reads a current value from them**.
 
-`params` is LAST, and that is normative. Every field before it is a scalar at a frozen index, so
-the datum grows by appending after the nested record, never by pushing it along. A reader that
-has located `params` never has to be rebuilt when the datum grows.
+`params` sits at index **14**, and that index is normative. Every field before it is a scalar at a
+frozen index, so the datum grows by appending *after* the nested record, never by pushing it
+along. A reader that has located `params` never has to be rebuilt when the datum grows — which is
+what lets an existing Config UTxO be migrated in place (the Update redeemer accepts any datum)
+while validators deployed against an earlier shape keep reading it correctly. Fields #15-16 were
+appended exactly this way. The nesting, not the position, is what makes `params` itself
+extensible: its own fields are indexed inside its own constr.
 
 | # | Field | Type | Description |
 |---|-------|------|-------------|
@@ -849,6 +853,8 @@ has located `params` never has to be rebuilt when the datum grows.
 | 12 | `treasury_info_policy_id` | PolicyId | the DEPLOYED Treasury state NFT policy id — see [CFG-3] |
 | 13 | `treasury_info_asset_name` | AssetName | asset name of the Treasury state NFT, chosen at bootstrap and derivable from nothing |
 | 14 | `params` | Params (nested record) | the operational tunables: `fee_rate_sat_per_vb`, `per_pegout_fee`, `min_peg_out_fbtc`, `schedule` — see §Operational parameters |
+| 15 | `y_federation_pubkey` | ByteArray (32, x-only) | the federation public key of the treasury Taproot tree — see [CFG-4] |
+| 16 | `federation_csv_blocks` | Int | relative-timelock delay (blocks) of the federation recovery leaf — see [CFG-4] |
 
 - [CFG-1] The bridged-token asset name MUST be the constant `"fSAT"`, declared in
   `lib/bifrost/constants.ak`.
@@ -856,6 +862,9 @@ has located `params` never has to be rebuilt when the datum grows.
   locate the TM address without a hard-coded constant.
 - [CFG-3] Fields #7–13 have NO on-chain reader. They are published so that an SPO configures none
   of them by hand.
+- [CFG-4] Fields #15-16 have NO on-chain reader either — a Cardano validator cannot check a
+  Bitcoin Taproot tree. Field #15 MUST be the x-only **public key**, never the seed it derives
+  from.
 
 > **Why the federation identities are published and not derived ([CFG-3]).** Every value that
 > locates a bridge's ban list or its SPO registry is an *input* to the policy id it identifies,
@@ -870,6 +879,22 @@ has located `params` never has to be rebuilt when the datum grows.
 > FederationReset branch that was its only reader. A reader still has to apply that one parameter
 > to the same blueprint to arrive at the same hash, and any drift yields a different address and
 > an unfindable state UTxO rather than an error, so publishing it stays worthwhile.
+
+> **Why the federation identity is published, and why only its public half ([CFG-4]).** Fields
+> #15-16 determine the **Bitcoin treasury address**. `Y_51` rotates every epoch with the DKG and
+> reaches each SPO over the wire, but the federation recovery leaf does not rotate: every SPO
+> rebuilds the treasury Taproot tree locally from `y_federation_pubkey` and `federation_csv_blocks`.
+> A node holding a different value for either derives a different scriptPubKey, signs a different
+> BIP-341 sighash, and contributes a FROST share over a message no other signer produced. Nothing
+> errors, because the address it derived is perfectly well-formed — it is simply not the one the
+> BTC is in. That is the same silent-divergence class as [CFG-3], but with the treasury behind it
+> rather than the roster, so it is the last pair that had any business being hand-copied.
+>
+> Field #15 is the **x-only public key**, and MUST NOT be the seed it derives from. Whoever holds
+> that seed can spend the treasury through the federation leaf; a reader only ever needs the
+> public half to rebuild the tree. Publishing the seed would hand the treasury to everyone who
+> can read a UTxO. `federation_csv_blocks` carries no such asymmetry, but a wrong value both moves
+> the address and silently changes how long the recovery path waits.
 
 > **Why the asset name is a constant and not a field ([CFG-1]).** It never varies within an
 > instance, and it never varies between instances either: one token is one satoshi, so the name
@@ -930,14 +955,21 @@ reader trusts a datum only if the UTxO's value contains the NFT.
   config_nft_asset_name)` (any chain indexer resolves an NFT to its UTxO), read its inline datum,
   decode `ConfigDatum`. Since the Config is never spent, the read is stable forever.
 
-> **Implementation status** (2026-08-11). The fifteen-field table, [CFG-1], [CFG-2] and [CFG-3]
-> are implemented in `onchain/lib/bifrost/types/config.ak`, with every reader migrated
+> **Implementation status** (2026-08-12). The seventeen-field table, [CFG-1] through [CFG-4] are
+> implemented in `onchain/lib/bifrost/types/config.ak`, with every reader migrated
 > (`config.ak`, `bridged-token.ak`, `completed-peg-ins-merkle-tree.ak`, `peg-in.ak`,
-> `peg-out.ak`); per [CFG-2] and [CFG-3] the getters for fields 4 and 7–13 exist but no validator
-> calls them. binocular's Scalus `ConfigDatum` and heimdall's `config_params.rs` decode the same
-> fifteen fields by name. The datum is not closed: the discovery fields still missing per *The
-> Config as the discovery root* would append after #14. `config.ak` carries a real `spend`
-> handler: the Config is not immutable, it is governed — see *Config UTxO governance*.
+> `peg-out.ak`); per [CFG-2], [CFG-3] and [CFG-4] the getters for fields 4, 7–13 and 15–16 exist
+> but no validator calls them. binocular's Scalus `ConfigDatum` and heimdall's `config_params.rs`
+> decode the same seventeen fields by name. The datum is not closed: any discovery field still
+> missing per *The Config as the discovery root* appends after #16. `config.ak` carries a real
+> `spend` handler: the Config is not immutable, it is governed — see *Config UTxO governance*.
+>
+> Widening the datum moves `config.config`'s hash — its `mint` handler full-casts the genesis
+> datum, so the field count is compiled in — and through it the config NFT policy and every
+> contract parameterized by it. Measured for #15-16: `57c8143e…` → `f95397b6…`, with every other
+> validator's *unapplied* hash unchanged. A new bridge instance, not an upgrade of an old one.
+> An existing Config UTxO can still be migrated in place, since the `spend` handler reads
+> positionally and never casts.
 
 <!-- G2 (revised 2026-07-15): the updatable values moved out of the Config into their own
      singleton after the interleaving analysis — (i) spending a referenced UTxO invalidates every
@@ -1643,11 +1675,13 @@ operator performs:
    policy, `peg-in` / `peg-out` (+ their withdraw scripts), the completed-peg-ins trie policy,
    the bridge state policy, and the TM policy with its mint gate.
 4. **Mint the Config NFT** (`config.ak`), creating the Config UTxO whose datum is the spine of the
-   instance: it records every cross-referenced script hash and token identity per the fifteen-field
-   table of §Config UTxO (`update_auth`, the fBTC policy, the completed-peg-ins trie policy, the
-   bridge state policy, the TM script hash, and the peg-in/peg-out withdraw scripts). The same
-   datum carries the initial **operational parameters** nested as field #14 `params` (fee rate,
-   per-peg-out fee floor, minimum peg-out, schedule); see §Operational parameters.
+   instance: it records every cross-referenced script hash and token identity per the
+   seventeen-field table of §Config UTxO (`update_auth`, the fBTC policy, the completed-peg-ins
+   trie policy, the bridge state policy, the TM script hash, and the peg-in/peg-out withdraw
+   scripts). The same datum carries the initial **operational parameters** nested as field #14
+   `params` (fee rate, per-peg-out fee floor, minimum peg-out, schedule); see §Operational
+   parameters — and, appended after it, the **federation identity** of fields #15-16 that fixes
+   the Bitcoin treasury address ([CFG-4]).
    The wiring section must be final at mint time — **the Config NFT is the identity of the
    instance**: a different Config UTxO implies a different fBTC policy, i.e. a *new*,
    non-fungible bridge instance. See §Config UTxO for the datum layout (wiring vs parameters) and

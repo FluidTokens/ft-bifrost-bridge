@@ -212,6 +212,14 @@ fn t_datum_data(update_auth: Option<AuthorizationMethod>) -> Data {
       builtin.b_data(#"aadddddddddddddddddddddddddddddddddddddddddddddddddddddd"),
       builtin.b_data("TMTx"),
       params_data,
+      //Federation identity, indexes 15-16: the x-only Y_federation key and the
+      //recovery leaf's CSV delay, appended AFTER params so index 14 still holds
+      //the params constr. The genesis mint FULL-CASTS this datum, so a fixture
+      //missing them fails the cast — which is exactly what that cast is for.
+      builtin.b_data(
+        #"aa999999999999999999999999999999999999999999999999999999999999ff",
+      ),
+      builtin.i_data(144),
     ],
   )
 }
