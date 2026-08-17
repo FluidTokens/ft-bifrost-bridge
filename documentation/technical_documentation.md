@@ -3562,6 +3562,62 @@ co-authority** over the treasury key ([UY-5] revised, rev 5.4): it can rotate
 evidence (see *Update-Y* in the Transaction catalog, and [FED-1] to [FED-3] there). This is the
 "main line" operating mode; [FED-2] requires a timeout-gated key lifecycle before mainnet.
 
+> **OPEN QUESTION (raised 2026-08-17, from implementation).** "Whether the roster is strong
+> enough to hand control to is explicitly the federation's accountable judgment" states *who*
+> decides, but not *on what evidence*, and the two are not separable in an implementation: the
+> federation and the SPO roster are **disjoint populations**. A federation member need not be a
+> Cardano SPO, is not in the registry, and takes no part in the epoch DKG — so unlike every other
+> party that authorizes an Update-Y, it does not hold $Y_{51}$ because it helped produce it. It
+> has to obtain the key some other way, and being *told* it is not acceptable: a party that signs
+> whatever rotation message it is handed hands the treasury to whoever asked.
+>
+> **What the federation can establish for itself, from published data.** All of it verifiable
+> against something the chain already says, with no party trusted for a claim:
+>
+> 1. **the key itself.** The registry gives the eligible roster and each member's `bifrost_url`;
+>    Round 1 publishes each member's commitment $\vec{C}_i$, authenticated by a BIP340 signature
+>    under the `bifrost_id_pk` that member **registered** and carrying its proof of knowledge. The
+>    group key is a function of those commitments, so it can be recomputed rather than accepted.
+>    *(Implementation note, because it is a silent trap: on the Taproot ciphersuite the group key
+>    is the BIP-341 key-path tweak of $\sum_i \phi_{i,0}$, not the bare sum. Summing alone yields
+>    a well-formed key that is simply a different one.)*
+> 2. **that the ceremony ran to completion.** Every member also served a signed Round 2 payload.
+> 3. **that no cheat was proven.** No fault proof stands against that ceremony on chain.
+>
+> Condition 1 alone is insufficient and the reason is structural: Round 1 commitments fix the key
+> **before** Round 2 distributes any share, so a ceremony that collapsed immediately after Round 1
+> still yields a perfectly derivable $Y_{51}$ that nobody holds a usable share of. Conditions 2
+> and 3 are complementary halves of the same gap — an outside observer can check Round 2 payloads
+> for presence and authorship but not for correctness, since the shares are encrypted to their
+> recipients; a bad share is provable only by its **victim**, who can decrypt it, and that proof
+> lands on chain.
+>
+> **What none of it establishes is liveness.** All three can hold and the roster still be dark
+> when the rotation lands. The evidence describes a ceremony that happened; it says nothing about
+> who is up now. If custody moves to a key no threshold subset can sign with, the treasury is
+> stranded until the recovery leaf's CSV delay expires — the failure the federation branch exists
+> to absorb, reached by a rotation that everything above approved.
+>
+> **The question: should the incoming roster be required to PROVE POSSESSION of $Y_{51}$ —** a
+> BIP340 signature under the new key over the rotation's own signing message — before custody
+> moves to it?
+>
+> * **(a) No.** Keep it the federation's judgment on published evidence. This is also the
+>   assurance level the protocol already runs on in steady state, where the outgoing roster
+>   likewise signs a succession to a key it cannot test.
+> * **(b) Yes, off-chain.** The federation requires the proof before it signs. Costs one new
+>   published artifact and no validator change, but binds only the Phase-1 handoff.
+> * **(c) Yes, on-chain.** `treasury.ak`'s Update-Y additionally verifies a signature under the
+>   **new** key. Strongest, and note it **generalizes** — the same hazard exists at every
+>   steady-state rotation, not only at the Phase-1 one — but it changes the validator and makes
+>   every rotation pay for it.
+>
+> **It has to be stated either way**, because it decides whether a conforming implementation may
+> hand the treasury over on published evidence alone. An implementation that requires the proof
+> and one that does not will disagree about whether a given roster is eligible, and the
+> disagreement surfaces as a handoff that one party posts and the other believes unsafe — with
+> custody of the treasury as the stake.
+
 <!-- G23, ratified 2026-07-15: interface normative here; trust parameters in the required
      per-instance federation charter; internal ceremony owned by federation ops docs. -->
 ## Federation
