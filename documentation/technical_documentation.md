@@ -3481,7 +3481,21 @@ its `pool_id` to the Bifrost identity key it will use for DKG and signing.
 > is redeployed alongside the registry and Config #8 moves with #9 — but the redeployed script
 > reads #9 at run time ([PRE-5]), so no later registry revision moves it again. Live bans do not
 > survive that one move; the roster re-applies the ones that must. The registrations themselves
-> are not redone. The `Migrate` branch (section 8,
+> are not redone.
+>
+> One consequence of the Config append is worth stating, because it looks alarming in a blueprint
+> diff and is not: `config.ak`'s own compiled code changes, so its hash changes. Its genesis mint
+> FULL-CASTS the datum ([CFG-7], so the spend handler's assumptions hold from the start), and a
+> cast pins the field count. Nothing on a running bridge notices. That branch executes exactly
+> once, at genesis, and the deployed Config UTxO stays under the policy it was minted with; the
+> `Update` that writes #13 runs the SPEND handler, which takes the datum raw for precisely this
+> reason. What the new hash means is that a bridge deployed from this release gets a different
+> Config policy id than one deployed from the last, which is what a new bridge instance is.
+> `treasury.ak` MUST NOT move, and does not: its hash is the Treasury state NFT's policy id, fixed
+> by a one-shot outpoint consumed at genesis, so a change there is not a redeploy but a different
+> bridge whose predecessor's state UTxO could never be spent again. That is why `rotation_sig_msg`
+> spells the outpoint encoding out rather than calling the shared helper the registry nonce uses,
+> with a test asserting the two are equal. The `Migrate` branch (section 8,
 > [MIG-1] to [MIG-6]) carries each one across by a membership proof against the identity trie the
 > Treasury state still commits to, with no cold-key action: the SPO program migrates its own pool
 > at its first roster read after the Update, and the federation migrates every pool not yet moved,
