@@ -1503,3 +1503,55 @@ test migrate_rejects_an_extra_element_output() fail {
     },
   )
 }
+
+// spec [REG-11] applied to Bootstrap: (0, 1).
+//
+// The branch with no test until now, and the one where a mistake is most
+// expensive: it runs exactly once per bridge, and getting it wrong means
+// redeploying the registry and every script parameterized by it. There is no
+// list to spend from yet, so nothing may be spent and exactly the root is
+// produced.
+
+fn t_genesis_tx(
+  extra_inputs: List<Input>,
+  extra_outputs: List<Output>,
+) -> Transaction {
+  // The one-shot outpoint the validator is parameterized by, which Bootstrap
+  // requires the transaction to spend.
+  let one_shot =
+    Input {
+      output_reference: OutputReference(t_bootstrap_tx, 0),
+      output: t_wallet_input(t_other_txid, 7).output,
+    }
+  Transaction {
+    ..placeholder,
+    inputs: list.concat([one_shot], extra_inputs),
+    outputs: list.concat(
+      [t_anchor_output(t_registry_policy, None)],
+      extra_outputs,
+    ),
+    mint: assets.from_asset(t_registry_policy, registration_root_key, 1),
+  }
+}
+
+test bootstrap_happy() {
+  t_mint_validator(SposRegistryMintRedeemer.Bootstrap, t_genesis_tx([], []))
+}
+
+// A bootstrap has no list to spend from. An input carrying a token of this
+// policy at genesis could only be one minted in the same transaction, and the
+// singleton mint is the root — so this is the shape that would carry the root
+// itself off to a wallet while a second copy sat at the script.
+test bootstrap_rejects_an_element_input() fail {
+  t_mint_validator(
+    SposRegistryMintRedeemer.Bootstrap,
+    t_genesis_tx([t_victim_node_input(t_registry_policy)], []),
+  )
+}
+
+test bootstrap_rejects_a_second_element_output() fail {
+  t_mint_validator(
+    SposRegistryMintRedeemer.Bootstrap,
+    t_genesis_tx([], [t_stolen_output(t_registry_policy)]),
+  )
+}
