@@ -3,6 +3,7 @@ use aiken/collection/dict
 use aiken/collection/list
 use aiken/crypto
 use aiken/merkle_patricia_forestry as mpf
+use aiken/primitive/bytearray
 use bifrost/constants
 use bifrost/types/completed_peg_ins.{CompletedPegInsTrieDatum}
 use cardano/address.{Address, Script}
@@ -11,6 +12,29 @@ use cardano/transaction.{InlineDatum, Input, NoDatum, Output, OutputReference}
 
 pub fn hash_output_ref(outputRef: OutputReference) -> ByteArray {
   outputRef |> builtin.serialise_data |> crypto.sha2_256
+}
+
+/// An `OutputReference` as the 36 bytes a signed message commits to:
+/// `transaction_id` (32 B) followed by `output_index` as a 4-byte
+/// little-endian integer.
+///
+/// ONE encoding, shared by every message in this tree that names an outpoint:
+/// `treasury.ak`'s Update-Y rotation preimage ([UY-3]) and
+/// `spos-registry.ak`'s registration and revocation nonces ([REG-10],
+/// [DRG-6]). It is a separate function because two copies of an endianness
+/// choice is one copy too many: an off-chain signer that matched the first and
+/// not the second would produce signatures this tree rejects with nothing to
+/// point at.
+///
+/// The fixed 36-byte width is also what keeps the registration message
+/// unambiguous. That message ends with a variable-length URL followed by this,
+/// so a suffix of known length is the only thing that stops the two from being
+/// re-split.
+pub fn serialise_output_reference(output_ref: OutputReference) -> ByteArray {
+  output_ref.transaction_id
+    |> bytearray.concat(
+        bytearray.from_int_little_endian(output_ref.output_index, 4),
+      )
 }
 
 pub fn safe_list_at(self: List<a>, index: Int) -> a {
@@ -126,18 +150,30 @@ pub fn treasury_state_pinned(
   treasury_policy_id: PolicyId,
 ) -> Bool {
   and {
-    quantity_of(
-      treasury_input.output.value,
-      treasury_policy_id,
-      constants.treasury_info_nft_asset_name,
-    ) == 1,
-    quantity_of(
-      treasury_output.value,
-      treasury_policy_id,
-      constants.treasury_info_nft_asset_name,
-    ) == 1,
+    holds_treasury_state_nft(treasury_input.output, treasury_policy_id),
+    holds_treasury_state_nft(treasury_output, treasury_policy_id),
     treasury_output.address == treasury_input.output.address,
   }
+}
+
+/// The input half of [treasury_state_pinned](#treasury_state_pinned), for a
+/// branch that READS the Treasury state without moving it.
+///
+/// spec [MIG-5]: `spos-registry.ak`'s `Migrate` takes the Treasury state as a
+/// REFERENCE input, because the binding it proves is already the treasury's
+/// truth and the root does not change. There is no continuing output to pin,
+/// but the [REG-6] reason is unchanged: the reference is located by redeemer
+/// index, so without this check the membership proof would run against a trie
+/// the submitter chose.
+pub fn holds_treasury_state_nft(
+  output: Output,
+  treasury_policy_id: PolicyId,
+) -> Bool {
+  quantity_of(
+    output.value,
+    treasury_policy_id,
+    constants.treasury_info_nft_asset_name,
+  ) == 1
 }
 
 //----------------------------------------------------------------------------

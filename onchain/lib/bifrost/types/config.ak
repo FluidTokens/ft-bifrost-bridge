@@ -9,8 +9,9 @@ pub type ConfigSpendRedeemer {
   Retire
 }
 
-//The rev-5.5 thirteen-field Config datum (spec §Config datum). update_auth
-//comes first, because it is the field that governs every other one.
+//The Config datum (spec §Config datum): thirteen fields in rev 5.5, fourteen
+//since rev 5.6 appended `previous_spos_registry_policy_id`. update_auth comes
+//first, because it is the field that governs every other one.
 //
 //Two rules decide where a field goes.
 //
@@ -94,6 +95,18 @@ pub type ConfigDatum {
   //tm_script_hash is. The UTxO itself was consumed at genesis and is long gone —
   //only its identity matters, and only as a compile parameter.
   federation_one_shot: OutputReference,
+  //spec [CFG-10]: the registry policy a migration is FROM — zero-length when
+  //none is in progress. The governance Update that moves #9 sets this to the
+  //value #9 held, and while it is set `spos-registry.ak`'s Migrate branch will
+  //carry a registration across from that policy ([MIG-1]).
+  //
+  //On chain rather than compiled in, for the reason the block above gives about
+  //every other id here: a compile parameter naming the previous registry would
+  //make each revision's script hash a function of the last one's, and heimdall
+  //cannot recover a parameter from script bytes. This is also the whole of how
+  //the SPO program knows a migration is in progress: the node is absent from
+  //the list #9 names and present in the list this one names.
+  previous_spos_registry_policy_id: PolicyId,
 }
 
 //Every value with no on-chain reader (spec [CFG-6]). Governance replaces the
@@ -243,6 +256,15 @@ pub fn get_federation_one_shot(config_fields: List<Data>) -> OutputReference {
   one_shot
 }
 
+//spec [MIG-1]: read on-chain by `spos-registry.ak`'s Migrate branch, and
+//off-chain by the SPO program to classify its own membership. Zero-length means
+//no migration is in progress, which the Migrate branch rejects.
+pub fn get_previous_spos_registry_policy_id(
+  config_fields: List<Data>,
+) -> PolicyId {
+  builtin.un_b_data(safe_list_at(config_fields, 13))
+}
+
 //Off-chain/test use only. Unlike the other getters this is a FULL cast of
 //the nested record, so any on-chain reader adopting it would freeze
 //ScheduleParams' inner shape (defeating the point of nesting it). No Aiken
@@ -332,6 +354,7 @@ test config_getters_match_datum_fields() {
       treasury_info_policy_id: #"aa10",
       y_federation: #"aa11",
       federation_one_shot: OutputReference(#"aa12", 12),
+      previous_spos_registry_policy_id: #"aa13",
     }
   let datum_data: Data = datum
   let fields = builtin.unconstr_fields(datum_data)
@@ -360,6 +383,8 @@ test config_getters_match_datum_fields() {
     get_y_federation(fields) == datum.y_federation,
     //index 12
     get_federation_one_shot(fields) == datum.federation_one_shot,
+    //index 13, spec [CFG-10]/[MIG-1]
+    get_previous_spos_registry_policy_id(fields) == datum.previous_spos_registry_policy_id,
     //index 1, the nested params record
     get_schedule(fields) == params.schedule,
     get_fee_rate_sat_per_vb(fields) == params.fee_rate_sat_per_vb,

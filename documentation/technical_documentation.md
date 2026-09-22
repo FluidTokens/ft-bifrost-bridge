@@ -690,7 +690,10 @@ Notes:
   hash of a consumed outpoint), and each FaultProof mint take their consumed outpoint from the
   redeemer instead. Same mechanism, chosen per mint rather than per script.
 * `spo-bans.ak` is additionally parameterized by ban policy constants
-  (`base_ban_duration_ms`, `max_faults_before_permanent`, `max_validity_window_ms`).
+  (`base_ban_duration_ms`, `max_faults_before_permanent`, `max_validity_window_ms`). Since rev 5.6
+  it takes the Config NFT policy id in place of the registry's script hash and reads the registry
+  policy from Config #9 at run time ([PRE-5]), so a registry revision no longer moves the ban
+  list.
 * The TM validator and the Binocular Oracle are not part of this repository's Aiken tree: they
   are Scalus contracts in binocular (`TreasuryMovementValidator.scala`, `BitcoinValidator.scala`),
   deployed independently; only their hashes enter the graph above.
@@ -850,7 +853,7 @@ number lives inside `params`.
 | 6 | `peg_in_script_hash` | ByteArray (script hash) | peg-in spend logic (withdraw-script pattern) |
 | 7 | `peg_out_script_hash` | ByteArray (script hash) | peg-out spend logic (withdraw-script pattern) |
 | 8 | `spo_bans_policy_id` | PolicyId | the DEPLOYED `spo-bans.ak` policy id; the ban script address follows from it |
-| 9 | `spos_registry_policy_id` | PolicyId | the DEPLOYED `spos-registry.ak` policy id; the registry address follows from it. Read on-chain by `treasury.ak` — see [PRE-4] |
+| 9 | `spos_registry_policy_id` | PolicyId | the DEPLOYED `spos-registry.ak` policy id; the registry address follows from it. Read on-chain by `treasury.ak` ([PRE-4]) and, since rev 5.6, by `spo-bans.ak` ([PRE-5]) |
 | 10 | `treasury_info_policy_id` | PolicyId | the DEPLOYED Treasury state NFT policy id — see [CFG-3] |
 | 11 | `y_federation` | ByteArray (32 B x-only) | the federation fallback key, the script-leaf key of both Taproot trees. Read on-chain by `treasury.ak`'s Update-Y branch — see [UY-5] |
 | 12 | `federation_one_shot` | OutputReference | the one-shot outpoint the federation scripts are parameterized by; off-chain readers resolve it once at startup, and a Config Update moving it describes a new bridge instance. *(Row added in rev 5.6; the field has been deployed since the federation scripts were.)* |
@@ -1180,12 +1183,25 @@ the state they change).
   together with its own one-shot outpoint.
 - **[PRE-4]** *(New, rev 5.5)* `treasury.ak` MUST read `spos_registry_policy_id` from the Config
   datum, not from a parameter.
+- **[PRE-5]** *(New, rev 5.6)* `spo-bans.ak` MUST do the same: it takes the Config NFT policy id
+  as a parameter and reads `spos_registry_policy_id` (#9) at run time, locating the Config
+  reference input by the `ApplyBan` redeemer's `config_ref_input_index`. It MUST NOT take
+  `registration_script_hash` as a parameter.
 
 > **Why the registry policy is read and not baked in ([PRE-4]).** A `registry_policy_id`
 > parameter makes the treasury policy a function of the registry policy. `spo_registry` can then
 > never take `treasury_policy_id` as a parameter, because the dependency is a cycle — and that is
 > precisely why the registry could not pin the UTxO it updates ([REG-6]). Reading the value from
 > Config turns the cycle into a chain: Config identity → treasury → registry.
+>
+> **And why the ban list followed ([PRE-5]).** `spo-bans.ak` took the registry's script hash as a
+> parameter, so the ban policy was a function of the registry policy, so every registry revision
+> forced a ban-list redeploy: a new ban policy, a fresh `ban-root` bootstrap, a Config #8 move,
+> and every live ban left under a policy nothing reads any more. The rev-5.6 nonce would have been
+> the first revision to pay that price, and the price does not shrink with later ones. Reading #9
+> the way `treasury.ak` does costs one Config reference input per ban and ends the cascade: the
+> next registry revision moves #9 and #13 and leaves the ban list, its bans and its policy id
+> exactly where they are. Config #8 moves once, with this deployment, and then stops moving.
 
 **Checks on `treasury.ak`** *(all new in rev 5.5)*.
 
@@ -3461,8 +3477,11 @@ its `pool_id` to the Bifrost identity key it will use for DKG and signing.
 > field #8 (§Config UTxO governance — the wiring fields may move under a running bridge, on the
 > snapshot-slot rule). `treasury.ak` reads #9 at run time ([PRE-4]) and is untouched, as are the
 > Treasury state, the bridged token, the peg scripts and the TM chain. `spo-bans.ak` is the one
-> dependent: it takes `registration_script_hash` as a compile parameter, so it is redeployed with
-> the registry. The registrations themselves are not redone. The `Migrate` branch (section 8,
+> dependent, and only this once: it took `registration_script_hash` as a compile parameter, so it
+> is redeployed alongside the registry and Config #8 moves with #9 — but the redeployed script
+> reads #9 at run time ([PRE-5]), so no later registry revision moves it again. Live bans do not
+> survive that one move; the roster re-applies the ones that must. The registrations themselves
+> are not redone. The `Migrate` branch (section 8,
 > [MIG-1] to [MIG-6]) carries each one across by a membership proof against the identity trie the
 > Treasury state still commits to, with no cold-key action: the SPO program migrates its own pool
 > at its first roster read after the Update, and the federation migrates every pool not yet moved,
@@ -4320,11 +4339,14 @@ Inputs:
 
 Reference Inputs:
 - accused registration node at `spos-registry.ak`
+- the Config UTxO — `spo-bans.ak` reads `spos_registry_policy_id` (#9) from it ([PRE-5]) and the
+  redeemer names its index. NEW in rev 5.6: before it, the registry hash was a compile parameter
 
 Withdrawals:
 - coordinating ban withdrawal carrying:
   - `fault_input_index`
   - `registration_ref_input_index`
+  - `config_ref_input_index`
   - `accused_pool_id`
   - `evidence_hash`
   - `ban_anchor_input_index`
@@ -4368,11 +4390,14 @@ Inputs:
 
 Reference Inputs:
 - accused registration node at `spos-registry.ak`
+- the Config UTxO — `spo-bans.ak` reads `spos_registry_policy_id` (#9) from it ([PRE-5]) and the
+  redeemer names its index. NEW in rev 5.6: before it, the registry hash was a compile parameter
 
 Withdrawals:
 - coordinating ban withdrawal carrying:
   - `fault_input_index`
   - `registration_ref_input_index`
+  - `config_ref_input_index`
   - `accused_pool_id`
   - `evidence_hash`
   - `ban_anchor_input_index`
@@ -5486,7 +5511,7 @@ Bifrost's watchtower design relies on a minimal trust assumption: only one hones
 | Parameter(s) | Home | Kind | Consumers |
 |---|---|---|---|
 | wiring #0 and #2–7 (`update_auth`, `bridged_token_policy`, `completed_peg_ins_policy`, `bridge_state_policy`, `tm_script_hash`, `peg_in_script_hash`, `peg_out_script_hash`) | Config datum | governance Update only | all validators, as reference input. **#4** (`bridge_state_policy`) is read by `peg-in.ak` ([CPI-10]), `peg-out.ak` ([CPO-11], [CXL-8]) and `TreasuryMovementValidator` ([PTM-7], [CTM-28]) — always at runtime, per [PAR-1]; **#5** (`tm_script_hash`) has NO on-chain reader ([CFG-2]). Rev 5.5 inserted `params` at #1, so every wiring index shifted up by one |
-| `spos_registry_policy_id` | Config **#9** | governance Update only | `treasury.ak`'s `RegistryUpdate` gate ([TSY-13], [PRE-4]) — its first on-chain reader. See §Trust model: this replaced an immutable compile parameter |
+| `spos_registry_policy_id` | Config **#9** | governance Update only | `treasury.ak`'s `RegistryUpdate` gate ([TSY-13], [PRE-4]) — its first on-chain reader; `spo-bans.ak`'s `ApplyBan` since rev 5.6 ([PRE-5]). See §Trust model: this replaced an immutable compile parameter |
 | `previous_spos_registry_policy_id` | Config **#13** | governance Update only ([CFG-10]) | `spos-registry.ak`'s `Migrate` branch ([MIG-1]); the SPO program's self-migration check (§SPO Registration, section 8) |
 | `treasury_info_policy_id` | Config **#10** | governance Update only | off-chain discovery. The pin that matters is a compile parameter of `spo_registry` ([REG-6]) |
 | `min_stake` | heimdall local config (`cardano.min_stake_lovelace`) — left the Config datum in rev 5.4 | operator-tunable, no on-chain reader | off-chain candidate enumeration |

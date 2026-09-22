@@ -21,6 +21,11 @@ use cardano/transaction.{
 // the FederationReset branch, spec [UY-7]/[UY-8] WITHDRAWN). `tag` stays a
 // parameter so heimdall's signer and this verifier agree byte-for-byte (see
 // technical_documentation.md §Update-Y).
+//
+// The outpoint goes in through utils.serialise_output_reference, which
+// spos-registry.ak's registration and revocation nonces also use ([REG-10],
+// [DRG-6]). The bytes are the ones this function always produced; what changed
+// in rev 5.6 is that the little-endian choice now has one definition.
 fn rotation_sig_msg(
   tag: ByteArray,
   own_ref: OutputReference,
@@ -29,8 +34,7 @@ fn rotation_sig_msg(
 ) -> ByteArray {
   crypto.sha2_256(
     tag
-      |> bytearray.concat(own_ref.transaction_id)
-      |> bytearray.concat(bytearray.from_int_little_endian(own_ref.output_index, 4))
+      |> bytearray.concat(utils.serialise_output_reference(own_ref))
       |> bytearray.concat(bytearray.from_int_big_endian(epoch, 8))
       |> bytearray.concat(new_key),
   )
@@ -365,6 +369,7 @@ fn t_config_datum() -> config_types.ConfigDatum {
     treasury_info_policy_id: t_own_hash,
     y_federation: t_yfed,
     federation_one_shot: OutputReference(#"aa12", 12),
+    previous_spos_registry_policy_id: "",
   }
 }
 

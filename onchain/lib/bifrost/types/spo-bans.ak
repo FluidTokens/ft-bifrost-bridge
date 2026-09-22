@@ -28,6 +28,11 @@ pub type SpoBansWithdrawRedeemer {
   ApplyBan {
     fault_input_index: Int,
     registration_ref_input_index: Int,
+    //spec [PRE-4]: the Config reference input whose #9 names the registry
+    //policy the accused pool's node must sit under. Appended after the
+    //reference index it qualifies; every field below keeps its rev-5.5
+    //position, because heimdall builds this constructor positionally.
+    config_ref_input_index: Int,
     accused_pool_id: ByteArray,
     evidence_hash: ByteArray,
     ban_anchor_input_index: Int,
