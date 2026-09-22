@@ -117,17 +117,23 @@ fn config_fields_at(
   )
 }
 
-// spec [PRE-4]: the registry policy id arrives from Config #9 at run time, not
-// as a compile parameter.
+// spec [PRE-4]/[PRE-5]: the registry policy id arrives from Config #9 at run
+// time, not as a compile parameter.
 //
 // It used to be `registration_script_hash`, baked in. That made this script a
-// FUNCTION of the registry's script hash, so every registry revision — the
-// rev-5.6 nonce among them — forced a ban-list redeploy, a new ban policy, a
-// Config #8 move and a fresh bootstrap, and stranded every live ban under a
+// DIRECT function of the registry's script hash, so every registry revision —
+// the rev-5.6 nonce among them — forced a ban-list redeploy, a new ban policy,
+// a Config #8 move and a fresh bootstrap, and stranded every live ban under a
 // policy nothing reads any more. Reading the field instead is the pattern
-// treasury.ak's RegistryUpdate already uses, and it means the NEXT registry
-// revision does not cascade into the ban list at all. Config #8 pays for that
-// once, with this deployment.
+// treasury.ak's RegistryUpdate already uses, and it removes that edge.
+//
+// It does NOT yet end the cascade, and saying so here matters more than the
+// improvement does: this validator still takes fault_proof_policy_ids as a
+// parameter, and all three fault verifiers take the registry policy as THEIRS.
+// So the dependency survives transitively — registry hash, fault verifier
+// hashes, this hash — and the next registry revision will move the ban policy
+// again. Finishing the job means the fault verifiers reading #9 from the Config
+// as well; this is the prerequisite, not the whole of it.
 fn validate_registered_pool_ref(
   input: Input,
   registration_script_hash: ByteArray,

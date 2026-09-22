@@ -1186,7 +1186,10 @@ the state they change).
 - **[PRE-5]** *(New, rev 5.6)* `spo-bans.ak` MUST do the same: it takes the Config NFT policy id
   as a parameter and reads `spos_registry_policy_id` (#9) at run time, locating the Config
   reference input by the `ApplyBan` redeemer's `config_ref_input_index`. It MUST NOT take
-  `registration_script_hash` as a parameter.
+  `registration_script_hash` as a parameter. This removes the DIRECT dependency only: the fault
+  verifiers still take the registry policy as a compile parameter and are themselves a parameter
+  of `spo-bans.ak`, so the ban policy remains a function of the registry policy until they read it
+  from the Config as well.
 
 > **Why the registry policy is read and not baked in ([PRE-4]).** A `registry_policy_id`
 > parameter makes the treasury policy a function of the registry policy. `spo_registry` can then
@@ -1195,13 +1198,16 @@ the state they change).
 > Config turns the cycle into a chain: Config identity → treasury → registry.
 >
 > **And why the ban list followed ([PRE-5]).** `spo-bans.ak` took the registry's script hash as a
-> parameter, so the ban policy was a function of the registry policy, so every registry revision
-> forced a ban-list redeploy: a new ban policy, a fresh `ban-root` bootstrap, a Config #8 move,
-> and every live ban left under a policy nothing reads any more. The rev-5.6 nonce would have been
-> the first revision to pay that price, and the price does not shrink with later ones. Reading #9
-> the way `treasury.ak` does costs one Config reference input per ban and ends the cascade: the
-> next registry revision moves #9 and #13 and leaves the ban list, its bans and its policy id
-> exactly where they are. Config #8 moves once, with this deployment, and then stops moving.
+> parameter, so the ban policy was a DIRECT function of the registry policy. Reading #9 the way
+> `treasury.ak` does costs one Config reference input per ban and removes that edge.
+>
+> It does NOT yet end the cascade, and the distinction matters for planning a rollout. `spo_bans`
+> also takes `fault_proof_policy_ids` as a compile parameter, and all three fault verifiers take
+> the registry policy as theirs — so the dependency survives transitively: registry hash → fault
+> verifier hashes → `spo_bans` hash. A later registry revision will still move the ban policy,
+> still strand live bans under a policy nothing reads, and still need a Config #8 move and a fresh
+> `ban-root`, until the fault verifiers read the registry from the Config too. [PRE-5] removes one
+> of two edges and is the prerequisite for removing the other; it is not the whole of it.
 
 **Checks on `treasury.ak`** *(all new in rev 5.5)*.
 
@@ -3431,6 +3437,7 @@ its `pool_id` to the Bifrost identity key it will use for DKG and signing.
 * **[REG-8]** *(New, rev 5.5)* `spos-registry.ak` MUST verify that the treasury output's address equals the treasury input's address.
 * **[REG-9]** *(New, rev 5.5)* The Register transaction MUST reference the Config UTxO, because `treasury.ak`'s `RegistryUpdate` branch reads `spos_registry_policy_id` from it.
 * **[REG-10]** *(New, rev 5.6)* `spos-registry.ak` MUST rebuild the message's `nonce_outpoint` from the outpoint of the input at the redeemer's `nonce_input_index` (36 B: `txid ‖ index LE`, the Update-Y encoding), so the transaction that carries the signatures spends the UTxO they name. An outpoint is spendable once, so the signatures authorize exactly one transaction; a failed attempt spends nothing, so the same signatures are retried without a new trip to the cold key.
+* **[REG-11]** *(New, rev 5.6)* `spos-registry.ak` MUST verify that the transaction spends EXACTLY ONE UTxO carrying a token of its own policy (the anchor) and produces EXACTLY TWO (the continued anchor and the new node). Reference inputs are not counted.
 
 > **Why the pin exists ([REG-6] to [REG-8]).** The treasury input and output are located by
 > redeemer index. Until rev 5.5 nothing authenticated them, so a registrant could add a wallet
@@ -3442,6 +3449,23 @@ its `pool_id` to the Bifrost identity key it will use for DKG and signing.
 > The pin is a compile parameter, which it could not have been before: `treasury_info` took
 > `registry_policy_id`, so the treasury policy was a function of this one and a parameter here
 > would have been self-referential. [PRE-4] broke that cycle.
+
+> **Why a branch bounds what it touches ([REG-11], [DRG-7], [MIG-7]).** The registry's SPEND
+> handler authorizes spending any list element on one condition: that the transaction mints
+> something under the registry policy. That was survivable while every mint required a cold
+> signature, because the only party who could open the door was the pool whose door it was.
+> `Migrate` requires no signature at all and anyone may submit it, so without a bound a genuine
+> migration becomes a licence to spend every other pool's node in the same transaction — the
+> membership NFTs and their min-ADA paid to the submitter, the list left dangling with each
+> victim's predecessor pointing at a node that no longer exists. Every off-chain reader treats
+> that as a broken list, and no transaction can repair it: the nodes are gone.
+>
+> The bound is a count on both sides, because leaving an element OUT of the outputs destroys it as
+> surely as moving it. Each branch states its own: `Bootstrap` (0, 1), `Register` (1, 2),
+> `Deregister` (2, 1), `Migrate` (1, 2). It is stated for the signed branches too, although the
+> signature already narrows who can try: a pool has no business spending its neighbours' nodes
+> during its own registration, and a rule that holds for one branch and not the next is a rule
+> nobody can check.
 
 > **Why the nonce exists ([REG-10], [DRG-6]).** Both signatures travel in the redeemer, so they are
 > public from the first transaction that uses them, and until rev 5.6 the messages committed to
@@ -3477,10 +3501,12 @@ its `pool_id` to the Bifrost identity key it will use for DKG and signing.
 > field #8 (§Config UTxO governance — the wiring fields may move under a running bridge, on the
 > snapshot-slot rule). `treasury.ak` reads #9 at run time ([PRE-4]) and is untouched, as are the
 > Treasury state, the bridged token, the peg scripts and the TM chain. `spo-bans.ak` is the one
-> dependent, and only this once: it took `registration_script_hash` as a compile parameter, so it
-> is redeployed alongside the registry and Config #8 moves with #9 — but the redeployed script
-> reads #9 at run time ([PRE-5]), so no later registry revision moves it again. Live bans do not
-> survive that one move; the roster re-applies the ones that must. The registrations themselves
+> dependent: it took `registration_script_hash` as a compile parameter, so it is redeployed
+> alongside the registry and Config #8 moves with #9. The redeployed script reads #9 at run time
+> ([PRE-5]), which removes the direct edge — but NOT the one through the fault verifiers, which
+> still take the registry policy as a compile parameter and are themselves a compile parameter of
+> `spo_bans`. A later registry revision will move the ban policy again for that reason. Live bans
+> do not survive the move; the roster re-applies the ones that must. The registrations themselves
 > are not redone.
 >
 > One consequence of the Config append is worth stating, because it looks alarming in a blueprint
@@ -3535,6 +3561,7 @@ its `pool_id` to the Bifrost identity key it will use for DKG and signing.
 * **[DRG-3]** `spos-registry.ak` MUST verify the linked-list removal is well formed and the anchor's lovelace is unchanged.
 * **[DRG-4]** `spos-registry.ak` MUST verify an MPF **removal** proof against the Treasury state UTxO's `bifrost_identity_root`, so the freed `bifrost_id_pk` can be registered again later.
 * **[DRG-5]** *(New, rev 5.5)* [REG-6], [REG-7] and [REG-8] apply unchanged to `Deregister`.
+* **[DRG-7]** *(New, rev 5.6)* [REG-11] applies to `Deregister` with its own counts: EXACTLY TWO UTxOs carrying a token of the registry policy are spent (the anchor and the node being removed) and EXACTLY ONE is produced (the continued anchor).
 * **[DRG-6]** *(New, rev 5.6)* [REG-10] applies unchanged to `Deregister`: the revocation message's `nonce_outpoint` is rebuilt from the input at the redeemer's `nonce_input_index`, which the transaction spends. Without it a revocation signature, public from its first use, stays valid against every later registration of the same pool — see *Why the nonce exists* above.
 
 **Checks delegated off-chain**
@@ -3570,6 +3597,7 @@ under.
 * **[MIG-3]** *(New, rev 5.6)* `spos-registry.ak` MUST verify, against the Treasury state reference input's `bifrost_identity_root`, an MPF **membership** proof of `bifrost_id_pk → pool_id`. The root is not changed: the binding is already the treasury's truth.
 * **[MIG-4]** *(New, rev 5.6)* [REG-4] applies unchanged: the insertion into the current list is well formed, which also rejects a second migration of the same pool.
 * **[MIG-5]** *(New, rev 5.6)* [REG-6] applies to the Treasury state REFERENCE input, and [REG-9] to the Config reference.
+* **[MIG-7]** *(New, rev 5.6)* [REG-11] applies: EXACTLY ONE UTxO carrying a token of the registry policy is spent (the anchor) and EXACTLY TWO are produced (the continued anchor and the new node). This is the branch the rule exists for — see *Why a branch bounds what it touches*. It is the only registry mint that carries no signature, so it is the only one a stranger can build, and without the bound a valid migration would let anyone carry off every other pool's registration node in the same transaction.
 * **[MIG-6]** *(New, rev 5.6)* `spos-registry.ak` MUST verify that no input carries the Treasury state NFT. This branch validates no treasury transition, and `treasury.ak`'s `RegistryUpdate` accepts any registry mint as its marker ([TSY-13]) without checking the new root's value — so a migration that also spent the Treasury state could rewrite `bifrost_identity_root` at will, the hole [TSY-23] closed for `Bootstrap`.
 
 **Checks delegated off-chain**

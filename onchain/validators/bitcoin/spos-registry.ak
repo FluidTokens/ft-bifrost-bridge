@@ -191,6 +191,9 @@ fn validate_bootstrap(
   and {
     utils.quantity_of_policy_id(self.mint, policy_id) == 1,
     quantity_of(self.mint, policy_id, registration_root_key) == 1,
+    // No list exists yet, so nothing may be spent and exactly the root is
+    // produced. The same bound the other three branches carry.
+    registry_elements_touched(self, policy_id) == (0, 1),
     validate_bootstrap_root(
       self.outputs,
       self.mint,
@@ -302,6 +305,9 @@ fn validate_registration(
 
   and {
     registration_linked_list_ok,
+    // spec [REG-11]: the anchor in, the continued anchor and the new node out,
+    // and no other list element on either side.
+    registry_elements_touched(self, policy_id) == (1, 2),
     treasury_state_transition_ok(
       self,
       treasury_input_index,
@@ -395,6 +401,9 @@ fn validate_deregistration(
 
   and {
     deregistration_linked_list_ok,
+    // spec [DRG-7]: the anchor and the node being removed in, the continued
+    // anchor out. Nothing else.
+    registry_elements_touched(self, policy_id) == (2, 1),
     // spec [DRG-5]: [REG-6] to [REG-8] apply unchanged to Deregister.
     treasury_state_transition_ok(
       self,
@@ -404,6 +413,42 @@ fn validate_deregistration(
       treasury_policy_id,
     ),
   }
+}
+
+// How many of the transaction's inputs and outputs carry a token of this
+// policy — that is, how many registry-list elements the transaction touches.
+//
+// spec [REG-11], [DRG-7], [MIG-7]. The registry's SPEND handler authorizes
+// spending any list element on one condition: that the transaction mints
+// something under this policy. That was survivable while every mint carried a
+// cold signature, because the only party who could open the door was the pool
+// whose door it was. `Migrate` needs no signature at all and anyone may submit
+// it, so during a migration window the door would be open to the public: a
+// valid migration for some pool, with three other pools' node UTxOs added as
+// inputs and their NFTs paid to the submitter's own address. Both handlers
+// would accept, and the list would be left dangling — the predecessors still
+// link to nodes that no longer exist — which every node reads as a broken list
+// and no node can repair.
+//
+// So each branch declares exactly how many elements it may touch, and nothing
+// else can ride along. Reference inputs are not counted and must not be: the
+// old node a migration reads sits under the PREVIOUS policy, and is referenced
+// rather than spent.
+fn registry_elements_touched(
+  self: Transaction,
+  policy_id: PolicyId,
+) -> (Int, Int) {
+  let spent =
+    list.count(
+      self.inputs,
+      fn(input) { utils.quantity_of_policy_id(input.output.value, policy_id) > 0 },
+    )
+  let produced =
+    list.count(
+      self.outputs,
+      fn(output) { utils.quantity_of_policy_id(output.value, policy_id) > 0 },
+    )
+  (spent, produced)
 }
 
 // The Config datum's raw fields, authenticated by the parameterized NFT.
@@ -559,6 +604,11 @@ fn validate_migration(
 
   and {
     old_node_pinned,
+    // spec [MIG-7]: the same bound as [REG-11], and the branch that needs it
+    // most — this is the only registry mint that carries no signature, so it is
+    // the only one a stranger can build. Without it a valid migration is a
+    // licence to spend every other pool's node in the same transaction.
+    registry_elements_touched(self, policy_id) == (1, 2),
     utils.holds_treasury_state_nft(treasury_ref.output, treasury_policy_id),
     treasury_not_spent,
     // spec [MIG-3]: the binding is already the treasury's truth, so this is a
@@ -1349,5 +1399,107 @@ test migrate_rejects_mint_under_previous_policy() fail {
   t_mint_validator(
     t_migrate_redeemer(),
     Transaction { ..tx, mint: t_mint_registry(t_prev_registry_policy, 1) },
+  )
+}
+
+//----------------------------------------------------------------------------
+// Tests: what a registry transaction may touch
+//
+// spec [REG-11], [DRG-7], [MIG-7]. The spend handler lets any list element be
+// spent by any transaction that mints under this policy. Before rev 5.6 every
+// such mint carried a cold signature, so the only party who could open that
+// door was the pool whose door it was. `Migrate` carries no signature and
+// anyone may submit it, which turns the same door into a public one.
+//
+// The attack these close: a genuine migration for some pool, plus another
+// pool's node UTxO as an extra input and its membership NFT paid out to the
+// submitter. Every check the branch makes still passes — it validates the
+// anchor, the continued anchor and the new node, and looks at nothing else —
+// and the list is left dangling, with the victim's predecessor pointing at a
+// node that no longer exists. No node can read the list after that, and no
+// transaction can repair it.
+//----------------------------------------------------------------------------
+
+const t_victim_pool_id: ByteArray =
+  #"99999999999999999999999999999999999999999999999999999999"
+
+fn t_victim_node_input(policy_id: PolicyId) -> Input {
+  Input {
+    output_reference: OutputReference(t_bootstrap_tx, 9),
+    output: t_element_output(
+      policy_id,
+      policy_id,
+      t_victim_pool_id,
+      t_node_datum(t_bifrost_url),
+    ),
+  }
+}
+
+// The victim's membership token, carried off to the submitter's own address.
+fn t_stolen_output(policy_id: PolicyId) -> Output {
+  Output {
+    address: Address {
+      payment_credential: address.VerificationKey(
+        #"e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+      ),
+      stake_credential: None,
+    },
+    value: assets.from_lovelace(2_000_000)
+      |> assets.add(policy_id, t_victim_pool_id, 1),
+    datum: NoDatum,
+    reference_script: None,
+  }
+}
+
+// spec [MIG-7]. The one that matters: an unsigned branch anyone can build.
+test migrate_rejects_carrying_off_another_pools_node() fail {
+  let tx = t_migrate_happy_tx()
+  t_mint_validator(
+    t_migrate_redeemer(),
+    Transaction {
+      ..tx,
+      inputs: list.concat(tx.inputs, [t_victim_node_input(t_registry_policy)]),
+      outputs: list.concat(tx.outputs, [t_stolen_output(t_registry_policy)]),
+    },
+  )
+}
+
+// spec [REG-11]. Signed, so it takes the registrant's own cold key — but a
+// pool has no business spending its neighbours' nodes either.
+test register_rejects_carrying_off_another_pools_node() fail {
+  let tx = t_register_tx(t_nonce_input(), t_bifrost_url)
+  t_mint_validator(
+    t_register_redeemer(0),
+    Transaction {
+      ..tx,
+      inputs: list.concat(tx.inputs, [t_victim_node_input(t_registry_policy)]),
+      outputs: list.concat(tx.outputs, [t_stolen_output(t_registry_policy)]),
+    },
+  )
+}
+
+// spec [DRG-7].
+test deregister_rejects_carrying_off_another_pools_node() fail {
+  let tx = t_deregister_tx(t_nonce_input())
+  t_mint_validator(
+    t_deregister_redeemer(0),
+    Transaction {
+      ..tx,
+      inputs: list.concat(tx.inputs, [t_victim_node_input(t_registry_policy)]),
+      outputs: list.concat(tx.outputs, [t_stolen_output(t_registry_policy)]),
+    },
+  )
+}
+
+// And the subtler half: leaving a list element OUT of the outputs destroys it
+// just as effectively as moving it, so the bound is on both sides.
+test migrate_rejects_an_extra_element_output() fail {
+  let tx = t_migrate_happy_tx()
+  t_mint_validator(
+    t_migrate_redeemer(),
+    Transaction {
+      ..tx,
+      outputs: list.concat(tx.outputs, [t_stolen_output(t_registry_policy)]),
+    },
   )
 }
