@@ -98,12 +98,17 @@ services:
   # the port from its REGISTERED URL (http://heimdall-spoN:1850N), so no
   # --index/--base-port. Configs are rendered by scripts/01-bootstrap-dkz.sh
   # from config/heimdall-spoN.toml into data/generated/ (registry ids filled
-  # in), then these services are started with the demo command.
+  # in), then these services are started with the SPO daemon.
+  #
+  # `run-spo` was called `demo` until heimdall 2026-08-15. The image is built
+  # from HEIMDALL_SRC, not from HEIMDALL_REF (which only warns), so a rename in
+  # the source checkout reaches these services immediately — this one failed the
+  # container at startup with "unrecognized subcommand".
   heimdall-spo1: &heimdall
     build:
       context: ${HEIMDALL_SRC:-../../../lantr/heimdall}
       dockerfile: ${PWD}/docker/heimdall.Dockerfile
-    command: ["demo", "--config", "/etc/heimdall/heimdall.toml", "--deterministic"]
+    command: ["run-spo", "--config", "/etc/heimdall/heimdall.toml", "--deterministic"]
     environment: &heimdall-env
       HEIMDALL_MNEMONIC: ${HEIMDALL_MNEMONIC:-test walk nut penalty hip pave soap entry language right filter choice}
     depends_on:
@@ -159,7 +164,7 @@ services:
     # SPO4_INJECT_FAULT=--inject-fault=equivocate-round1; unset (scenario 1 and
     # every other run) it interpolates away and the command is the honest one,
     # so the fault is opt-in per scenario rather than baked into the service.
-    command: demo --config /etc/heimdall/heimdall.toml --deterministic ${SPO4_INJECT_FAULT:-}
+    command: run-spo --config /etc/heimdall/heimdall.toml --deterministic ${SPO4_INJECT_FAULT:-}
     volumes:
       - ./data/generated/heimdall-spo4.toml:/etc/heimdall/heimdall.toml:ro
       - ./keys:/keys
