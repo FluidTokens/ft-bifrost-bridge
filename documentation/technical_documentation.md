@@ -3756,8 +3756,8 @@ examples for a mainnet-parameter instance:
 | Parameter | Kind | Normative definition / constraint | Example |
 |---|---|---|---|
 | `stability_window` | **derived** | `= 3k/f` of the host Cardano network (see *Cardano stability window*); the governing authority MUST reject smaller values — it is fund-safety-critical, tunable only upward | 129 600 slots (36 h) |
-| `dkg_r1_deadline`, `dkg_r2_deadline` | free | E-relative; `0 < r1 < r2 < update_y_deadline` | E + 1 h / E + 2 h |
-| `update_y_deadline` | constrained | `> dkg_r2_deadline`; early enough that depositors get the new key before meaningful deposit traffic | E + 3 h |
+| `dkg_r1_deadline`, `dkg_r2_deadline` | free | E-relative; `0 < r1 < r2 < update_y_deadline`; attempt `a` of the DKG uses `E + a × r2 + r1` and `E + (a + 1) × r2` (see *Round 0: Initialization*) | E + 1 h / E + 2 h |
+| `update_y_deadline` | constrained | `> dkg_r2_deadline`; SHOULD be `≥ 2 × dkg_r2_deadline` so that one DKG rerun fits (see *Round 0: Initialization*); early enough that depositors get the new key before meaningful deposit traffic | E + 4 h |
 | `tm_batch_interval` | free | `> max_sign_attempts × (sign_r1_window + sign_r2_window) + roster_size × leader_slot_T`; SHOULD be wide enough for `max_sign_attempts ≥ 2` (see *Round-2 shortfall opens a new attempt*) | 6 h |
 | `sign_r1_window`, `sign_r2_window` | free | per-TM FROST round deadlines, **per attempt**, measured from `B_i` | 30 min each |
 | `leader_slot_T` | free | cascade hop for posting/submission conventions; also sets the posting margin `roster_size × leader_slot_T` reserved out of `tm_batch_interval` | 60 slots |
@@ -3788,10 +3788,11 @@ the treasury), the **candidates** (registered SPOs for the next epoch), **watcht
    (§Threshold Calculation) and frozen for the epoch's DKG instance.
 4. **DKG (off-chain, incoming roster).** Round 1 (commitments + proofs of knowledge), Round 2
    (encrypted share distribution), finalization — producing $Y_{51}'$ and per-participant shares.
-   Non-participation shrinks the qualified subset deterministically; cryptographic faults are
+   Round-1 absence shrinks the provisional subset deterministically; a Round-2 shortfall reruns
+   the attempt at `attempt + 1` (see *Round 0: Initialization*); cryptographic faults are
    punishable via the fault-verifier/ban path (§Misbehavior Handling). Deadlines:
    `dkg_r1_deadline` / `dkg_r2_deadline` per the protocol schedule (see *TM batches and the
-   protocol schedule*).
+   protocol schedule*), per attempt as *Round 0* derives them.
 5. **Update-Y (on-chain).** The current roster publishes $Y_{51}'$ to `treasury.ak`, authorized by
    a FROST group signature under the *current* group key; the posting SPO is selected by the
    leader rule with `tm_sequence = "dkg"`. From this point depositors derive peg-in addresses from
@@ -4372,7 +4373,50 @@ Each SPO $P_i$ performs the following initialization steps:
 6. Order candidates lexicographically by `bifrost_id_pk` and assign indices.
 7. Verify own participation (own `pool_id` is in the candidate set).
 
-Ordinary non-participation does not create a new DKG attempt. All honest parties stay in the same `(epoch, threshold, attempt)` namespace and deterministically shrink the qualified subset as the Round 1 and Round 2 deadlines expire. The `attempt` field is therefore reserved for exceptional full reruns after direct cryptographic faults or epoch-level resets; in the normal protocol flow it remains `0`. **This is the DKG rule only.** The signing namespace's `attempt` field behaves differently — it advances on an ordinary Round-2 shortfall — because a signing round, unlike a DKG round, cannot shrink after Round 1 without reusing nonces (see *Round-2 shortfall opens a new attempt*).
+Ordinary non-participation stays inside the DKG namespace, and the two rounds handle it
+differently.
+
+* **Round 1.** Absence before the Round 1 deadline shrinks the provisional subset in place. All
+  honest parties stay in the same `(epoch, threshold, attempt)` namespace, and nothing is
+  republished: a commitment and its proof of knowledge do not depend on how many participants
+  there are.
+* **Round 2.** A member of the provisional subset that publishes no valid Round 2 payload before
+  the Round 2 deadline is a **Round-2 shortfall**. The attempt MUST end. Every honest party opens
+  `attempt + 1` over the provisional subset minus the non-publishers, with fresh polynomials. No
+  party MAY finalize over the survivors.
+
+Attempt $a$'s deadlines are absolute, E-relative slots, so that every SPO freezes the same
+subsets:
+
+```
+r1(a) = E + a × dkg_r2_deadline + dkg_r1_deadline
+r2(a) = E + (a + 1) × dkg_r2_deadline
+```
+
+Attempt $a$ opens only if `r2(a) ≤ update_y_deadline`. Past that, the epoch's DKG has failed: no
+Update-Y is posted, the treasury stays under the outgoing key, and the next boundary takes fresh
+snapshots and retries (see *Periodic consensus change flow*). The `attempt` field therefore
+advances in the normal protocol flow on a Round-2 shortfall, and on exceptional full reruns after
+direct cryptographic faults or epoch-level resets. A DKG in which every Round 1 publisher also
+publishes Round 2 completes at `attempt = 0`. The signing namespace's `attempt` field advances on
+a Round-2 shortfall for the same reason and one more: a signing round cannot shrink after Round 1
+without reusing nonces (see *Round-2 shortfall opens a new attempt*).
+
+> **Why a Round-2 shortfall reruns rather than shrinks.** Shares are polynomial evaluations, so
+> re-deriving them over a smaller set yields the same values, and mechanically the survivors could
+> finalize in place. But a member that published a valid Round 1, received everyone's Round 2
+> shares, and only then went silent already holds a valid share $\sum_{l \in Q} f_l(j)$ of the
+> key the survivors would finalize, because dropping it in place leaves the polynomial unchanged.
+> The roster would then name $|Q|$ shareholders while more parties hold usable shares, so a
+> $t$-of-roster guarantee could be met by a coalition that includes a party the roster excluded.
+> A rerun's fresh polynomials make every share of the abandoned attempt worthless. Raised as #50;
+> resolved this way because heimdall already implements the rerun (WI-105).
+
+*Implementation status* (2026-09-25). heimdall narrows on Round-1 absence and reruns on Round-2
+absence, as above. Two divergences: a rerun's deadlines are a local relative window rather than
+the absolute slots above, because the schedule anchor is stale by then; and a rerun re-derives
+`t` over the reduced set, which §Threshold Calculation forbids. heimdall also caps a ceremony at
+16 attempts, where the rule above derives the cap from `update_y_deadline`.
 
 #### 6. Round 1: Commitments and Proofs of Knowledge
 
@@ -4390,7 +4434,7 @@ Each $P_i$ publishes their Round 1 data at:
 <bifrost_url>/dkg/<epoch>/<threshold>/<attempt>/round1/<pool_id>.json
 ```
 
-Where `<threshold>` is `51` (one DKG per epoch), and `<attempt>` is the DKG namespace field in the current epoch. In the normal protocol flow it remains `0`.
+Where `<threshold>` is `51` (one DKG per epoch), and `<attempt>` is the DKG namespace field: `0` for the epoch's first attempt, and one more for each rerun after a Round-2 shortfall (see *Round 0: Initialization*).
 
 **Payload structure**:
 
@@ -4540,7 +4584,7 @@ Each recipient $P_l$:
 
    $f_i(l) · G = \sum_{j=0}^{t-1} (l^j · φ_{ij})$
 
-If a sender that was present in the provisional Round 1 subset fails to publish any Round 2 payload by the Round 2 deadline, that sender is removed from the final qualified subset. Honest parties ignore that sender's commitments and shares in the final share sum and public key derivation.
+If a sender that was present in the provisional Round 1 subset fails to publish any Round 2 payload by the Round 2 deadline, the attempt ends. Every honest party opens `attempt + 1` over the provisional subset minus that sender, with fresh polynomials (see *Round 0: Initialization*). No party finalizes over the survivors.
 
 If verification fails for any share from $P_i$, or if two distinct signed Round 2 payloads for the same sender and namespace are observed, the process proceeds to **Misbehavior Handling** (Section 9).
 
@@ -4554,7 +4598,7 @@ Upon successful verification of all shares from the final qualified subset $Q$, 
 
 3. Computes the group public key from the same qualified subset: $Y = \sum_{l \in Q} φ_{l0}$
 
-All participants arrive at the same group public key $Y$. Ordinary non-participation therefore shrinks $Q$ in-place rather than forcing a DKG restart.
+All participants arrive at the same group public key $Y$. In a completed attempt $Q$ equals the provisional Round 1 subset: Round-1 absence shrinks the subset in place, and a Round-2 shortfall reruns the attempt (see *Round 0: Initialization*).
 
 The above steps are run once per epoch with threshold $t_{51}$, producing $Y_{51}$.
 
@@ -4866,7 +4910,7 @@ The roster may process **multiple TM transactions** within an epoch, each cyclin
 
 The signing namespace is identified by the tuple `(epoch, txid, mode, attempt)` where:
 - `mode ∈ {51}` selects the active SPO threshold path — a single value today; the field is kept in the namespace and the canonical layouts so that adding a future threshold mode does not change any byte layout. The **federation mode has no signing namespace at all**: it uses no SPO endpoints and no FROST rounds;
-- `attempt` counts the signing runs of that mode for that TM. Unlike the DKG's `attempt` field — which is reserved for exceptional full reruns — the signing `attempt` advances in the **normal** protocol flow, because a threshold signing round cannot shrink after Round 1 the way a DKG round can (see *Round-2 shortfall opens a new attempt*). It starts at `0` and is a function of the slot; and
+- `attempt` counts the signing runs of that mode for that TM. Like the DKG's `attempt` field, it advances on a Round-2 shortfall in the **normal** protocol flow; the signing round has one more reason for it, because it cannot shrink after Round 1 without reusing nonces (see *Round-2 shortfall opens a new attempt*). It starts at `0` and is a function of the slot; and
 - every namespace requires **fresh nonce commitments**. A signer must never reuse FROST nonces across different `(epoch, txid, mode, attempt)` tuples, even if the unsigned Bitcoin transaction is unchanged.
 
 Each SPO publishes its constructed TM at:
@@ -5231,8 +5275,8 @@ Failures are handled deterministically so that all honest SPOs converge on the s
 - Missing Round 1 publication does **not** create a challenge and does **not** immediately create an on-chain ban.
 
 **Round 2 missing publication**:
-- Missing Round 2 publication does **not** create a challenge and does **not** immediately create an on-chain ban. What it costs the non-publisher differs between the two protocols, because a DKG round can shrink after Round 1 and a threshold signing round cannot:
-  - **DKG**: the SPO is excluded from the final qualified subset for the current run. The run continues with the survivors — the missing shares are simply absent, and the remaining participants still derive a usable key.
+- Missing Round 2 publication does **not** create a challenge and does **not** immediately create an on-chain ban. In both protocols it ends the attempt, and the non-publisher is excluded from the next one; the reasons differ:
+  - **DKG**: the attempt is abandoned, and every honest party opens `attempt + 1` over the provisional subset minus the non-publishers, with fresh polynomials. Finalizing over the survivors would leave the non-publisher holding a usable share of the finalized key (see *Why a Round-2 shortfall reruns rather than shrinks* under *Round 0: Initialization*).
   - **TM signing**: the *attempt* is abandoned, because the signing package is fixed by `S1`'s Round-1 commitments and cannot be re-derived over the survivors without reusing their nonces. The mode continues at `attempt + 1` over the eligible set minus this attempt's Round-2 non-publishers, with fresh commitments (see *Round-2 shortfall opens a new attempt*). The exclusion lasts for that TM only.
 
 **Direct faults**:
@@ -5242,9 +5286,9 @@ Failures are handled deterministically so that all honest SPOs converge on the s
 **Deterministic subset selection**:
 - For DKG, the eligible set comes from `registration_list \ active_ban_list` at the relevant roster snapshot time.
 - For TM signing, the eligible set comes from the current on-chain roster minus any active ban entries.
-- In every attempt, the provisional subset is the set of SPOs that published valid Round 1 payloads before the common deadline. For DKG the final qualified subset is the subset of those participants that also published valid Round 2 payloads; for TM signing there is no smaller final subset — the attempt either aggregates over the whole provisional subset or is abandoned for the next attempt.
+- In every attempt, the provisional subset is the set of SPOs that published valid Round 1 payloads before the common deadline. In neither protocol is there a smaller final subset: the attempt either completes over the whole provisional subset or is abandoned, and the next attempt opens over the provisional subset minus the Round-2 non-publishers.
 - For a fixed DKG `(epoch, threshold-mode)`, the threshold `t` is constant across attempts. It is likewise constant across TM signing attempts: excluding a Round-2 non-publisher shrinks who may participate, never what they must reach.
-- If the qualified subset does not meet the active threshold, the current DKG/signing mode fails immediately when the bounded phase deadlines close, and the next lower mode starts immediately if available. For TM signing that test is applied to the attempt's eligible set at Round 1, and again after each attempt's exclusions.
+- If the qualified subset does not meet the active threshold, the current DKG/signing mode fails immediately when the bounded phase deadlines close, and the next lower mode starts immediately if available. For TM signing that test is applied to the attempt's eligible set at Round 1, and again after each attempt's exclusions. For DKG it is applied to the provisional subset at each attempt's Round 1 deadline, and an attempt opens only if its Round 2 deadline is at or before `update_y_deadline`; past that, the epoch's DKG has failed and the next boundary retries it (see *Periodic consensus change flow*).
 
 ## Watchtowers
 
