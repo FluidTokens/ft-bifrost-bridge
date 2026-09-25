@@ -43,12 +43,12 @@ validator completed_peg_ins_merkle_tree_validator(
     let correct_asset_name =
       minted_asset_name == constants.completed_peg_ins_root_asset_name
 
-    //The minted NFT sits in that same output. The peg-in flow authenticates
-    //the trie by this NFT (spec §Complete peg-in: "same NFT, same address"),
-    //so a genesis that pays the NFT anywhere else leaves the trie UTxO at
-    //this script unauthenticated and puts the real trie, with a root the
-    //NFT holder chooses, wherever the NFT goes next. The bridge state
-    //bootstrap makes the same check (spec [BSS-5]).
+    //spec [CPT-4]: the minted NFT sits in that same output. The peg-in flow
+    //authenticates the trie by this NFT (spec §Complete peg-in: "same NFT,
+    //same address"), so a genesis that pays the NFT anywhere else leaves the
+    //trie UTxO at this script unauthenticated and puts the real trie, with a
+    //root the NFT holder chooses, wherever the NFT goes next. The bridge
+    //state bootstrap makes the same check (spec [BSS-5]).
     let output_carries_the_nft =
       quantity_of(
         completed_peg_ins_merkle_tree_output.value,
@@ -368,8 +368,8 @@ test mint_genesis_happy_path() {
   t_mint(tx)
 }
 
-//The guard under test: the datum and the address are right, the NFT is paid
-//to a wallet. Before the guard this genesis was accepted.
+//The guard under test (spec [CPT-4]): the datum and the address are right,
+//the NFT is paid to a wallet. Before the guard this genesis was accepted.
 test mint_rejects_nft_paid_elsewhere() fail {
   let tx =
     Transaction {

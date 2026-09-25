@@ -187,7 +187,7 @@ Source code for the Aiken validators listed here is published in the Bifrost on-
 | Ban node token | `spo-bans.ak` | `ban/ ‖ pool_id` | first ban / never | one per banned pool |
 | `FaultProof` | authorized fault-verifier policies | `blake2b_256(pool_id ‖ evidence_hash)` | fault proof / ban application | evidence-bound fault record |
 | PegInRequest NFT | `peg-in.ak` | hash of the mint's consumed `input_ref` — unique per request | create / complete-or-close | request identity |
-| Completed-peg-ins NFT | cpi tree policy (one-shot) | mint parameter | bootstrap / never | cpi MPF root singleton |
+| Completed-peg-ins NFT | `completed-peg-ins-merkle-tree.ak` (one-shot) | `"CPI"` ([CPT-2]) | bootstrap / never | cpi MPF root singleton |
 | Bridge state NFT | `bridge-state.ak` (one-shot) | `"BSS"` ([BSS-5]) | bootstrap / never | bridge state singleton identity |
 | TM NFT | TM record policy | `""` (empty — fungible across posts, see [CTM-17]) | post / burned at Confirm ([CTM-24]) or by the creator's GC after the grace period (see *Confirm TM tx*) | Unconfirmed record identity |
 | fBTC | `bridged-token.ak` | `"fSAT"` — the [CFG-1] constant in `lib/bifrost/constants.ak`, not a Config field | complete peg-in / complete peg-out | the bridged asset — 1 token = 1 satoshi |
@@ -1889,8 +1889,28 @@ serve instances with different federation keys. None of the three may be hard-co
 in a script body: that makes the compiled artifact instance-specific, so one build could no longer serve
 several bridged assets (Config #1), and it breaks the redeploy property recorded under *Instance
 lifecycle: retirement and redeploy*.
-5. **Mint the completed-peg-ins trie NFT** — its UTxO carries the MPF root, initialized to the
-   empty root (32 zero bytes).
+5. **Mint the completed-peg-ins trie NFT** ([CPT-1] to [CPT-6]) — its UTxO carries the MPF root,
+   initialized to the empty root (32 zero bytes).
+
+   - [CPT-1] The bootstrap mint of `completed-peg-ins-merkle-tree.ak` MUST spend its one-shot
+     input.
+   - [CPT-2] The bootstrap mint MUST mint exactly one token, asset name `"CPI"`.
+   - [CPT-3] The bootstrap mint MUST produce exactly one output at the trie validator's own
+     payment credential.
+   - [CPT-4] *(New, rev 5.6, PR #53)* The bootstrap mint MUST pay the `"CPI"` token to that
+     output.
+   - [CPT-5] That output's inline datum MUST be the empty root (32 zero bytes).
+   - [CPT-6] That output MUST NOT carry a stake credential.
+
+   > **Why the token is pinned to the output ([CPT-4]).** `peg-in.ak` authenticates the trie by
+   > the NFT on both the input and the continuing output (*Complete peg-in*). Before [CPT-4] a
+   > genesis that paid the NFT to a wallet and a datum-correct, NFT-less output to the script
+   > passed every other check. The UTxO at the script was then not the trie anyone reads, and the
+   > NFT holder could place the real trie later, at this script, with any root. [BSS-5] makes the
+   > same check for the bridge state.
+
+   *Implementation status* (2026-09-25). [CPT-1] to [CPT-6] are implemented in
+   `onchain/validators/bitcoin/completed-peg-ins-merkle-tree.ak`, with one test per rule.
 6. **Bootstrap the bridge state singleton** — mint the `"BSS"` NFT ([BSS-4], [BSS-5]) with the
    datum of §Bridge state singleton: both roots empty (32 zero bytes), the verified genesis
    treasury outpoint as the head, and its satoshi amount.
