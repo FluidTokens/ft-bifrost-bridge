@@ -121,3 +121,67 @@ carry them yet.
 Two of the seven are trust anchors, so their Config fields are copies for discovery only —
 enforcement stays on the validator parameter, and a client detects a false copy by deriving the
 reading validator's address from it and checking the instance's UTxOs are there.
+
+## 5. The Phase-1 handoff moves custody on published evidence, not on a proof of possession
+
+*Raised in PR #51 (2026-08-17), from implementing the handoff in heimdall. Carried here because
+the specification sends the questions it does not answer to this document.*
+
+**Current behaviour.** §Rollout Phases makes the first Update-Y "the federation's accountable
+judgment": the federation signs the rotation to $Y_{51}$ once it judges the roster strong enough.
+That names who decides. It does not name the evidence, and nothing requires the incoming roster
+to prove it can sign with $Y_{51}$ before custody moves to it.
+
+**Why the two are not separable.** The federation and the SPO roster are disjoint populations. A
+federation member need not be an SPO, is not in the registry, and takes no part in the epoch DKG.
+So unlike every other party that authorizes an Update-Y, it does not hold $Y_{51}$ because it
+helped produce it. It obtains the key some other way, and a party that signs whatever rotation
+message it is handed hands the treasury to whoever asked.
+
+**What the federation can establish from published data.** Three things, each checkable against
+the chain with no party trusted for a claim:
+
+1. **The key.** The registry gives the eligible roster and each member's `bifrost_url`. Round 1
+   publishes each member's commitment $\vec{C}_i$ with its proof of knowledge, authenticated by a
+   BIP340 signature under the `bifrost_id_pk` that member registered. The group key is a function
+   of those commitments, so the federation recomputes it rather than accepts it.
+2. **That the ceremony ran to completion.** Every member also served a signed Round 2 payload.
+3. **That no cheat was proven.** No fault proof stands against that ceremony on chain.
+
+Item 1 alone is insufficient. Round 1 commitments fix the key before Round 2 distributes any
+share, so a ceremony that collapsed after Round 1 still yields a derivable $Y_{51}$ that nobody
+holds a usable share of. Items 2 and 3 are complementary halves of that gap: an outside observer
+can check Round 2 payloads for presence and authorship but not for correctness, because the
+shares are encrypted to their recipients. A bad share is provable only by its victim, who can
+decrypt it, and that proof lands on chain.
+
+*Implementation note, because it is a silent trap.* On the Taproot ciphersuite the group key is
+the BIP-341 key-path tweak of $\sum_i \phi_{i,0}$, not the bare sum. Summing alone yields a
+well-formed key that is simply a different one, and nothing reports an error.
+
+**What none of it establishes.** Liveness. All three can hold and the roster can still be dark
+when the rotation lands. The evidence describes a ceremony that happened; it says nothing about
+who is up now. If custody moves to a key no threshold subset can sign with, the treasury is
+stranded until the federation leaf's CSV delay expires. That is the failure the federation
+branch exists to absorb, reached by a rotation that everything above approved.
+
+**The three options, if revisited.**
+
+- **(a) No proof.** Keep it the federation's judgment on published evidence. This is the
+  assurance level the protocol already runs on in steady state, where the outgoing roster likewise
+  signs a succession to a key it cannot test.
+- **(b) Proof off-chain.** The incoming roster publishes a BIP340 signature under $Y_{51}$ over
+  the rotation's own signing message, and the federation requires it before it signs. One new
+  published artifact and no validator change; it binds only the Phase-1 handoff.
+- **(c) Proof on-chain.** `treasury.ak`'s Update-Y additionally verifies a signature under the
+  new key. Strongest, and it generalizes: the same hazard exists at every steady-state rotation,
+  not only the Phase-1 one. It changes the validator, and every rotation pays for it.
+
+**Why it is acceptable for now.** The deployed bridge runs on preprod, where a stranded treasury
+costs time, not funds. [FED-2] already requires a timeout-gated key lifecycle before mainnet, and
+this decision belongs to the same gate.
+
+**What would settle it.** A sentence in §Rollout Phases naming (a), (b) or (c), with the evidence
+list above as the minimum a conforming federation checks. Until then two implementations may
+disagree on whether a given roster is eligible, and the disagreement surfaces as a handoff that
+one party posts and the other believes unsafe, with custody of the treasury as the stake.
