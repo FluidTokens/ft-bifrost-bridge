@@ -5026,7 +5026,7 @@ then opens `attempt + 1` for the same `(epoch, txid, mode)` with **fresh Round 1
                                  / (sign_r1_window + sign_r2_window) ⌋)
   ```
 
-  Every term is published — the windows and `leader_slot_T` in Config #16 `schedule`,
+  Every term is published — the windows and `leader_slot_T` in the `schedule` record of Config #1 `params`,
   `roster_size` in the on-chain roster — so no SPO needs local configuration to agree on the
   bound. The `max(1, …)` floor means a schedule too tight for even one attempt still runs one:
   the movement is then merely late, never unsafe. But a schedule admitting only one attempt
