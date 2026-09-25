@@ -176,11 +176,12 @@ const t_own_ref: OutputReference =
     output_index: 0,
   }
 
-//The rev-5.5 twelve-field Config datum (spec §Config datum), built as raw
-//Data: 0 update_auth, 1 params, 2 bridged_token_policy,
-//3 completed_peg_ins_policy, 4 bridge_state_policy, 5 tm_script_hash [CFG-2],
-//6 peg_in_script_hash, 7 peg_out_script_hash, 8 spo_bans_policy_id,
-//9 spos_registry_policy_id, 10 treasury_info_policy_id, 11 y_federation.
+//The Config datum (spec §Config datum), built as raw Data: 0 update_auth,
+//1 params, 2 bridged_token_policy, 3 completed_peg_ins_policy,
+//4 bridge_state_policy, 5 tm_script_hash [CFG-2], 6 peg_in_script_hash,
+//7 peg_out_script_hash, 8 spo_bans_policy_id, 9 spos_registry_policy_id,
+//10 treasury_info_policy_id, 11 y_federation, 12 federation_one_shot,
+//13 previous_spos_registry_policy_id [CFG-10].
 //params holds (schedule, fee_rate_sat_per_vb, per_pegout_fee,
 //min_peg_out_fbtc, base_ban_duration_ms, max_faults_before_permanent,
 //max_validity_window_ms, federation_csv_blocks,
@@ -241,6 +242,9 @@ fn t_datum_data(update_auth: Option<AuthorizationMethod>) -> Data {
       //federation_one_shot, appended per [CFG-5]. The genesis mint FULL-CASTS
       //this datum, so it must be a real OutputReference and not a placeholder.
       one_shot_data,
+      //previous_spos_registry_policy_id, appended per [CFG-5]. Zero-length at
+      //genesis: no registry migration is in progress ([CFG-10]).
+      builtin.b_data(""),
     ],
   )
 }

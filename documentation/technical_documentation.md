@@ -440,6 +440,8 @@ classDiagram
         spos_registry_policy_id : PolicyId
         treasury_info_policy_id : PolicyId
         y_federation : ByteArray
+        federation_one_shot : OutputReference
+        previous_spos_registry_policy_id : PolicyId
     }
 
     class Treasury_State_UTxO {
@@ -688,7 +690,10 @@ Notes:
   hash of a consumed outpoint), and each FaultProof mint take their consumed outpoint from the
   redeemer instead. Same mechanism, chosen per mint rather than per script.
 * `spo-bans.ak` is additionally parameterized by ban policy constants
-  (`base_ban_duration_ms`, `max_faults_before_permanent`, `max_validity_window_ms`).
+  (`base_ban_duration_ms`, `max_faults_before_permanent`, `max_validity_window_ms`). Since rev 5.6
+  it takes the Config NFT policy id in place of the registry's script hash and reads the registry
+  policy from Config #9 at run time ([PRE-5]), so a registry revision no longer moves the ban
+  list.
 * The TM validator and the Binocular Oracle are not part of this repository's Aiken tree: they
   are Scalus contracts in binocular (`TreasuryMovementValidator.scala`, `BitcoinValidator.scala`),
   deployed independently; only their hashes enter the graph above.
@@ -848,9 +853,11 @@ number lives inside `params`.
 | 6 | `peg_in_script_hash` | ByteArray (script hash) | peg-in spend logic (withdraw-script pattern) |
 | 7 | `peg_out_script_hash` | ByteArray (script hash) | peg-out spend logic (withdraw-script pattern) |
 | 8 | `spo_bans_policy_id` | PolicyId | the DEPLOYED `spo-bans.ak` policy id; the ban script address follows from it |
-| 9 | `spos_registry_policy_id` | PolicyId | the DEPLOYED `spos-registry.ak` policy id; the registry address follows from it. Read on-chain by `treasury.ak` — see [PRE-4] |
+| 9 | `spos_registry_policy_id` | PolicyId | the DEPLOYED `spos-registry.ak` policy id; the registry address follows from it. Read on-chain by `treasury.ak` ([PRE-4]) and, since rev 5.6, by `spo-bans.ak` ([PRE-5]) |
 | 10 | `treasury_info_policy_id` | PolicyId | the DEPLOYED Treasury state NFT policy id — see [CFG-3] |
 | 11 | `y_federation` | ByteArray (32 B x-only) | the federation fallback key, the script-leaf key of both Taproot trees. Read on-chain by `treasury.ak`'s Update-Y branch — see [UY-5] |
+| 12 | `federation_one_shot` | OutputReference | the one-shot outpoint the federation scripts are parameterized by; off-chain readers resolve it once at startup, and a Config Update moving it describes a new bridge instance. *(Row added in rev 5.6; the field has been deployed since the federation scripts were.)* |
+| 13 | `previous_spos_registry_policy_id` | PolicyId | *(New, rev 5.6)* the registry policy a migration is FROM — zero-length when none is in progress ([CFG-10]). Set by the governance Update that moves #9; read on-chain by `spos-registry.ak`'s `Migrate` branch ([MIG-1]) and off-chain by the SPO program to decide whether to migrate its own registration — see §SPO Registration, section 8 |
 
 `ConfigParams`, at index 1:
 
@@ -892,6 +899,11 @@ number lives inside `params`.
 - [CFG-8] *(New, rev 5.5, from review)* `config.ak`'s `Retire` MUST verify that the transaction
   also burns exactly one Treasury state NFT, under the policy at Config #10. [TSY-19] already
   requires the Config NFT burn, so the two retirements are mutually required.
+- [CFG-10] *(New, rev 5.6)* `previous_spos_registry_policy_id` (#13) MUST be zero-length except
+  while a registry migration is in progress. The `Update` that moves #9 MUST set #13 to the value
+  #9 held; a later `Update` MAY clear it, which ends the migration window — after that a pool not
+  yet migrated can only re-register with a fresh cold signature. Its on-chain reader is
+  `spos-registry.ak`'s `Migrate` branch ([MIG-1]).
 
 > **Why the two burns must be one transaction ([CFG-8]).** The Config NFT can be burned once.
 > After that [TSY-19] can never be satisfied again — its check is on a supply that is now zero —
@@ -1200,12 +1212,31 @@ the state they change).
   together with its own one-shot outpoint.
 - **[PRE-4]** *(New, rev 5.5)* `treasury.ak` MUST read `spos_registry_policy_id` from the Config
   datum, not from a parameter.
+- **[PRE-5]** *(New, rev 5.6)* `spo-bans.ak` MUST do the same: it takes the Config NFT policy id
+  as a parameter and reads `spos_registry_policy_id` (#9) at run time, locating the Config
+  reference input by the `ApplyBan` redeemer's `config_ref_input_index`. It MUST NOT take
+  `registration_script_hash` as a parameter. This removes the DIRECT dependency only: the fault
+  verifiers still take the registry policy as a compile parameter and are themselves a parameter
+  of `spo-bans.ak`, so the ban policy remains a function of the registry policy until they read it
+  from the Config as well.
 
 > **Why the registry policy is read and not baked in ([PRE-4]).** A `registry_policy_id`
 > parameter makes the treasury policy a function of the registry policy. `spo_registry` can then
 > never take `treasury_policy_id` as a parameter, because the dependency is a cycle — and that is
 > precisely why the registry could not pin the UTxO it updates ([REG-6]). Reading the value from
 > Config turns the cycle into a chain: Config identity → treasury → registry.
+>
+> **And why the ban list followed ([PRE-5]).** `spo-bans.ak` took the registry's script hash as a
+> parameter, so the ban policy was a DIRECT function of the registry policy. Reading #9 the way
+> `treasury.ak` does costs one Config reference input per ban and removes that edge.
+>
+> It does NOT yet end the cascade, and the distinction matters for planning a rollout. `spo_bans`
+> also takes `fault_proof_policy_ids` as a compile parameter, and all three fault verifiers take
+> the registry policy as theirs — so the dependency survives transitively: registry hash → fault
+> verifier hashes → `spo_bans` hash. A later registry revision will still move the ban policy,
+> still strand live bans under a policy nothing reads, and still need a Config #8 move and a fresh
+> `ban-root`, until the fault verifiers read the registry from the Config too. [PRE-5] removes one
+> of two edges and is the prerequisite for removing the other; it is not the whole of it.
 
 **Checks on `treasury.ak`** *(all new in rev 5.5)*.
 
@@ -2268,6 +2299,7 @@ This section is the normative reference for every on-chain transaction the proto
 | Update operational parameters | Cardano | this catalog |
 | `register_spo` | Cardano | §SPO Registration, section 5 |
 | `deregister_spo` | Cardano | §SPO Registration, section 7.1 |
+| `migrate_spo` | Cardano | §SPO Registration, section 8 |
 | `apply_first_ban` / `apply_repeated_ban` | Cardano | §SPO Registration, section 7.2 |
 | `publish_fault_proof` | Cardano | §Misbehavior Handling, section 9.1 |
 | Bootstrap mints (Config, params, cpi/cpo, K1 Treasury state, `reg-root`, `ban-root`) | Cardano | §Bridge instance creation flow; §SPO Bootstrap Flow |
@@ -3434,18 +3466,18 @@ its `pool_id` to the Bifrost identity key it will use for DKG and signing.
 
 | Role | Content |
 |------|---------|
-| **Inputs** | the registration-list anchor node at `spos-registry.ak`; the Treasury state UTxO (its `bifrost_identity_root` is updated); the SPO's UTxO (fees, deposit) |
+| **Inputs** | the registration-list anchor node at `spos-registry.ak`; the Treasury state UTxO (its `bifrost_identity_root` is updated); the SPO's UTxO (fees, deposit); the **nonce UTxO** the signed message names, under the SPO's payment key — it may be the fee UTxO ([REG-10]) |
 | **Reference inputs** | the Config UTxO — `treasury.ak`'s `RegistryUpdate` branch reads `spos_registry_policy_id` from it ([TSY-12], [TSY-13]) and the redeemer names its index. NEW in rev 5.5: before it, `RegistryUpdate` read no Config at all |
 | **Mint** | +1 Bifrost Membership Token under `spos-registry.ak`, asset name = `pool_id` |
 | **Outputs** | the updated anchor node; the new registration node carrying `RegistrationNodeData { bifrost_id_pk, bifrost_url }`; the Treasury state UTxO with the new identity root |
-| **Witness data (redeemer)** | `Register { cold_vkey, cold_sig, bifrost_sig, … , bifrost_identity_absence_proof }` |
+| **Witness data (redeemer)** | `Register { cold_vkey, cold_sig, bifrost_sig, nonce_input_index, … , bifrost_identity_absence_proof }` |
 | **Validity interval** | unconstrained |
 | **Required signers** | the SPO's payment key (fees); the cold and Bifrost keys authorize through signatures in the redeemer, not as required signers |
 
 **Checks enforced on-chain** (`spos-registry.ak` mint, `Register`)
 
 * **[REG-1]** `spos-registry.ak` MUST verify `pool_id == blake2b_224(cold_vkey)`, and that the minted token's asset name and the new node's key are both that `pool_id`.
-* **[REG-2]** `spos-registry.ak` MUST verify an Ed25519 signature by `cold_vkey` over the registration message — this is what proves the pool actually asked to join.
+* **[REG-2]** `spos-registry.ak` MUST verify an Ed25519 signature by `cold_vkey` over the registration message (§SPO Registration, section 4) — this is what proves the pool actually asked to join. *(Revised, rev 5.6: the message ends with the `nonce_outpoint` of [REG-10].)*
 * **[REG-3]** `spos-registry.ak` MUST verify a Schnorr signature by the declared `bifrost_id_pk` over `sha2_256(message)` — possession of the Bifrost key, so an operator cannot register a key it does not hold.
 * **[REG-4]** `spos-registry.ak` MUST verify the linked-list insertion is well formed: the anchor's data validates, the node key ordering and prefix rules hold, and the anchor's lovelace is unchanged.
 * **[REG-5]** `spos-registry.ak` MUST verify, against the Treasury state UTxO's `bifrost_identity_root`, an MPF **absence** proof for `bifrost_id_pk` before insertion, and that the continuing root contains the new `bifrost_id_pk → pool_id` binding. This is what makes Bifrost identities globally unique.
@@ -3453,6 +3485,8 @@ its `pool_id` to the Bifrost identity key it will use for DKG and signing.
 * **[REG-7]** *(New, rev 5.5)* `spos-registry.ak` MUST verify that the treasury output holds exactly one such token.
 * **[REG-8]** *(New, rev 5.5)* `spos-registry.ak` MUST verify that the treasury output's address equals the treasury input's address.
 * **[REG-9]** *(New, rev 5.5)* The Register transaction MUST reference the Config UTxO, because `treasury.ak`'s `RegistryUpdate` branch reads `spos_registry_policy_id` from it.
+* **[REG-10]** *(New, rev 5.6)* `spos-registry.ak` MUST rebuild the message's `nonce_outpoint` from the outpoint of the input at the redeemer's `nonce_input_index` (36 B: `txid ‖ index LE`, the Update-Y encoding), so the transaction that carries the signatures spends the UTxO they name. An outpoint is spendable once, so the signatures authorize exactly one transaction; a failed attempt spends nothing, so the same signatures are retried without a new trip to the cold key.
+* **[REG-11]** *(New, rev 5.6)* `spos-registry.ak` MUST verify that the transaction spends EXACTLY ONE UTxO carrying a token of its own policy (the anchor) and produces EXACTLY TWO (the continued anchor and the new node). Reference inputs are not counted.
 
 > **Why the pin exists ([REG-6] to [REG-8]).** The treasury input and output are located by
 > redeemer index. Until rev 5.5 nothing authenticated them, so a registrant could add a wallet
@@ -3464,6 +3498,87 @@ its `pool_id` to the Bifrost identity key it will use for DKG and signing.
 > The pin is a compile parameter, which it could not have been before: `treasury_info` took
 > `registry_policy_id`, so the treasury policy was a function of this one and a parameter here
 > would have been self-referential. [PRE-4] broke that cycle.
+
+> **Why a branch bounds what it touches ([REG-11], [DRG-7], [MIG-7]).** The registry's SPEND
+> handler authorizes spending any list element on one condition: that the transaction mints
+> something under the registry policy. That was survivable while every mint required a cold
+> signature, because the only party who could open the door was the pool whose door it was.
+> `Migrate` requires no signature at all and anyone may submit it, so without a bound a genuine
+> migration becomes a licence to spend every other pool's node in the same transaction — the
+> membership NFTs and their min-ADA paid to the submitter, the list left dangling with each
+> victim's predecessor pointing at a node that no longer exists. Every off-chain reader treats
+> that as a broken list, and no transaction can repair it: the nodes are gone.
+>
+> The bound is a count on both sides, because leaving an element OUT of the outputs destroys it as
+> surely as moving it. Each branch states its own: `Bootstrap` (0, 1), `Register` (1, 2),
+> `Deregister` (2, 1), `Migrate` (1, 2). It is stated for the signed branches too, although the
+> signature already narrows who can try: a pool has no business spending its neighbours' nodes
+> during its own registration, and a rule that holds for one branch and not the next is a rule
+> nobody can check.
+
+> **Why the nonce exists ([REG-10], [DRG-6]).** Both signatures travel in the redeemer, so they are
+> public from the first transaction that uses them, and until rev 5.6 the messages committed to
+> nothing that changes between one registration of a pool and the next. A published exit
+> signature therefore stayed valid against every later registration of the same cold key: anyone
+> could post it, from their own wallet, and the freed node lovelace landed in their change. A
+> published registration signature could put a pool that had left back into the registry, with its
+> old identity key and URL, where the roster faults it and the ban list, keyed by `pool_id`,
+> records that against the real pool. Neither replay could change a field, since the signatures
+> cover them all; both could repeat the transaction verbatim.
+>
+> The nonce is an outpoint the registrant chooses among its own UTxOs. It is **not** the Treasury
+> state outpoint, although Update-Y binds to exactly that: the roster signs Update-Y online,
+> seconds before submitting, and re-signs on a lost race, while the cold key signs on an
+> air-gapped machine and the signature has to survive a human round trip. The Treasury state is
+> spent by every registration, exit and key rotation of every pool, so a cold signature bound to
+> it would die at other operators' choice — and anyone could make that happen for the price of
+> fees, since nothing on-chain checks that a registering pool exists. The anchor outpoint is
+> rewritten whenever a neighbour joins or leaves, with the same effect. A UTxO under the
+> registrant's own key is consumed only by the registrant: by the transaction that lands, or by
+> spending it on something else meanwhile, which the SPO program prevents by reserving it.
+>
+> Because the transaction must spend that UTxO, it must carry the registrant's payment-key
+> witness. That is what makes the nonce sufficient on its own: a signature file found by a
+> stranger cannot be posted from any other wallet, so no deadline and no separate submitter
+> binding are needed, and the exit message needs no `bifrost_id_pk` beyond what a confirmation
+> screen wants to display.
+>
+> **Deploying the change.** The message is checked by `spos-registry.ak`, so the revision is a new
+> registry script hash and therefore a new membership-token policy, with its own `Bootstrap`
+> outref and root node. Nothing else is rebuilt: the Config NFT stays where it is, and one
+> governance `Update` rewrites field #9, sets field #13 to the value #9 held ([CFG-10]) and moves
+> field #8 (§Config UTxO governance — the wiring fields may move under a running bridge, on the
+> snapshot-slot rule). `treasury.ak` reads #9 at run time ([PRE-4]) and is untouched, as are the
+> Treasury state, the bridged token, the peg scripts and the TM chain. `spo-bans.ak` is the one
+> dependent: it took `registration_script_hash` as a compile parameter, so it is redeployed
+> alongside the registry and Config #8 moves with #9. The redeployed script reads #9 at run time
+> ([PRE-5]), which removes the direct edge — but NOT the one through the fault verifiers, which
+> still take the registry policy as a compile parameter and are themselves a compile parameter of
+> `spo_bans`. A later registry revision will move the ban policy again for that reason. Live bans
+> do not survive the move; the roster re-applies the ones that must. The registrations themselves
+> are not redone.
+>
+> One consequence of the Config append is worth stating, because it looks alarming in a blueprint
+> diff and is not: `config.ak`'s own compiled code changes, so its hash changes. Its genesis mint
+> FULL-CASTS the datum ([CFG-7], so the spend handler's assumptions hold from the start), and a
+> cast pins the field count. Nothing on a running bridge notices. That branch executes exactly
+> once, at genesis, and the deployed Config UTxO stays under the policy it was minted with; the
+> `Update` that writes #13 runs the SPEND handler, which takes the datum raw for precisely this
+> reason. What the new hash means is that a bridge deployed from this release gets a different
+> Config policy id than one deployed from the last, which is what a new bridge instance is.
+> `treasury.ak` MUST NOT move, and does not: its hash is the Treasury state NFT's policy id, fixed
+> by a one-shot outpoint consumed at genesis, so a change there is not a redeploy but a different
+> bridge whose predecessor's state UTxO could never be spent again. That is why `rotation_sig_msg`
+> spells the outpoint encoding out rather than calling the shared helper the registry nonce uses,
+> with a test asserting the two are equal. The `Migrate` branch (section 8,
+> [MIG-1] to [MIG-6]) carries each one across by a membership proof against the identity trie the
+> Treasury state still commits to, with no cold-key action: the SPO program migrates its own pool
+> at its first roster read after the Update, and the federation migrates every pool not yet moved,
+> so the next boundary snapshot of the new list equals the old roster. The old list is left in
+> place, inert — once #9 has moved its `Deregister` can no longer satisfy [TSY-13], and its nodes'
+> lovelace is not recoverable without the old cold signature. A pool that is never migrated is out
+> of the roster until anyone migrates it, and then leaves through the new `Deregister`. Nothing is
+> stranded.
 
 **Checks delegated off-chain**
 
@@ -3481,24 +3596,64 @@ its `pool_id` to the Bifrost identity key it will use for DKG and signing.
 
 | Role | Content |
 |------|---------|
-| **Inputs** | the SPO's registration node; the registration-list anchor; the Treasury state UTxO |
+| **Inputs** | the SPO's registration node; the registration-list anchor; the Treasury state UTxO; the **nonce UTxO** the signed message names, under the SPO's payment key ([DRG-6]) |
 | **Reference inputs** | the Config UTxO — `treasury.ak`'s `RegistryUpdate` branch reads `spos_registry_policy_id` from it ([TSY-12], [TSY-13]) and the redeemer names its index. NEW in rev 5.5: before it, `RegistryUpdate` read no Config at all |
 | **Mint** | −1 Bifrost Membership Token (`pool_id`) |
 | **Outputs** | the updated anchor node with the entry unlinked; the Treasury state UTxO with `bifrost_id_pk` removed from the identity root |
-| **Witness data (redeemer)** | `Deregister { cold_vkey, cold_sig, … , bifrost_identity_removal_proof }` |
+| **Witness data (redeemer)** | `Deregister { cold_vkey, cold_sig, nonce_input_index, … , bifrost_identity_removal_proof }` |
 | **Validity interval** | unconstrained |
 
 **Checks enforced on-chain** (`spos-registry.ak` mint, `Deregister`)
 
 * **[DRG-1]** `spos-registry.ak` MUST verify `pool_id == blake2b_224(cold_vkey)` and that exactly −1 of that asset name is burnt.
-* **[DRG-2]** `spos-registry.ak` MUST verify an Ed25519 signature by `cold_vkey` over the deregistration message.
+* **[DRG-2]** `spos-registry.ak` MUST verify an Ed25519 signature by `cold_vkey` over the deregistration message (§SPO Registration, section 7.1). *(Revised, rev 5.6: the message ends with the `nonce_outpoint` of [DRG-6].)*
 * **[DRG-3]** `spos-registry.ak` MUST verify the linked-list removal is well formed and the anchor's lovelace is unchanged.
 * **[DRG-4]** `spos-registry.ak` MUST verify an MPF **removal** proof against the Treasury state UTxO's `bifrost_identity_root`, so the freed `bifrost_id_pk` can be registered again later.
 * **[DRG-5]** *(New, rev 5.5)* [REG-6], [REG-7] and [REG-8] apply unchanged to `Deregister`.
+* **[DRG-7]** *(New, rev 5.6)* [REG-11] applies to `Deregister` with its own counts: EXACTLY TWO UTxOs carrying a token of the registry policy are spent (the anchor and the node being removed) and EXACTLY ONE is produced (the continued anchor).
+* **[DRG-6]** *(New, rev 5.6)* [REG-10] applies unchanged to `Deregister`: the revocation message's `nonce_outpoint` is rebuilt from the input at the redeemer's `nonce_input_index`, which the transaction spends. Without it a revocation signature, public from its first use, stays valid against every later registration of the same pool — see *Why the nonce exists* above.
 
 **Checks delegated off-chain**
 
 * Deregistering mid-epoch does not retract a roster already frozen for that epoch; the operator remains liable for its DKG and signing duties until the next boundary.
+
+### Migrate SPO registration (Cardano)
+
+**Purpose**: carry an existing registration from a retired registry policy to the current one, so
+that a registry revision needs no cold-key action from any operator.
+
+**Who**: anyone — the SPO's own node by default, the federation for every pool not yet moved. The
+transaction reproduces state the pool already consented to and changes nothing else.
+**Trigger**: Config #9 has moved, and Config #13 names the policy the pool's membership token sits
+under.
+
+**Structure**
+
+| Role | Content |
+|------|---------|
+| **Inputs** | the registration-list anchor node at the CURRENT `spos-registry.ak`; the submitter's UTxO (fees, the new node's min ADA) |
+| **Reference inputs** | the pool's OLD registration node, under the policy Config #13 names; the Treasury state UTxO (its `bifrost_identity_root` is read, not changed); the Config UTxO |
+| **Mint** | +1 Bifrost Membership Token under the CURRENT `spos-registry.ak`, asset name = `pool_id` |
+| **Outputs** | the updated anchor node; the new registration node carrying the old node's `RegistrationNodeData` verbatim |
+| **Witness data (redeemer)** | `Migrate { old_node_ref_input_index, config_ref_input_index, treasury_ref_input_index, registration_anchor_input_index, registration_anchor_output_index, bifrost_identity_membership_proof }` |
+| **Validity interval** | unconstrained |
+| **Required signers** | the submitter's payment key (fees). No cold signature, no Bifrost signature |
+
+**Checks enforced on-chain** (`spos-registry.ak` mint, `Migrate`)
+
+* **[MIG-1]** *(New, rev 5.6)* `spos-registry.ak` MUST read Config #13, verify it is non-empty, and verify that the referenced old node sits at that policy's script address and holds exactly one token named `pool_id` under it. The previous registry is named by Config, not by a compile parameter, so the SPO program can find it the same way.
+* **[MIG-2]** *(New, rev 5.6)* `spos-registry.ak` MUST verify that the new node's `RegistrationNodeData` equals the old node's byte for byte, and that the minted token's asset name and the new node's key are both `pool_id`.
+* **[MIG-3]** *(New, rev 5.6)* `spos-registry.ak` MUST verify, against the Treasury state reference input's `bifrost_identity_root`, an MPF **membership** proof of `bifrost_id_pk → pool_id`. The root is not changed: the binding is already the treasury's truth.
+* **[MIG-4]** *(New, rev 5.6)* [REG-4] applies unchanged: the insertion into the current list is well formed, which also rejects a second migration of the same pool.
+* **[MIG-5]** *(New, rev 5.6)* [REG-6] applies to the Treasury state REFERENCE input, and [REG-9] to the Config reference.
+* **[MIG-7]** *(New, rev 5.6)* [REG-11] applies: EXACTLY ONE UTxO carrying a token of the registry policy is spent (the anchor) and EXACTLY TWO are produced (the continued anchor and the new node). This is the branch the rule exists for — see *Why a branch bounds what it touches*. It is the only registry mint that carries no signature, so it is the only one a stranger can build, and without the bound a valid migration would let anyone carry off every other pool's registration node in the same transaction.
+* **[MIG-6]** *(New, rev 5.6)* `spos-registry.ak` MUST verify that no input carries the Treasury state NFT. This branch validates no treasury transition, and `treasury.ak`'s `RegistryUpdate` accepts any registry mint as its marker ([TSY-13]) without checking the new root's value — so a migration that also spent the Treasury state could rewrite `bifrost_identity_root` at will, the hole [TSY-23] closed for `Bootstrap`.
+
+**Checks delegated off-chain**
+
+* The SPO program migrates its own registration at its first roster read after Config #13 is set; the federation migrates every pool not yet moved immediately after the Update, so the next boundary snapshot of the new list equals the old roster. A pool migrated by someone else finds itself registered.
+* The old node's lovelace stays in the old list. Recovering it would need the old cold signature, and once #9 has moved the old `Deregister` cannot satisfy [TSY-13] anyway.
+* Ban entries are keyed by `pool_id` under a ban policy that moves with the registry; the roster re-applies the bans that must survive.
 
 ### Publish fault proof (Cardano)
 
@@ -3930,7 +4085,7 @@ When the registration or ban list is otherwise empty, its bootstrap-created root
 
 Before participating in Bifrost, each SPO must complete a **one-time registration** that binds their Cardano pool identity to a long-term Bifrost identity key. This registration uses the SPO's cold key exactly once, after which all protocol operations use the Bifrost identity key. This design keeps cold keys offline except for initial registration and revocation.
 
-Concretely, an SPO registers by submitting a Cardano `register_spo` transaction to `spos-registry.ak`. The transaction consumes the current registration-list anchor UTxO and the Treasury state UTxO, mints exactly one Bifrost Membership Token named by `pool_id`, and creates a registration-node UTxO whose value is that membership token plus min ADA and whose datum contains `bifrost_id_pk`, `bifrost_url`, and the ordered linked-list pointers. The redeemer carries `cold_vkey`, `cold_sig`, `bifrost_sig`, `registration_anchor_output_index`, and the non-membership witness proving that `bifrost_id_pk` is not already present in the Treasury state's `bifrost_identity_root`. The SPO program CLI is the intended operator interface for building this transaction; the protocol-level transaction shape is specified in Section 5 below.
+Concretely, an SPO registers by submitting a Cardano `register_spo` transaction to `spos-registry.ak`. The transaction consumes the current registration-list anchor UTxO and the Treasury state UTxO, mints exactly one Bifrost Membership Token named by `pool_id`, and creates a registration-node UTxO whose value is that membership token plus min ADA and whose datum contains `bifrost_id_pk`, `bifrost_url`, and the ordered linked-list pointers. The redeemer carries `cold_vkey`, `cold_sig`, `bifrost_sig`, `nonce_input_index`, `registration_anchor_output_index`, and the non-membership witness proving that `bifrost_id_pk` is not already present in the Treasury state's `bifrost_identity_root`. The SPO program CLI is the intended operator interface for building this transaction; the protocol-level transaction shape is specified in Section 5 below.
 
 <!-- G12, ratified 2026-07-15: requests continuous, effects snapshot-based. -->
 **Snapshot semantics (normative).** Registration and revocation transactions may land **at any
@@ -4042,6 +4197,8 @@ where `BanNodeData` is `{ ban_counter :: Int, ban_until_time :: Int (POSIX ms), 
 - `ban_counter` is monotonically increasing for each `pool_id` and determines the exponential timeout duration.
 - `evidence_hashes` records the already-punished fault evidence hashes for the pool. `spo-bans.ak` rejects repeated punishment for the same evidence hash.
 
+<!-- rev 5.6, 2026-09-22: both messages gain a one-use nonce ([REG-10], [DRG-6]). The contract side
+     is a spos-registry.ak revision and is tracked as a change request. -->
 #### 4. Registration Message and Signatures
 
 Registration must prove both:
@@ -4051,7 +4208,7 @@ Registration must prove both:
 Both the cold key and the Bifrost identity key sign the same message:
 
 ```
-"bifrost-spo" || pool_id || bifrost_id_pk || bifrost_url
+"bifrost-spo" || pool_id || bifrost_id_pk || bifrost_url || nonce_outpoint
 ```
 
 Where:
@@ -4059,19 +4216,24 @@ Where:
 - `pool_id` is the 28-byte stake pool identifier derived from `cold_vkey`.
 - `bifrost_id_pk` is the 32-byte x-only (BIP340) Secp256k1 public key.
 - `bifrost_url` is the variable-length URL encoded as UTF-8 bytes.
+- `nonce_outpoint` *(New, rev 5.6)* is the 36-byte outpoint (`txid` 32 B ‖ `index` 4 B little-endian, the Update-Y encoding) of a UTxO the registration transaction spends. The registrant chooses it among the UTxOs under its own payment key; the fee UTxO will do. Its fixed length keeps the message unambiguous after the variable-length URL.
+
+The nonce is what makes the signatures single-use. The transaction must spend the outpoint they name ([REG-10]); an outpoint is spendable once, so once the registration lands the signatures fit no other transaction, and since the UTxO is under the registrant's key nobody else can build the one transaction they do fit. A failed attempt — a lost race for the Treasury state UTxO, an expired validity window — spends nothing, so the same signatures are retried without a second trip to the cold key. The nonce MUST NOT be a UTxO that other parties' transactions consume (the anchor, the Treasury state): a signature bound to one of those dies at their choice.
 
 The registration transaction therefore carries:
 - `cold_sig`: Ed25519 signature by `cold_skey` over the message above.
 - `bifrost_sig`: BIP340 Schnorr signature by `bifrost_id_sk` over the same message.
+- `nonce_input_index`: the position, among the transaction's inputs, of the UTxO whose outpoint is `nonce_outpoint`.
 
 #### 5. Registration Transaction
 
 A **registration tx** performs the following:
 
-1. **Redeemer**: contains `cold_vkey`, `cold_sig`, `bifrost_sig`, `registration_anchor_output_index`, and the MPF non-membership witness needed to prove that `bifrost_id_pk` is currently absent from the Treasury state identity map.
+1. **Redeemer**: contains `cold_vkey`, `cold_sig`, `bifrost_sig`, `nonce_input_index`, `registration_anchor_output_index`, and the MPF non-membership witness needed to prove that `bifrost_id_pk` is currently absent from the Treasury state identity map.
 2. **Inputs**:
    - Anchor element UTxO from the registration linked-list (either the root UTxO or an existing registration node, depending on where the new node is inserted).
    - Treasury state UTxO from `treasury.ak`, carrying the current `bifrost_identity_root`.
+   - The nonce UTxO the signed message names (`nonce_outpoint`), under the registrant's payment key — it may be the UTxO that pays the fee.
 3. **Mint**: exactly one Bifrost Membership Token with `TokenName = pool_id` under `spos-registry.ak`.
 4. **Outputs**:
    - New registration linked-list node UTxO at registry script address with:
@@ -4088,6 +4250,7 @@ Transaction: register_spo
 Inputs:
 - registration anchor input at `spos-registry.ak`
 - treasury state input at `treasury.ak`
+- nonce input: the registrant's own UTxO named by the signed message
 
 Reference Inputs:
 - none
@@ -4120,6 +4283,7 @@ Outputs:
 Required witnesses:
 - `cold_sig`
 - `bifrost_sig`
+- the registrant's payment-key witness (spends the nonce input)
 
 Required validity interval:
 - unconstrained (snapshot semantics — see §1)
@@ -4130,14 +4294,15 @@ Required validity interval:
 The minting policy verifies:
 
 1. `pool_id == blake2b_224(cold_vkey)` — proves the cold key owns this pool.
-2. `verifyEd25519Signature(cold_vkey, "bifrost-spo" || pool_id || bifrost_id_pk || bifrost_url, cold_sig)` — proves the cold key authorized this Bifrost identity binding.
-3. `verifySchnorrSecp256k1Signature(bifrost_id_pk, SHA256("bifrost-spo" || pool_id || bifrost_id_pk || bifrost_url), bifrost_sig)` — proves the registrant actually controls `bifrost_id_sk`.
-4. Exactly one token minted with `TokenName = pool_id`.
-5. Registration output datum matches the signed message content.
-6. **Registration linked-list ordering**: verifies the new registration node is correctly positioned between its neighbors, preventing duplicate `pool_id` registration.
-7. **Registration linked-list state transition**: verifies the registration anchor node's `next` pointer is correctly updated to reference the new registration node.
-8. **Bifrost identity non-membership**: verifies, against the Treasury state's `bifrost_identity_root`, that no active entry already exists for `bifrost_id_pk`.
-9. **Bifrost identity root update**: verifies the updated Treasury state UTxO inserts the mapping `bifrost_id_pk -> pool_id` into the identity trie.
+2. `nonce_outpoint = serialize(inputs[nonce_input_index].output_reference)` — the transaction spends the UTxO the signatures name, which is what makes them single-use ([REG-10]).
+3. `verifyEd25519Signature(cold_vkey, "bifrost-spo" || pool_id || bifrost_id_pk || bifrost_url || nonce_outpoint, cold_sig)` — proves the cold key authorized this Bifrost identity binding.
+4. `verifySchnorrSecp256k1Signature(bifrost_id_pk, SHA256("bifrost-spo" || pool_id || bifrost_id_pk || bifrost_url || nonce_outpoint), bifrost_sig)` — proves the registrant actually controls `bifrost_id_sk`.
+5. Exactly one token minted with `TokenName = pool_id`.
+6. Registration output datum matches the signed message content.
+7. **Registration linked-list ordering**: verifies the new registration node is correctly positioned between its neighbors, preventing duplicate `pool_id` registration.
+8. **Registration linked-list state transition**: verifies the registration anchor node's `next` pointer is correctly updated to reference the new registration node.
+9. **Bifrost identity non-membership**: verifies, against the Treasury state's `bifrost_identity_root`, that no active entry already exists for `bifrost_id_pk`.
+10. **Bifrost identity root update**: verifies the updated Treasury state UTxO inserts the mapping `bifrost_id_pk -> pool_id` into the identity trie.
 
 #### 7. Revocation
 
@@ -4148,17 +4313,20 @@ An SPO's membership can end through voluntary revocation or fault-based banning.
 The SPO's cold key signs an explicit revocation message:
 
 ```
-"bifrost-revoke" || pool_id
+"bifrost-revoke" || pool_id || nonce_outpoint
 ```
 
 Where:
 - `"bifrost-revoke"` is a 14-byte ASCII domain separator.
 - `pool_id` is the 28-byte pool identifier.
+- `nonce_outpoint` *(New, rev 5.6)* is the 36-byte outpoint of a UTxO the deregistration transaction spends, chosen by the SPO among the UTxOs under its own payment key — exactly as for registration (section 4).
+
+The nonce is what keeps a revocation signature from outliving its one use. The signature is public from the moment the exit lands, and `pool_id` is the same for every registration of the same cold key; without the nonce it would authorize the exit of every later registration of the pool, postable by anyone from any wallet, with the freed node lovelace landing in the poster's change. With it, the signature fits one transaction, and only the wallet holding the nonce UTxO can build that transaction ([DRG-6]).
 
 **Transaction**:
-1. **Redeemer**: contains `cold_vkey`, `cold_sig`, `removed_node_input_index`, and `anchor_node_input_index`.
+1. **Redeemer**: contains `cold_vkey`, `cold_sig`, `nonce_input_index`, `removed_node_input_index`, and `anchor_node_input_index`.
 2. **Validity interval**: unconstrained (snapshot semantics — see §1).
-3. Spends the registration node and the Treasury state UTxO.
+3. Spends the registration node, the Treasury state UTxO, and the nonce UTxO.
 4. Burns the Bifrost Membership Token under `spos-registry.ak` and returns the registration node's ADA to an SPO-controlled output.
 5. Removes the registration node from the registration linked-list by updating the anchor node's `next` pointer to skip the removed node.
 6. Updates the Treasury state UTxO by removing the matching `bifrost_id_pk -> pool_id` mapping from the identity trie.
@@ -4172,6 +4340,7 @@ Inputs:
 - registration node input at `spos-registry.ak`
 - registration anchor input at `spos-registry.ak`
 - treasury state input at `treasury.ak`
+- nonce input: the SPO's own UTxO named by the signed message
 
 Reference Inputs:
 - none
@@ -4196,6 +4365,7 @@ Outputs:
 
 Required witnesses:
 - `cold_sig`
+- the SPO's payment-key witness (spends the nonce input)
 
 Required validity interval:
 - unconstrained (snapshot semantics — see §1)
@@ -4203,12 +4373,13 @@ Required validity interval:
 
 **On-chain verification**:
 1. `pool_id == blake2b_224(cold_vkey)` — proves the cold key owns this pool.
-2. `verifyEd25519Signature(cold_vkey, "bifrost-revoke" || pool_id, cold_sig)` — proves cold key authorized revocation.
-3. Exactly one token burned with `TokenName = pool_id`.
-4. **Registration linked-list removal**: verifies the anchor node's `next` pointer is correctly updated to skip the removed registration node, maintaining list ordering.
-5. **Bifrost identity removal**: verifies, against the Treasury state's `bifrost_identity_root`, that the matching `bifrost_id_pk -> pool_id` mapping existed and is removed in the updated Treasury state UTxO.
+2. `nonce_outpoint = serialize(inputs[nonce_input_index].output_reference)` — the transaction spends the UTxO the signature names ([DRG-6]).
+3. `verifyEd25519Signature(cold_vkey, "bifrost-revoke" || pool_id || nonce_outpoint, cold_sig)` — proves the cold key authorized this revocation, and no other.
+4. Exactly one token burned with `TokenName = pool_id`.
+5. **Registration linked-list removal**: verifies the anchor node's `next` pointer is correctly updated to skip the removed registration node, maintaining list ordering.
+6. **Bifrost identity removal**: verifies, against the Treasury state's `bifrost_identity_root`, that the matching `bifrost_id_pk -> pool_id` mapping existed and is removed in the updated Treasury state UTxO.
 
-After exit, the SPO may re-register with a new Bifrost identity.
+After exit, the SPO may re-register, with a new Bifrost identity or with the same one: every registration signs a fresh nonce, so neither the old registration signatures nor the old revocation signature apply to it.
 
 ##### 7.2 Banning
 
@@ -4261,11 +4432,14 @@ Inputs:
 
 Reference Inputs:
 - accused registration node at `spos-registry.ak`
+- the Config UTxO — `spo-bans.ak` reads `spos_registry_policy_id` (#9) from it ([PRE-5]) and the
+  redeemer names its index. NEW in rev 5.6: before it, the registry hash was a compile parameter
 
 Withdrawals:
 - coordinating ban withdrawal carrying:
   - `fault_input_index`
   - `registration_ref_input_index`
+  - `config_ref_input_index`
   - `accused_pool_id`
   - `evidence_hash`
   - `ban_anchor_input_index`
@@ -4309,11 +4483,14 @@ Inputs:
 
 Reference Inputs:
 - accused registration node at `spos-registry.ak`
+- the Config UTxO — `spo-bans.ak` reads `spos_registry_policy_id` (#9) from it ([PRE-5]) and the
+  redeemer names its index. NEW in rev 5.6: before it, the registry hash was a compile parameter
 
 Withdrawals:
 - coordinating ban withdrawal carrying:
   - `fault_input_index`
   - `registration_ref_input_index`
+  - `config_ref_input_index`
   - `accused_pool_id`
   - `evidence_hash`
   - `ban_anchor_input_index`
@@ -4348,15 +4525,69 @@ Required validity interval:
 
 **Ban expiry**: Once a temporary ban period elapses, the SPO automatically becomes eligible for roster participation again without needing to re-register. A permanent ban never expires.
 
-#### 8. Security Properties
+#### 8. Registry Migration
+
+A registry revision — any change to what `spos-registry.ak` verifies, such as the rev 5.6 nonce — is a new script hash and therefore a new membership-token policy. The registrations under the old policy are still the roster's consent, and the identity trie in the Treasury state still commits to every one of them. Migration carries them across without touching a cold key.
+
+**Marker**: the governance Update that moves Config #9 to the new policy sets Config #13 `previous_spos_registry_policy_id` to the value #9 held ([CFG-10]). While #13 is set, a migration is in progress.
+
+**Transaction** (`migrate_spo` — catalog entry *Migrate SPO registration*, [MIG-1] to [MIG-6]): references the old node, the Treasury state and the Config; proves the old node's `bifrost_id_pk → pool_id` is in the identity trie; mints the membership token under the new policy; creates the new node with the old datum verbatim. No signature by the cold key or the Bifrost key: the transaction reproduces state the pool already consented to, so anyone may submit it, paying the new node's min ADA. The old node stays in the old list, inert — its lovelace is not recoverable without the old cold signature, and the old `Deregister` can no longer satisfy [TSY-13] once #9 has moved.
+
+**Who runs it**: the SPO program, for its own pool, at its first roster read after #13 is set — an operator installs the revised program and does nothing else — and the federation for every pool not yet moved, immediately after the Update, so the next boundary snapshot of the new list equals the old roster. A pool migrated by someone else finds itself registered.
+
+**After migration**: exit is the new `Deregister` with the nonce message (7.1), and it deletes the trie entry as usual. A pool never migrated is not in the roster, can be migrated by anyone at any time, and then leaves the same way. No registration is stranded.
+
+**Prototype transaction skeleton**:
+
+```text
+Transaction: migrate_spo
+
+Inputs:
+- registration anchor input at the CURRENT `spos-registry.ak`
+- submitter's wallet input (fees, the new node's min ADA)
+
+Reference Inputs:
+- the pool's registration node at the PREVIOUS `spos-registry.ak` (Config #13)
+- treasury state at `treasury.ak` (root read, not spent)
+- Config UTxO
+
+Withdrawals:
+- none
+
+Mint:
+- under the CURRENT `spos-registry.ak`:
+  - `pool_id` => +1
+
+Burn:
+- none
+
+Outputs:
+- continued registration anchor output at `spos-registry.ak`
+- new registration node output at `spos-registry.ak`
+  value:
+  - membership token `pool_id`
+  - min ADA
+  datum:
+  - `bifrost_id_pk`, `bifrost_url` — the old node's, verbatim
+  - linked-list pointers
+
+Required witnesses:
+- normal tx witnesses only
+
+Required validity interval:
+- unconstrained
+```
+
+#### 9. Security Properties
 
 - **Cold key minimization**: The cold key is used only twice—once for registration, once for revocation (if needed). All other protocol operations use `bifrost_id_sk`.
 - **Bifrost key proof-of-possession**: Registration proves that the registrant actually controls `bifrost_id_sk`, not just that the pool authorized the public key.
-- **Air-gapped signing**: Both registration and revocation messages can be constructed offline and signed on an air-gapped machine.
+- **Air-gapped signing**: Both registration and revocation messages are constructed on the online machine, which chooses the nonce UTxO, and signed on an air-gapped machine. The signatures stay valid until that UTxO is spent, so a failed submission is retried without another trip to the cold key, and a signed file that leaks is useless to anyone without the wallet key.
 - **Sybil resistance**: One membership token per `pool_id` enforced by minting policy.
 - **Unique active Bifrost identities**: the Treasury state's `bifrost_identity_root` prevents two active registrations from sharing the same `bifrost_id_pk`.
 - **Separated fault verification**: authorized fault verifier policies check raw evidence once and mint reusable `FaultProof` tokens; `spo-bans.ak` only applies ban updates.
 - **No expiration**: Membership tokens remain valid indefinitely until explicitly revoked.
+- **Upgrade without the cold key**: a registry revision carries every registration across by a membership proof against the identity trie (section 8); the cold key is never asked to consent twice to the same binding.
 
 
 
@@ -5504,7 +5735,8 @@ Bifrost's watchtower design relies on a minimal trust assumption: only one hones
 | Parameter(s) | Home | Kind | Consumers |
 |---|---|---|---|
 | wiring #0 and #2–7 (`update_auth`, `bridged_token_policy`, `completed_peg_ins_policy`, `bridge_state_policy`, `tm_script_hash`, `peg_in_script_hash`, `peg_out_script_hash`) | Config datum | governance Update only | all validators, as reference input. **#4** (`bridge_state_policy`) is read by `peg-in.ak` ([CPI-10]), `peg-out.ak` ([CPO-11], [CXL-8]) and `TreasuryMovementValidator` ([PTM-7], [CTM-28]) — always at runtime, per [PAR-1]; **#5** (`tm_script_hash`) has NO on-chain reader ([CFG-2]). Rev 5.5 inserted `params` at #1, so every wiring index shifted up by one |
-| `spos_registry_policy_id` | Config **#9** | governance Update only | `treasury.ak`'s `RegistryUpdate` gate ([TSY-13], [PRE-4]) — its first on-chain reader. See §Trust model: this replaced an immutable compile parameter |
+| `spos_registry_policy_id` | Config **#9** | governance Update only | `treasury.ak`'s `RegistryUpdate` gate ([TSY-13], [PRE-4]) — its first on-chain reader; `spo-bans.ak`'s `ApplyBan` since rev 5.6 ([PRE-5]). See §Trust model: this replaced an immutable compile parameter |
+| `previous_spos_registry_policy_id` | Config **#13** | governance Update only ([CFG-10]) | `spos-registry.ak`'s `Migrate` branch ([MIG-1]); the SPO program's self-migration check (§SPO Registration, section 8) |
 | `treasury_info_policy_id` | Config **#10** | governance Update only | off-chain discovery. The pin that matters is a compile parameter of `spo_registry` ([REG-6]) |
 | `min_stake` | heimdall local config (`cardano.min_stake_lovelace`) — left the Config datum in rev 5.4 | operator-tunable, no on-chain reader | off-chain candidate enumeration |
 | `fee_rate_sat_per_vb` | Config #1 `params[1]` | updatable (effect: next batch) | TM builders |

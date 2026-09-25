@@ -21,6 +21,21 @@ use cardano/transaction.{
 // the FederationReset branch, spec [UY-7]/[UY-8] WITHDRAWN). `tag` stays a
 // parameter so heimdall's signer and this verifier agree byte-for-byte (see
 // technical_documentation.md §Update-Y).
+//
+// The outpoint encoding here is byte-for-byte utils.serialise_output_reference,
+// which spos-registry.ak's registration and revocation nonces use ([REG-10],
+// [DRG-6]) — and it is spelled out rather than CALLED, deliberately.
+//
+// Calling it would be better style, and it was written that way first. But this
+// validator's hash is the Treasury state NFT's policy id, fixed by a one-shot
+// outpoint consumed at genesis: a changed hash is not a redeploy, it is a
+// different bridge, and the existing state UTxO could never be spent again.
+// Aiken does not promise that extracting a helper leaves the compiled code
+// identical, and measured here it does not — the hash moved.
+//
+// So the two stay in sync by TEST instead: `rotation_sig_msg_matches_the_shared
+// _outpoint_encoding` below asserts these bytes equal the helper's, and fails
+// if either side's endianness is ever touched.
 fn rotation_sig_msg(
   tag: ByteArray,
   own_ref: OutputReference,
@@ -365,6 +380,7 @@ fn t_config_datum() -> config_types.ConfigDatum {
     treasury_info_policy_id: t_own_hash,
     y_federation: t_yfed,
     federation_one_shot: OutputReference(#"aa12", 12),
+    previous_spos_registry_policy_id: "",
   }
 }
 
@@ -975,4 +991,29 @@ test spend_update_y_rejects_unauthenticated_config() fail {
     t_update_y(t_updatey_epoch, t_updatey_fed_sig),
     t_update_y_tx(d0, d1, False),
   )
+}
+
+// spec [UY-3], [REG-10], [DRG-6]: the one place the two spellings of the
+// outpoint encoding are compared.
+//
+// rotation_sig_msg cannot call utils.serialise_output_reference without moving
+// this validator's hash, and this validator's hash is the Treasury state NFT's
+// policy id — see the comment above it. This test is what that comment trades
+// against: a change to either endianness, or to the field order, fails here
+// rather than at an SPO's first Update-Y on a live bridge.
+test rotation_sig_msg_matches_the_shared_outpoint_encoding() {
+  let own_ref =
+    OutputReference {
+      transaction_id: #"7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a",
+      output_index: 3,
+    }
+  let inline =
+    own_ref.transaction_id
+      |> bytearray.concat(
+          bytearray.from_int_little_endian(own_ref.output_index, 4),
+        )
+  and {
+    inline == utils.serialise_output_reference(own_ref),
+    bytearray.length(inline) == 36,
+  }
 }

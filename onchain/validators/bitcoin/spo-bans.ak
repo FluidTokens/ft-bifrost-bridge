@@ -5,6 +5,8 @@ use aiken/interval
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list
 use aiken_design_patterns/stake_validator
+use bifrost/constants
+use bifrost/types/config as config_types
 use bifrost/types/spo_bans as spo_bans_types
 use bifrost/types/spos_registry.{RegistrationListDatum, RegistrationNodeData}
 use bifrost/utils
@@ -100,6 +102,38 @@ fn get_ban_node_data(output: Output) -> spo_bans_types.BanNodeData {
   }
 }
 
+// The Config datum's raw fields, authenticated by the parameterized NFT.
+// Same shape and same rule as treasury.ak's config_fields_at: located by
+// redeemer index, never by scanning reference_inputs.
+fn config_fields_at(
+  self: Transaction,
+  config_policy_id: PolicyId,
+  index: Int,
+) -> List<Data> {
+  utils.get_config_as_data_list(
+    utils.safe_list_at(self.reference_inputs, index),
+    config_policy_id,
+    constants.config_nft_asset_name,
+  )
+}
+
+// spec [PRE-4]/[PRE-5]: the registry policy id arrives from Config #9 at run
+// time, not as a compile parameter.
+//
+// It used to be `registration_script_hash`, baked in. That made this script a
+// DIRECT function of the registry's script hash, so every registry revision —
+// the rev-5.6 nonce among them — forced a ban-list redeploy, a new ban policy,
+// a Config #8 move and a fresh bootstrap, and stranded every live ban under a
+// policy nothing reads any more. Reading the field instead is the pattern
+// treasury.ak's RegistryUpdate already uses, and it removes that edge.
+//
+// It does NOT yet end the cascade, and saying so here matters more than the
+// improvement does: this validator still takes fault_proof_policy_ids as a
+// parameter, and all three fault verifiers take the registry policy as THEIRS.
+// So the dependency survives transitively — registry hash, fault verifier
+// hashes, this hash — and the next registry revision will move the ban policy
+// again. Finishing the job means the fault verifiers reading #9 from the Config
+// as well; this is the prerequisite, not the whole of it.
 fn validate_registered_pool_ref(
   input: Input,
   registration_script_hash: ByteArray,
@@ -436,8 +470,13 @@ fn repeated_ban_transition_ok(
       )
 }
 
+// spec [PRE-3]: config_policy_id replaces the registration_script_hash
+// parameter this validator used to take. The Config NFT policy id is the one
+// identity safe to bake in — it depends only on its own one-shot outpoint, so
+// no redeploy of a sibling script can break it, which is precisely what was
+// wrong with naming the registry here.
 validator spo_bans(
-  registration_script_hash: ByteArray,
+  config_policy_id: PolicyId,
   fault_proof_policy_ids: List<PolicyId>,
   base_ban_duration_ms: Int,
   max_faults_before_permanent: Int,
@@ -517,6 +556,7 @@ validator spo_bans(
     expect Script(own_hash) = credential
     let fault_input_index = redeemer.fault_input_index
     let registration_ref_input_index = redeemer.registration_ref_input_index
+    let config_ref_input_index = redeemer.config_ref_input_index
     let accused_pool_id = redeemer.accused_pool_id
     let evidence_hash = redeemer.evidence_hash
     let ban_anchor_input_index = redeemer.ban_anchor_input_index
@@ -528,6 +568,10 @@ validator spo_bans(
       self.reference_inputs,
       registration_ref_input_index,
     )
+    // spec [PRE-4]: Config #9, read at run time.
+    let registration_script_hash =
+      config_fields_at(self, config_policy_id, config_ref_input_index)
+        |> config_types.get_spos_registry_policy_id
     let fault_input = utils.safe_list_at(self.inputs, fault_input_index)
     let fault_asset_name = fault_token_name(accused_pool_id, evidence_hash)
     let fault_proof_policy_id = get_fault_proof_policy_id(
@@ -626,6 +670,9 @@ const t_registration_policy: ByteArray =
 
 const t_bans_policy: ByteArray =
   #"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+const t_config_policy: ByteArray =
+  #"c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0"
 
 const t_fault_policy_1: ByteArray =
   #"cccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
@@ -773,6 +820,66 @@ fn t_registration_input(pool_id: ByteArray) -> Input {
   }
 }
 
+// spec [PRE-4]: the Config UTxO this script now reads the registry policy from.
+// Only #9 matters here; the rest of the record is filled so the datum has the
+// shape a real Config has.
+fn t_config_datum(registry_policy: PolicyId) -> config_types.ConfigDatum {
+  config_types.ConfigDatum {
+    update_auth: None,
+    params: config_types.ConfigParams {
+      schedule: config_types.ScheduleParams {
+        dkg_r1_deadline: 3600,
+        dkg_r2_deadline: 7200,
+        update_y_deadline: 10800,
+        tm_batch_interval: 21600,
+        sign_r1_window: 1800,
+        sign_r2_window: 1800,
+        leader_slot_t: 600,
+        tm_recovery_window: 129600,
+        final_tm_cutoff: 345600,
+        stability_window: 129600,
+      },
+      fee_rate_sat_per_vb: 1,
+      per_pegout_fee: 1000,
+      min_peg_out_fbtc: 10000,
+      base_ban_duration_ms: t_base_ban_duration_ms,
+      max_faults_before_permanent: t_max_faults_before_permanent,
+      max_validity_window_ms: t_max_validity_window_ms,
+      federation_csv_blocks: 144,
+      pegin_refund_timeout_blocks: 720,
+    },
+    bridged_token_policy: #"aa02",
+    completed_peg_ins_policy: #"aa03",
+    bridge_state_policy: #"aa04",
+    tm_script_hash: #"aa05",
+    peg_in_script_hash: #"aa06",
+    peg_out_script_hash: #"aa07",
+    spo_bans_policy_id: t_bans_policy,
+    spos_registry_policy_id: registry_policy,
+    treasury_info_policy_id: #"aa10",
+    y_federation: #"aa11",
+    federation_one_shot: OutputReference(#"aa12", 12),
+    previous_spos_registry_policy_id: "",
+  }
+}
+
+fn t_config_input(registry_policy: PolicyId, with_nft: Bool) -> Input {
+  let base = assets.from_lovelace(2_000_000)
+  Input {
+    output_reference: t_ref(13),
+    output: Output {
+      address: t_address(t_config_policy),
+      value: if with_nft {
+        base |> assets.add(t_config_policy, constants.config_nft_asset_name, 1)
+      } else {
+        base
+      },
+      datum: InlineDatum(t_config_datum(registry_policy)),
+      reference_script: None,
+    },
+  }
+}
+
 fn t_fault_input(
   policy_id: PolicyId,
   pool_id: ByteArray,
@@ -827,6 +934,7 @@ fn t_first_ban_redeemer(
   spo_bans_types.ApplyBan {
     fault_input_index: 0,
     registration_ref_input_index: 0,
+    config_ref_input_index: 1,
     accused_pool_id: t_pool_id,
     evidence_hash,
     ban_anchor_input_index: 1,
@@ -842,6 +950,7 @@ fn t_repeated_ban_redeemer(
   spo_bans_types.ApplyBan {
     fault_input_index: 0,
     registration_ref_input_index: 0,
+    config_ref_input_index: 1,
     accused_pool_id: t_pool_id,
     evidence_hash,
     ban_anchor_input_index: 0,
@@ -873,7 +982,7 @@ fn t_first_ban_tx() -> Transaction {
       t_fault_input(t_fault_policy_1, t_pool_id, t_evidence_hash),
       t_ban_root_input(None),
     ],
-    [t_registration_input(t_pool_id)],
+    [t_registration_input(t_pool_id), t_config_input(t_registration_policy, True)],
     [
       t_ban_root_output(Some(t_pool_id)),
       t_ban_node_output(t_pool_id, t_expected_first_ban_data(), None),
@@ -893,7 +1002,7 @@ fn t_repeated_ban_tx(evidence_hash: ByteArray) -> Transaction {
       t_fault_input(t_fault_policy_2, t_pool_id, evidence_hash),
       t_ban_node_input(t_pool_id, t_old_ban_data(), None),
     ],
-    [t_registration_input(t_pool_id)],
+    [t_registration_input(t_pool_id), t_config_input(t_registration_policy, True)],
     [
       t_ban_node_output(
         t_pool_id,
@@ -914,7 +1023,7 @@ fn t_apply_ban(
   tx: Transaction,
 ) -> Bool {
   spo_bans.withdraw(
-    t_registration_policy,
+    t_config_policy,
     t_fault_policy_ids(),
     t_base_ban_duration_ms,
     t_max_faults_before_permanent,
@@ -987,8 +1096,41 @@ test apply_ban_rejects_disallowed_fault_policy() fail {
 test apply_ban_rejects_wrong_registration_reference() fail {
   let tx = Transaction {
     ..t_first_ban_tx(),
-    reference_inputs: [t_registration_input(t_other_pool_id)],
+    reference_inputs: [
+      t_registration_input(t_other_pool_id),
+      t_config_input(t_registration_policy, True),
+    ],
   }
+  t_apply_ban(t_first_ban_redeemer(t_evidence_hash), tx)
+}
+
+// spec [PRE-4]: the registry policy is whatever Config #9 says, so a
+// registration node under some OTHER policy is not a registration. This is the
+// check the compile parameter used to make, now made against the Config datum.
+test apply_ban_rejects_registration_under_foreign_policy() fail {
+  let tx =
+    Transaction {
+      ..t_first_ban_tx(),
+      reference_inputs: [
+        t_registration_input(t_pool_id),
+        t_config_input(t_disallowed_fault_policy, True),
+      ],
+    }
+  t_apply_ban(t_first_ban_redeemer(t_evidence_hash), tx)
+}
+
+// The Config reference must carry the Config NFT. Without the authentication a
+// submitter could present any datum-shaped UTxO and name its own policy as the
+// registry, which is the whole reason the NFT is a compile parameter here.
+test apply_ban_rejects_unauthenticated_config() fail {
+  let tx =
+    Transaction {
+      ..t_first_ban_tx(),
+      reference_inputs: [
+        t_registration_input(t_pool_id),
+        t_config_input(t_registration_policy, False),
+      ],
+    }
   t_apply_ban(t_first_ban_redeemer(t_evidence_hash), tx)
 }
 
