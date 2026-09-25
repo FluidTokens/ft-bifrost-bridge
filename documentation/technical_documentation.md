@@ -1023,14 +1023,19 @@ documented **decoupling trigger**: should tunable cadence (stuck-TM fee bumping)
 (roster vs. root of trust) diverge from Config governance, the tunables move back to a separate
 group-signed singleton — the previous revision of this section, unchanged in the git history.
 
-**The tunables — the fields of Config #7 `params`:**
+**The tunables — the fields of Config #1 `params`:**
 
 | params # | Field | Type | Description |
 |---|-------|------|-------------|
-| 0 | `fee_rate_sat_per_vb` | Int (sat/vB) | the **exact** Bitcoin miner fee rate for deterministic TM construction (`miner fee = vsize × rate`); read off-chain by every SPO's TM builder; the roster tracks the fee market by group-signing updates (see the signing-model note and *Stuck-TM recovery*) |
-| 1 | `per_pegout_fee` | Int (satoshi) | the **floor** for the per-peg-out protocol fee. The *effective* fee of each peg-out is pinned in its own `PegOutDatum` at lock time; the TM builder skips any peg-out whose datum fee is below this floor at the batch snapshot slot |
-| 2 | `min_peg_out_fbtc` | Int (satoshi) | minimum fBTC a PegOut request may lock (> `per_pegout_fee` + 330-sat dust); a client-side check at request creation and the TM builder's skip threshold |
-| 3 | `schedule` (ScheduleParams) | Int (slots) | the epoch/TM schedule — deadlines, batch grid, recovery window (normative table in *TM batches and the protocol schedule*); **effect from the next epoch boundary**, never mid-epoch |
+| 0 | `schedule` (ScheduleParams) | nested record, Int (slots) | the epoch/TM schedule — deadlines, batch grid, recovery window (normative table in *TM batches and the protocol schedule*); **effect from the next epoch boundary**, never mid-epoch |
+| 1 | `fee_rate_sat_per_vb` | Int (sat/vB) | the **exact** Bitcoin miner fee rate for deterministic TM construction (`miner fee = vsize × rate`); read off-chain by every SPO's TM builder; the roster tracks the fee market by group-signing updates (see the signing-model note and *Stuck-TM recovery*) |
+| 2 | `per_pegout_fee` | Int (satoshi) | the **floor** for the per-peg-out protocol fee. The *effective* fee of each peg-out is pinned in its own `PegOutDatum` at lock time; the TM builder skips any peg-out whose datum fee is below this floor at the batch snapshot slot |
+| 3 | `min_peg_out_fbtc` | Int (satoshi) | minimum fBTC a PegOut request may lock (> `per_pegout_fee` + 330-sat dust); a client-side check at request creation and the TM builder's skip threshold |
+| 4 | `base_ban_duration_ms` | Int (ms) | the ban schedule, mirroring the compile-time parameters of `spo-bans.ak` (see *Parameter registry*); the ApplyBan builder computes a ban's end time from #4 and #5 |
+| 5 | `max_faults_before_permanent` | Int | the fault count at which a ban becomes permanent; mirror of the `spo-bans.ak` parameter |
+| 6 | `max_validity_window_ms` | Int (ms) | bounds the validity interval of an ApplyBan transaction; mirror of the `spo-bans.ak` parameter |
+| 7 | `federation_csv_blocks` | Int (blocks) | the CSV timeout of the federation leaf in both Taproot trees. A block count, so [CFG-6] places it here and not beside `y_federation` (#11). Read off-chain by address derivation only |
+| 8 | `pegin_refund_timeout_blocks` | Int (blocks) | the CSV timeout of the depositor refund leaf of the peg-in tree ([CFG-9]); MUST exceed `federation_csv_blocks`. Appended per [CFG-5] |
 
 Two rev-5.1 tunables are no longer Config data:
 
@@ -1111,7 +1116,7 @@ startup, and SHOULD refuse to continue if either moves under them rather than ad
 > proof actually compare against) eliminates the class; the params copy is only the skip-rule
 > floor.
 
-> **Implementation status.** The tunables are deployed, nested as Config #7 `params`.
+> **Implementation status.** The tunables are deployed, nested as Config #1 `params`.
 > `PegOutDatum` carries the pinned `per_pegout_fee` field (see *Create PegOut request*);
 > *Complete peg-out*'s membership proof is value-bound against **this** per-request field, never
 > against a current Config value.
@@ -1657,7 +1662,7 @@ trust assumptions are exactly these rows — nothing else enters the system.
 | Treasury state NFT identity | K1 bootstrap (the one-shot outpoint is a parameter of `treasury_info`; name = the `"BFRTRY"` constant) | **validator parameter** of `spo_registry` ([REG-6]) | never — a different treasury state is a different instance |
 | Config NFT asset name | the protocol — the constant `"BIFCFG"` ([CFG-7]) | `lib/bifrost/constants.ak` | never — it never separated two instances; the one-shot outpoint does |
 | genesis treasury outpoint + amount | deployer, **on Bitcoin**, funded and confirmed, then verified against Bitcoin before the singleton bootstrap ([DEP-2]) | the bridge state singleton's bootstrap datum (`treasury_utxo_id`, `treasury_amount`) | a fresh singleton bootstrap + Config Update of `bridge_state_policy` — §Recovery: replacing the singleton |
-| Operational parameters (initial values) | deployer | Config #7 `params` | authorized Config Update (see §Operational parameters) |
+| Operational parameters (initial values) | deployer | Config #1 `params` | authorized Config Update (see §Operational parameters) |
 | TM authorized-minter key (interim) | deployer | TM-control datum (`TMCTRL`) | interim only — retired by the permissionless TM-posting design (see *Post signed TM*) |
 | authorized fault-verifier policies | deployer/governance | the three specialized policies — `fault-verifier-round1.ak`, `fault-verifier-round2.ak`, `fault-verifier-equivocation.ak` (see §9.2) | governance, per the allow-list in `spo-bans.ak` |
 
@@ -1673,7 +1678,7 @@ trust assumptions are exactly these rows — nothing else enters the system.
 
 Both storage questions that were once open are settled: the genesis treasury outpoint and amount
 live in the bridge state singleton's bootstrap datum, and the operational parameters are the
-nested Config #7 `params` record rather than a separate singleton.
+nested Config #1 `params` record rather than a separate singleton.
 The values themselves and the moments they become fixed are normative as described above.
 
 ### Infrastructure assumptions
