@@ -108,7 +108,7 @@ This section collects the acronyms, protocol terms, on-chain validators, mathema
 * **Completed peg-outs trie (CPO trie)**: MPF mapping every paid POR's **POR id** to `dest_scriptPubKey ‖ amount_le8`. Its on-chain root is `cpo_root` in the **bridge state singleton** (below). The root is **quorum-attested**, not folded on-chain: each Treasury Movement commits the post-TM root in its **BTMR1 commitment** (below), and *Confirm TM tx* copies that root into the singleton — O(1) regardless of batch size. *Complete peg-out* and *Cancel PegOut request* only **reference** the singleton (a membership or non-membership proof); neither spends it.
 * **BTMR1 commitment**: the `OP_RETURN` output every Treasury Movement carries exactly once — `OP_RETURN OP_PUSHBYTES_69 ("BTMR1" ‖ spi_root ‖ cpo_root)`, 71 script bytes, prefix `6a4542544d5231` — committing both attested roots that hold after this TM. `"BTMR1"` = **B**ifrost **TM** **R**oots, format version **1**. `spi_root` is script bytes [7, 39); `cpo_root` is script bytes [39, 71). A TM that sweeps no peg-in and pays no peg-out still carries one, re-committing the unchanged roots (see *Post signed TM* and *Confirm TM tx*). It replaces the rev-5.1 39-byte `CPOR1` commitment, which carried only the CPO root. The tag is deliberately not `"BFR"`-prefixed: watchtowers detect deposits by that prefix, and a TM pays the treasury address, so a `"BFR"` tag here could be misread as a deposit.
 * **Config UTxO**: NFT-authenticated, **immutable and never-spent** UTxO at `config.ak` holding the instance's wiring (cross-referenced script hashes and token identities); read as a reference input by the other validators (see §Config UTxO).
-* **Operational parameters**: the tunable protocol values (fee rate, per-peg-out fee floor, minimum peg-out, schedule), nested in the Config datum's `params` field (#7); changed by an authorized Config Update and read by **no on-chain validator** — every consumer reads them off-chain at a snapshot slot (see §Operational parameters).
+* **Operational parameters**: the tunable protocol values (fee rate, per-peg-out fee floor, minimum peg-out, schedule), nested in the Config datum's `params` field (#1); changed by an authorized Config Update and read by **no on-chain validator** — every consumer reads them off-chain at a snapshot slot (see §Operational parameters).
 * **Confirmed (Binocular)**: a Bitcoin block that has 100+ confirmations and has cleared the 200-minute challenge window (see [1]).
 * **Current roster**: the on-chain SPO set currently controlling the treasury and authorized to sign the next TM.
 * **Depositor**: user who locks BTC on Bitcoin to mint fBTC on Cardano.
@@ -1073,6 +1073,30 @@ longer a separate validator's on-chain check.
 all — read the params state **as of the relevant TM batch's snapshot slot**, so every SPO uses
 identical values even if an update lands mid-epoch: an update takes effect from the next batch,
 never retroactively.
+
+**The same rule binds the wiring fields.** The rule above is written for `params`, but its reasoning
+does not stop there. #0 and #2–#7, #9, #10 and #11 are all *governance Update only* (see *Parameter
+registry*), so any of them may move under a running bridge — and any of them that an off-chain
+reader pins becomes a value two honest nodes disagree about according to when each last read it. On
+chain this is already settled: [PAR-1] has validators resolve #4 at runtime from the transaction's
+own reference input, so the adopting transaction is its own adoption point. Off-chain there is no
+equivalent, so off-chain consumers read the **wiring fields** as of the relevant TM batch's snapshot
+slot as well, on the same terms — an update takes effect from the next batch, never retroactively.
+
+This matters most for the two fields that say where requests are found. An SPO still scanning a
+retired `peg_in_script_hash` (#6) or `peg_out_script_hash` (#7) address reports nothing pending,
+which is indistinguishable from a bridge nobody is depositing to; and restarting does not resolve
+the disagreement, it only moves that node to the other side of it. Reading them at the batch
+snapshot slot is what makes every co-signer freeze the same set — the property the snapshot exists
+to provide.
+
+**#5 and #12 are the exception, because they are not parameters.** `tm_script_hash` (#5) identifies
+the policy the whole TM chain is minted under, and `federation_one_shot` (#12) is the compile input
+that `spos_registry_policy_id` (#9) and `treasury_info_policy_id` (#10) are derived from. A Config
+Update moving either describes a **new bridge instance** rather than a parameter change — the TM
+history minted under the old policy is not reachable from the new one, and the scripts #9/#10 name
+are not the scripts #12 rebuilds. Off-chain readers may therefore resolve #5 and #12 once at
+startup, and SHOULD refuse to continue if either moves under them rather than adopting silently.
 
 > **Why no on-chain validator reads a current tunable.** Two interleaving hazards force this.
 > (i) A transaction referencing a UTxO dies when that UTxO is spent — which is why tunables are
