@@ -170,6 +170,10 @@ Peg-out completion is **permissionless** — it carries no `owner_auth` check at
 
 ![Bifrost UTxO Flow](./images/utxo_flow.png)
 
+Solid arrows spend or produce a UTxO. Dotted arrows are reference inputs or off-chain reads.
+Thick arrows are moves an actor relays across the chains. Hexagons are transactions; the one
+rounded box is the SPO program's off-chain work.
+
 ## External inputs of a bridge instance
 
 Everything the protocol enforces on-chain derives from values that enter the system from

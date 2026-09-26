@@ -1,76 +1,126 @@
-graph LR
+graph TB
     subgraph BTC["Bitcoin"]
         direction TB
 
-        AliceBTC["Alice's BTC UTxO"]
-        PegInTx{{"Peg-in Tx"}}
-        TaprootUTxO["Peg-in Taproot UTxO<br/>(key: Y<sub>51</sub> | leaves: Y<sub>fed</sub>+timelock, depositor hash+timelock)"]
-        OpReturn["OP_RETURN<br/>BFR || depositor_pubkey_hash"]
+        DepBTC["Depositor BTC"]
+        DepositTx{{"Peg-in deposit"}}
+        PegIn["Peg-in output at Q<br/>Y<sub>51</sub> | Y<sub>fed</sub> + CSV | refund + CSV"]
+        Beacon["OP_RETURN<br/>BFR || Q_auth"]
 
-        OldTreasury["Old Treasury UTxO<br/>(key: Y<sub>51</sub> | leaf: Y<sub>fed</sub>+timelock)"]
-        TreasuryMovTx{{"Treasury Movement Tx"}}
-        NewTreasury["New Treasury UTxO<br/>(next epoch)"]
-        PegOutPayment["Peg-out Payment UTxO<br/>(to withdrawer)"]
+        Head["Treasury head<br/>Y<sub>51</sub> | Y<sub>fed</sub> + CSV"]
+        TMTx{{"Treasury Movement<br/>FROST, 51% roster"}}
+        NewHead["New treasury output"]
+        Payouts["Peg-out payouts"]
+        BTMR1["OP_RETURN BTMR1<br/>spi_root || cpo_root"]
 
-        AliceBTC --> PegInTx
-        PegInTx --> TaprootUTxO
-        PegInTx --> OpReturn
-
-        TaprootUTxO -. "swept by SPOs<br/>or federation" .-> TreasuryMovTx
-        OldTreasury --> TreasuryMovTx
-        TreasuryMovTx --> NewTreasury
-        TreasuryMovTx --> PegOutPayment
+        DepBTC --> DepositTx
+        DepositTx --> PegIn
+        DepositTx --> Beacon
+        PegIn -. "refund after timeout" .-> DepBTC
+        Head --> TMTx
+        PegIn -- "swept" --> TMTx
+        TMTx --> NewHead
+        TMTx --> Payouts
+        TMTx --> BTMR1
     end
 
     subgraph ADA["Cardano"]
         direction TB
 
-        TreasuryAK["Treasury state UTxO<br/>Y<sub>51</sub><br/>Completed PegIns<br/>Bifrost identity root<br/>(reference UTxO)"]
-        WatchtowerAK["Binocular Oracle<br/>(confirmed BTC blocks)"]
-        SPORegistry["SPO Registry<br/>(ordered linked-list)"]
+        Config["Config (BIFCFG)"]
+        TState["Treasury state (BFRTRY)<br/>Y<sub>51</sub>, identity root"]
+        Registry["SPO registry"]
+        Oracle["Binocular oracle"]
+        BSS["Bridge state (BSS)<br/>spi_root, cpo_root, head"]
+        CPI["Completed peg-ins trie (CPI)"]
+        PIR["PegInRequest"]
+        POR["PegOut request<br/>locked fBTC"]
+        UTM["Unconfirmed TM<br/>signed tx bytes"]
 
-        PegInAK["PegIn UTxO<br/>(NFT + inclusion proof<br/>+ creator pubkey hash)"]
-        PegOutAK["PegOut UTxO<br/>(NFT + locked fBTC)"]
+        RegTx{{"Register / Deregister"}}
+        UpdY{{"Update-Y"}}
+        CreatePIR{{"Create PegInRequest"}}
+        CreatePOR{{"Create PegOut"}}
+        Build(["SPO program:<br/>build and sign the TM"])
+        PostTM{{"Post TM"}}
+        ConfirmTM{{"Confirm TM"}}
+        CompletePI{{"Complete peg-in<br/>mint fBTC"}}
+        CompletePO{{"Complete peg-out<br/>burn fBTC"}}
+        Timeout{{"Close / Cancel<br/>after timeout"}}
+        fBTC["fBTC"]
 
-        TreasuryMovAK["Signed Treasury Movement BTC Tx UTxO<br/>(posted by SPOs)"]
-        MintAK["fBTC Mint"]
-        BurnAK["fBTC Burn"]
+        %% registry and key rotation
+        Registry --> RegTx
+        RegTx --> Registry
+        TState --> RegTx
+        RegTx --> TState
+        Config -.-> RegTx
+        TState --> UpdY
+        UpdY -- "new Y<sub>51</sub>" --> TState
+
+        %% requests
+        Oracle -. "inclusion proof" .-> CreatePIR
+        CreatePIR --> PIR
+        CreatePOR --> POR
+
+        %% the SPO program builds the TM from Cardano data
+        PIR -.-> Build
+        POR -.-> Build
+        BSS -. "head" .-> Build
+        Config -. "params" .-> Build
+        TState -. "Y<sub>51</sub>" .-> Build
+        Registry -. "roster" .-> Build
+        Build --> PostTM
+        PostTM --> UTM
+        Config -.-> PostTM
+        BSS -. "head" .-> PostTM
+
+        %% confirm: roots copied from the posted bytes
+        UTM --> ConfirmTM
+        BSS --> ConfirmTM
+        ConfirmTM -- "roots, head" --> BSS
+        Oracle -. "confirmed" .-> ConfirmTM
+        Config -.-> ConfirmTM
+
+        %% completions
+        PIR --> CompletePI
+        CPI --> CompletePI
+        CompletePI --> CPI
+        BSS -. "spi_root" .-> CompletePI
+        Config -.-> CompletePI
+        CompletePI --> fBTC
+        POR --> CompletePO
+        BSS -. "cpo_root" .-> CompletePO
+        Config -.-> CompletePO
+
+        %% exits
+        PIR --> Timeout
+        POR --> Timeout
+        BSS -. "non-membership" .-> Timeout
+        CPI -. "duplicate" .-> Timeout
+        Config -.-> Timeout
     end
 
-    %% Cross-chain: peg-in flow
-    OpReturn -. "watchtower detects<br/>peg-in tx" .-> PegInAK
-    WatchtowerAK -. "inclusion proof<br/>references block" .-> PegInAK
-
-    %% Cross-chain: Treasury Movement relay
-    TreasuryMovAK -. "watchtower relays<br/>signed tx to Bitcoin" .-> TreasuryMovTx
-
-    %% SPOs construct Treasury Movement
-    PegInAK -. "SPOs read peg-ins" .-> TreasuryMovAK
-    PegOutAK -. "SPOs read<br/>peg-out requests" .-> TreasuryMovAK
-    SPORegistry -. "FROST roster" .-> TreasuryMovAK
-    TreasuryAK -. "Treasury keys" .-> TreasuryMovAK
-
-    %% Completion: mint fBTC
-    TreasuryMovAK -. "inclusion proof of<br/>confirmed BTC tx" .-> MintAK
-    PegInAK -. "depositor mints fBTC<br/>(Schnorr sig required)" .-> MintAK
-    TreasuryAK -. "peg-in non-inclusion<br/>(prevent double mint)" .-> MintAK
-
-    %% Completion: burn fBTC
-    TreasuryMovAK -. "inclusion proof of<br/>confirmed BTC tx" .-> BurnAK
-    PegOutAK -. "peg-out completion:<br/>burn fBTC" .-> BurnAK
-
-    %% PegInRequest closure (timeout reclaim)
-    WatchtowerAK -. "creator closes if<br/>BTC timeout reclaim" .-> PegInAK
+    %% cross-chain
+    TState -. "Y<sub>51</sub>" .-> DepositTx
+    Config -. "Y<sub>fed</sub>, CSV" .-> DepositTx
+    Beacon == "watchtower" ==> CreatePIR
+    UTM == "watchtower" ==> TMTx
+    BTMR1 == "same bytes" ==> ConfirmTM
 
     %% Styling
     classDef btcNode fill:#f9a825,stroke:#f57f17,color:#000
     classDef btcTx fill:#fff9c4,stroke:#f57f17,color:#000
     classDef adaNode fill:#42a5f5,stroke:#1565c0,color:#fff
+    classDef adaTx fill:#e3f2fd,stroke:#1565c0,color:#000
+    classDef offchain fill:#ffffff,stroke:#1565c0,stroke-dasharray:4 3,color:#000
     classDef btcBox fill:#fff8e1,stroke:#f57f17,color:#000
     classDef adaBox fill:#e3f2fd,stroke:#1565c0,color:#000
 
-    class AliceBTC,TaprootUTxO,OpReturn,OldTreasury,NewTreasury,PegOutPayment btcNode
-    class PegInTx,TreasuryMovTx btcTx
-    class TreasuryAK,WatchtowerAK,SPORegistry,PegInAK,PegOutAK,TreasuryMovAK,MintAK,BurnAK adaNode
+    class DepBTC,PegIn,Beacon,Head,NewHead,Payouts,BTMR1 btcNode
+    class DepositTx,TMTx btcTx
+    class Config,TState,Registry,Oracle,BSS,CPI,PIR,POR,UTM,fBTC adaNode
+    class RegTx,UpdY,CreatePIR,CreatePOR,PostTM,ConfirmTM,CompletePI,CompletePO,Timeout adaTx
+    class Build offchain
     class BTC btcBox
     class ADA adaBox
