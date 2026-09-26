@@ -38,6 +38,8 @@ GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 
 PANDOC_FLAGS := --pdf-engine=xelatex \
   --from=markdown+tex_math_single_backslash \
+  --toc --toc-depth=2 --number-sections \
+  -V secnumdepth=2 \
   --filter=$(MERMAID_FILTER) \
   --resource-path=$(DOC_DIR) \
   --highlight-style=tango \
