@@ -187,13 +187,13 @@ trust assumptions are exactly these rows — nothing else enters the system.
 |---|---|---|---|
 | one-shot outpoint(s) | deployer wallet UTxOs, consumed at the bootstrap mints (config, CPI tree, bridge state, registry/ban roots) | policy ids and NFT names derive from them | never — they are the instance's identity |
 | bridged-token asset name | the protocol — the constant `"fSAT"` ([CFG-1]) | `lib/bifrost/constants.ak` | never — one token is one satoshi, a protocol property, not a deployment's |
-| governance authority (`update_auth`) | deployer | Config #0 | rotates itself: dev key → SPO governance script → optionally `None` (renounced) |
+| governance authority (`update_auth`) | deployer | Config `update_auth` | rotates itself: dev key → SPO governance script → optionally `None` (renounced) |
 | `min_stake` | each SPO operator | heimdall local config (`cardano.min_stake_lovelace`) | operator-tunable |
 | header-oracle identity (Binocular oracle NFT policy) | the oracle's own bootstrap | **validator parameter** of the peg validators | never — a different oracle is a different instance |
 | Treasury state NFT identity | K1 bootstrap (the one-shot outpoint is a parameter of `treasury_info`; name = the `"BFRTRY"` constant) | **validator parameter** of `spo_registry` ([REG-6]) | never — a different treasury state is a different instance |
 | Config NFT asset name | the protocol — the constant `"BIFCFG"` ([CFG-7]) | `lib/bifrost/constants.ak` | never — it never separated two instances; the one-shot outpoint does |
 | genesis treasury outpoint + amount | deployer, **on Bitcoin**, funded and confirmed, then verified against Bitcoin before the singleton bootstrap ([DEP-2]) | the bridge state singleton's bootstrap datum (`treasury_utxo_id`, `treasury_amount`) | a fresh singleton bootstrap + Config Update of `bridge_state_policy` — §Recovery: replacing the singleton |
-| Operational parameters (initial values) | deployer | Config #1 `params` | authorized Config Update (see §Operational parameters) |
+| Operational parameters (initial values) | deployer | Config `params` | authorized Config Update (see §Operational parameters) |
 | TM authorized-minter key (interim) | deployer | TM-control datum (`TMCTRL`) | interim only — retired by the permissionless TM-posting design (see *Post signed TM*) |
 | authorized fault-verifier policies | deployer/governance | the three specialized policies — `fault-verifier-round1.ak`, `fault-verifier-round2.ak`, `fault-verifier-equivocation.ak` (see §9.2) | governance, per the allow-list in `spo-bans.ak` |
 
@@ -205,11 +205,11 @@ trust assumptions are exactly these rows — nothing else enters the system.
 | Cardano stake distribution (registration gate, candidate set) | off-chain snapshot reads at protocol-defined slots | the Cardano ledger itself + the determinism rule (§Operational parameters) |
 | Bitcoin fee market | roster-group-signed params updates (`fee_rate_sat_per_vb`) | 51% roster honesty; snapshot semantics |
 | depositor authorizations | BIP-322 signatures over protocol messages | depositor key possession |
-| governance actions | `update_auth`-authorized Config Update / Retire | the authority named in Config #0 (see *Config UTxO governance*) |
+| governance actions | `update_auth`-authorized Config Update / Retire | the authority named in Config `update_auth` (see *Config UTxO governance*) |
 
 Both storage questions that were once open are settled: the genesis treasury outpoint and amount
 live in the bridge state singleton's bootstrap datum, and the operational parameters are the
-nested Config #1 `params` record rather than a separate singleton.
+nested Config `params` record rather than a separate singleton.
 The values themselves and the moments they become fixed are normative as described above.
 
 ### The Config as the discovery root
@@ -227,7 +227,7 @@ The deployed tree satisfies this only in part:
 |---|---|---|
 | `bridged-token.ak` | config NFT pair | **yes** — the pair alone |
 | `completed-peg-ins-merkle-tree.ak` | config NFT pair + one-shot outref | partly — the one-shot is out-of-band |
-| `bridge-state.ak` | TM script hash + one-shot outref | partly — clients find it through Config field 3 at runtime ([PAR-1]), but the one-shot is out-of-band |
+| `bridge-state.ak` | TM script hash + one-shot outref | partly — clients find it through Config `bridge_state_policy` at runtime ([PAR-1]), but the one-shot is out-of-band |
 | `peg-in.ak` | oracle policy, config NFT pair, TM NFT policy | partly — oracle and TM policy are out-of-band |
 | `peg-out.ak` | config NFT pair | **yes** — rev 5.1 dropped its oracle parameter; completion now proves against the completed-peg-outs trie |
 | `treasury.ak` | registry policy, TM NFT policy | no |
@@ -267,10 +267,11 @@ datum today and are still handed to operators out of band: the oracle policy id,
 bootstrap outpoint, and the authorized fault-verifier policies. Each MUST become a
 Config-resident discovery field.
 
-Four of the original seven are now resident: the TM NFT policy is field 4 ([CFG-2]), and the ban
-list, the SPO registry and the Treasury state NFT are fields 7, 11 and 12–13 ([CFG-3]).
+Four of the original seven are now resident: the TM NFT policy is `tm_script_hash` ([CFG-2]), and the ban
+list, the SPO registry and the Treasury state NFT are `spo_bans_policy_id`,
+`spos_registry_policy_id` and `treasury_info_policy_id` ([CFG-3]).
 
-For a trust anchor — the oracle policy, and the TM NFT policy already resident as field 4 — the
+For a trust anchor — the oracle policy, and the TM NFT policy already resident as `tm_script_hash` — the
 Config field is a **copy for discovery only**. Enforcement stays on the validator parameter, per
 *Where each identity is fixed* in the creation flow, so the copy adds no governance power over
 fund safety. It
@@ -449,6 +450,7 @@ classDiagram
         spos_registry_policy_id : PolicyId
         treasury_info_policy_id : PolicyId
         y_federation : ByteArray
+        federation_one_shot : OutputReference
     }
 
     class Treasury_State_UTxO {
@@ -470,8 +472,8 @@ classDiagram
         treasury_amount : Int
     }
 
-    Config_UTxO ..> CompletedPegIns_UTxO : field 2 names its policy
-    Config_UTxO ..> BridgeState_UTxO : field 3 names its policy
+    Config_UTxO ..> CompletedPegIns_UTxO : completed_peg_ins_policy names it
+    Config_UTxO ..> BridgeState_UTxO : bridge_state_policy names it
 ```
 
 * **Config UTxO** – the instance wiring, read by nearly every other script as a reference
@@ -687,7 +689,7 @@ Notes:
   only on its own outpoint), then everything parameterized by the config NFT policy; on the SPO
   side `spos-registry.ak` before `treasury.ak` and `spo-bans.ak`.
 * **The config ↔ fBTC circularity is resolved at datum level.** `bridged-token.ak` is
-  *parameterized* by the config NFT identity, while the Config *datum* field 0 names the fBTC
+  *parameterized* by the config NFT identity, while the Config *datum* field `bridged_token_policy` names the fBTC
   policy. Parameterization fixes hashes in dependency order (config hash → fBTC hash); the
   datum is only data, written at mint time after both hashes are known. The same holds for
   every script-hash field in `ConfigDatum` – that is what lets the wiring reference scripts
@@ -727,7 +729,7 @@ flowchart LR
     pow{{peg-out withdraw}}
     tmv{{TreasuryMovementValidator<br/>Confirm — Scalus, not drawn here}}
 
-    fbtc -->|ref input: fields 1,2,5,6| ConfigU
+    fbtc -->|ref input: bridged_token_policy, peg_in_script_hash, peg_out_script_hash| ConfigU
     fbtc -.->|positive mint requires| piw
     fbtc -.->|burn requires| pow
 
@@ -737,7 +739,7 @@ flowchart LR
     piw ==>|spends + recreates root| CPIU
     piw ==>|spends on complete or close| PIR
 
-    pow -->|ref input: field 3| ConfigU
+    pow -->|ref input: bridge_state_policy, bridged_token_policy| ConfigU
     pow -->|ref input: cpo_root, NFT-authenticated| BSSU
     pow ==>|spends on complete or cancel| POR
     tmv ==>|spends + recreates: copies both BTMR1-attested roots| BSSU
@@ -851,12 +853,14 @@ instance.
 
 **ConfigDatum (rev 5.4).** This table tracks the implemented `lib/bifrost/types/config.ak`
 field-for-field; the constructor order is normative, because readers index it positionally.
-Fifteen fields. `update_auth` comes first, because it is the field that governs every other one.
-Fields #1–6 are instance *wiring* — token identities and script hashes. Fields #7–13 are
-**federation identity**: the ban policy, its schedule, the SPO registry, and the Treasury state
-NFT — discovery fields in the sense of *The Config as the discovery root*. Field #14 nests the
-operational tunables: unlike the wiring they are expected to change, and **no Aiken validator
-reads a current value from them**.
+Thirteen fields. `update_auth` comes first, because it is the field that governs every other
+one. `params` comes second and nests the operational tunables: unlike the wiring they are
+expected to change, and **no Aiken validator reads a current value from them**. Then the instance
+*wiring*, token identities and script hashes: `bridged_token_policy`, `completed_peg_ins_policy`,
+`bridge_state_policy`, `tm_script_hash`, `peg_in_script_hash`, `peg_out_script_hash`. Then the
+**SPO-side and federation identities**: `spo_bans_policy_id`, `spos_registry_policy_id`,
+`treasury_info_policy_id`, `y_federation`, `federation_one_shot`, discovery fields in the sense
+of *The Config as the discovery root*.
 
 `params` is at index 1, and that is normative ([CFG-5]). Rev 5.4 put it last and told the reader
 to append after it. That instruction invites the one edit that shifts every index: insert before
@@ -880,6 +884,7 @@ number lives inside `params`.
 | 9 | `spos_registry_policy_id` | PolicyId | the DEPLOYED `spos-registry.ak` policy id; the registry address follows from it. Read on-chain by `treasury.ak` — see [PRE-4] |
 | 10 | `treasury_info_policy_id` | PolicyId | the DEPLOYED Treasury state NFT policy id — see [CFG-3] |
 | 11 | `y_federation` | ByteArray (32 B x-only) | the federation fallback key, the script-leaf key of both Taproot trees. Read on-chain by `treasury.ak`'s Update-Y branch — see [UY-5] |
+| 12 | `federation_one_shot` | OutputReference | the one-shot outpoint every federation script is compile-parameterized by, so `spos_registry_policy_id` and `treasury_info_policy_id` are functions of it. No on-chain reader; off-chain readers resolve it once at startup, and an Update moving it describes a new instance |
 
 `ConfigParams`, at index 1:
 
@@ -906,9 +911,10 @@ number lives inside `params`.
   `pegin_refund_timeout_blocks > federation_csv_blocks` rather than assume it.
 - [CFG-2] `tm_script_hash` has NO on-chain reader. It is published so that off-chain readers can
   locate the TM address without a hard-coded constant.
-- [CFG-3] Fields #5, #8 and #10, and every field of `params`, have NO on-chain reader. They are
-  published so that an SPO configures none of them by hand. *(Revised in rev 5.5: fields #9 and
-  #11 gained on-chain readers and left this list.)*
+- [CFG-3] `tm_script_hash`, `spo_bans_policy_id`, `federation_one_shot`, and every field of
+  `params` have NO on-chain reader. They are published so that an SPO configures none of them by
+  hand. *(Revised in rev 5.5: `spos_registry_policy_id` and `y_federation` gained on-chain readers
+  and left this list. `treasury_info_policy_id` is read by `config.ak`'s `Retire`, [CFG-8].)*
 - [CFG-4] *(New, rev 5.5)* `treasury_info_asset_name` is WITHDRAWN as a Config field. The
   Treasury state NFT asset name MUST be the constant `"BFRTRY"`, declared in
   `lib/bifrost/constants.ak`.
@@ -919,7 +925,7 @@ number lives inside `params`.
 - [CFG-7] *(New, rev 5.5)* The Config NFT asset name MUST be the constant `"BIFCFG"`, declared in
   `lib/bifrost/constants.ak`. No validator MAY take it as a compile parameter.
 - [CFG-8] *(New, rev 5.5, from review)* `config.ak`'s `Retire` MUST verify that the transaction
-  also burns exactly one Treasury state NFT, under the policy at Config #10. [TSY-19] already
+  also burns exactly one Treasury state NFT, under the policy at Config `treasury_info_policy_id`. [TSY-19] already
   requires the Config NFT burn, so the two retirements are mutually required.
 
 > **Why the two burns must be one transaction ([CFG-8]).** The Config NFT can be burned once.
@@ -971,7 +977,7 @@ number lives inside `params`.
 > The frontend is the case that made this visible: it carried a hard-coded `TM_NFT_POLICY_ID`,
 > and a redeployment silently invalidates it. Publishing it does NOT make the TM validator
 > swappable: the bridge state singleton is compile-parameterized by the TM script hash, so
-> changing field 4 alone would leave the singleton gated on the old validator. A TM change is a
+> changing `tm_script_hash` alone would leave the singleton gated on the old validator. A TM change is a
 > redeployment of both.
 
 Rev 5.1's fields for the bridged-token asset name, the two `legit_TM` verifiers, the peg-in
@@ -1010,20 +1016,22 @@ reader trusts a datum only if the UTxO's value contains the NFT.
   The consuming validator is parameterized by `(config_nft_policy_id, config_nft_asset_name)`; it
   locates the reference input whose value holds exactly that NFT (typically via an index passed in
   the redeemer) and decodes the inline datum **positionally** — a Plutus datum is a `Constr`, so
-  field *n* in the table above is element *n*. Example: `peg-out.ak` reads field 1 (the bridged
-  token policy, for burn amount bookkeeping) and field 3 (`bridge_state_policy`, to authenticate
+  field *n* in the table above is element *n*. Example: `peg-out.ak` reads `bridged_token_policy` (for burn
+  amount bookkeeping) and `bridge_state_policy` (to authenticate
   its singleton reference input — see *Complete peg-out*).
 * **Off-chain**: query the ledger for the UTxO holding the asset `(config_nft_policy_id,
   config_nft_asset_name)` (any chain indexer resolves an NFT to its UTxO), read its inline datum,
   decode `ConfigDatum`. Since the Config is never spent, the read is stable forever.
 
-> **Implementation status** (2026-08-11). The fifteen-field table, [CFG-1], [CFG-2] and [CFG-3]
-> are implemented in `onchain/lib/bifrost/types/config.ak`, with every reader migrated
-> (`config.ak`, `bridged-token.ak`, `completed-peg-ins-merkle-tree.ak`, `peg-in.ak`,
-> `peg-out.ak`); per [CFG-2] and [CFG-3] the getters for fields 4 and 7–13 exist but no validator
-> calls them. binocular's Scalus `ConfigDatum` and heimdall's `config_params.rs` decode the same
-> fifteen fields by name. The datum is not closed: the discovery fields still missing per *The
-> Config as the discovery root* would append after #14. `config.ak` carries a real `spend`
+> **Implementation status** (2026-08-11, checked again 2026-09-26). The thirteen-field table,
+> [CFG-1], [CFG-2] and [CFG-3] are implemented in `onchain/lib/bifrost/types/config.ak`, with
+> every reader migrated (`config.ak`, `bridged-token.ak`, `completed-peg-ins-merkle-tree.ak`,
+> `peg-in.ak`, `peg-out.ak`, `treasury.ak`); the getters for `tm_script_hash`,
+> `spo_bans_policy_id`, `federation_one_shot` and the `params` fields exist and no validator calls
+> them, per [CFG-2] and [CFG-3]. binocular's Scalus `ConfigDatum` and heimdall's
+> `config_params.rs` decode the same thirteen fields by name, and the deployed preprod Config
+> carries thirteen. The datum is not closed: the discovery fields still missing per *The Config as
+> the discovery root* would append at the tail ([CFG-5]). `config.ak` carries a real `spend`
 > handler: the Config is not immutable, it is governed — see *Config UTxO governance*.
 
 <!-- G2 (revised 2026-07-15): the updatable values moved out of the Config into their own
@@ -1042,7 +1050,7 @@ protocol script hashes from the datum at run time, updating the `ConfigDatum`
 swaps out protocol validators while the fBTC policyId stays stable, so
 existing fBTC remains in circulation across upgrades. The fBTC minting policy
 itself is a pure delegator: it only requires the peg-in withdraw script
-(field 5) to run for a mint, and the peg-out withdraw script (field 6) for a
+(`peg_in_script_hash`) to run for a mint, and the peg-out withdraw script (`peg_out_script_hash`) for a
 burn, so ALL mint/burn rules are swappable via a config update while
 the policy id stays fixed.
 
@@ -1055,8 +1063,8 @@ fields can be appended to `ConfigDatum` without redeploying existing readers.
 Existing field positions and types are consequently a frozen contract:
 evolve the datum by appending only.
 
-The first `ConfigDatum` field, `update_auth: Option<AuthorizationMethod>`
-(#0), names the authority allowed to change the config:
+The first `ConfigDatum` field, `update_auth: Option<AuthorizationMethod>`,
+names the authority allowed to change the config:
 
 - `Some(auth)`: the authority (a signature, spend script, withdraw script,
   mint script, or NFT ownership, per `authorizer.ak`) can spend the config
@@ -1073,7 +1081,7 @@ The first `ConfigDatum` field, `update_auth: Option<AuthorizationMethod>`
     Rotating `update_auth` is the progressive-decentralization path: dev key
     on testnets, SPO governance withdraw script at mainnet launch, optionally
     `None` to renounce. The authority carries the full consequences: a datum
-    whose field 0 no longer parses as `Option<AuthorizationMethod>` freezes
+    whose `update_auth` no longer parses as `Option<AuthorizationMethod>` freezes
     the config permanently, a self-referential `update_auth` makes it
     permissionlessly spendable, and a datum current readers cannot parse
     halts the bridge until a later Update fixes it. Sophisticated per-field
@@ -1087,7 +1095,7 @@ The first `ConfigDatum` field, `update_auth: Option<AuthorizationMethod>`
     Retire is a true end-of-life action for a deployment.
 - `None`: the config is permanently frozen; the UTxO is unspendable.
 
-`peg_in_script_hash` (field 5) and `peg_out_script_hash` (field 6) name the
+`peg_in_script_hash` and `peg_out_script_hash` name the
 withdraw scripts carrying the fBTC mint and burn rules. The immutable fBTC
 policy checks only that the right one runs in the minting tx (plus the
 single-asset-name guard under the [CFG-1] constant and the
@@ -1095,7 +1103,7 @@ single-asset-name guard under the [CFG-1] constant and the
 fully constrain the fBTC mint value: an action that ignores `self.mint`
 would let any tx invoking it change the supply freely. Upgrading mint logic
 = deploy a new withdraw script, register its stake credential, and one
-authorized config Update of field 5 or 6; the fBTC policy id and circulating
+authorized config Update of `peg_in_script_hash` or `peg_out_script_hash`; the fBTC policy id and circulating
 fBTC are untouched.
 
 The mint policy has two paths: bootstrap (+1, one-shot mint gated on spending
@@ -1118,7 +1126,7 @@ anchor, a pinned-copy source, or a floor enforced by the deterministic skip rule
 NFT-authenticated UTxO: with `update_auth` governance in place, a params singleton's update policy
 coincided with the Config's, buying complexity without benefit. There is no params NFT and no
 params wiring identity; an *Update operational parameters* is an authorized **Config Update** (see
-the Transaction catalog). Since rev 5.4 the tunables are one **nested record**, Config field #14
+the Transaction catalog). Since rev 5.4 the tunables are one **nested record**, Config
 `params`, so governance replaces them wholesale without renumbering their neighbours.
 
 Two costs are accepted rather than hidden: parameter updates now **do** invalidate in-flight
@@ -1128,7 +1136,7 @@ documented **decoupling trigger**: should tunable cadence (stuck-TM fee bumping)
 (roster vs. root of trust) diverge from Config governance, the tunables move back to a separate
 group-signed singleton — the previous revision of this section, unchanged in the git history.
 
-**The tunables — the fields of Config #1 `params`:**
+**The tunables — the fields of Config `params`:**
 
 | params # | Field | Type | Description |
 |---|-------|------|-------------|
@@ -1174,7 +1182,7 @@ Two rev-5.1 tunables are no longer Config data:
 
 **Update (governed).** The tunables change through an authorized **Config Update** (see the
 Transaction catalog): the Config NFT returns to `config.ak` with the new datum, authorized by
-`update_auth` (Config #0). Parameter *sanity* — `min_peg_out_fbtc > per_pegout_fee + 330`
+`update_auth`. Parameter *sanity* — `min_peg_out_fbtc > per_pegout_fee + 330`
 (Bitcoin P2TR dust), non-negative values, and the schedule invariants of the constrained rows in
 *TM batches and the protocol schedule* — is the governance authority's to enforce; it is no
 longer a separate validator's on-chain check.
@@ -1185,27 +1193,28 @@ identical values even if an update lands mid-epoch: an update takes effect from 
 never retroactively.
 
 **The same rule binds the wiring fields.** The rule above is written for `params`, but its reasoning
-does not stop there. #0 and #2–#7, #9, #10 and #11 are all *governance Update only* (see *Parameter
+does not stop there. `update_auth` and every wiring and identity field except `tm_script_hash` and `federation_one_shot` are *governance Update only* (see *Parameter
 registry*), so any of them may move under a running bridge — and any of them that an off-chain
 reader pins becomes a value two honest nodes disagree about according to when each last read it. On
-chain this is already settled: [PAR-1] has validators resolve #4 at runtime from the transaction's
+chain this is already settled: [PAR-1] has validators resolve `bridge_state_policy` at runtime from the transaction's
 own reference input, so the adopting transaction is its own adoption point. Off-chain there is no
 equivalent, so off-chain consumers read the **wiring fields** as of the relevant TM batch's snapshot
 slot as well, on the same terms — an update takes effect from the next batch, never retroactively.
 
 This matters most for the two fields that say where requests are found. An SPO still scanning a
-retired `peg_in_script_hash` (#6) or `peg_out_script_hash` (#7) address reports nothing pending,
+retired `peg_in_script_hash` or `peg_out_script_hash` address reports nothing pending,
 which is indistinguishable from a bridge nobody is depositing to; and restarting does not resolve
 the disagreement, it only moves that node to the other side of it. Reading them at the batch
 snapshot slot is what makes every co-signer freeze the same set — the property the snapshot exists
 to provide.
 
-**#5 and #12 are the exception, because they are not parameters.** `tm_script_hash` (#5) identifies
-the policy the whole TM chain is minted under, and `federation_one_shot` (#12) is the compile input
-that `spos_registry_policy_id` (#9) and `treasury_info_policy_id` (#10) are derived from. A Config
+**`tm_script_hash` and `federation_one_shot` are the exception, because they are not parameters.** `tm_script_hash` identifies
+the policy the whole TM chain is minted under, and `federation_one_shot` is the compile input
+that `spos_registry_policy_id` and `treasury_info_policy_id` are derived from. A Config
 Update moving either describes a **new bridge instance** rather than a parameter change — the TM
-history minted under the old policy is not reachable from the new one, and the scripts #9/#10 name
-are not the scripts #12 rebuilds. Off-chain readers may therefore resolve #5 and #12 once at
+history minted under the old policy is not reachable from the new one, and the scripts `spos_registry_policy_id` and `treasury_info_policy_id` name
+are not the scripts `federation_one_shot` rebuilds. Off-chain readers may therefore resolve
+`tm_script_hash` and `federation_one_shot` once at
 startup, and SHOULD refuse to continue if either moves under them rather than adopting silently.
 
 > **Why no on-chain validator reads a current tunable.** Two interleaving hazards force this.
@@ -1221,7 +1230,7 @@ startup, and SHOULD refuse to continue if either moves under them rather than ad
 > proof actually compare against) eliminates the class; the params copy is only the skip-rule
 > floor.
 
-> **Implementation status.** The tunables are deployed, nested as Config #1 `params`.
+> **Implementation status.** The tunables are deployed, nested as Config `params`.
 > `PegOutDatum` carries the pinned `per_pegout_fee` field (see *Create PegOut request*);
 > *Complete peg-out*'s membership proof is value-bound against **this** per-request field, never
 > against a current Config value.
@@ -1703,8 +1712,9 @@ spend-based repair is itself a spend, so it cannot fix that.
 ## Federation
 
 **Interface (normative).** On-chain and on Bitcoin, the federation is exactly one thing: an
-x-only public key, $Y_{federation}$, whose signatures verify as plain BIP340. It is set at the K1
-bootstrap (Treasury state datum field #2, together with `federation_csv_blocks`, #3) and appears
+x-only public key, $Y_{federation}$, whose signatures verify as plain BIP340. It is published in
+the Config at instance creation (`y_federation`, with `federation_csv_blocks` in `params`, per
+[CFG-6]) and appears
 as the timelock-gated script leaf of both Taproot trees. How the federation produces signatures
 internally — a single custodian, MuSig2, FROST among its members — is indistinguishable on-chain
 and is owned by the federation's operational documentation (see §Scope and normativity).
@@ -2210,7 +2220,7 @@ this transaction MUST validate before submitting:
 |-------|------|---------|
 | `owner_auth` | `AuthorizationMethod` | authority that CANCELS this peg-out to reclaim the fBTC if it is never paid. Completion itself is permissionless and does not check this field — see *Complete peg-out* |
 | `source_chain_destination_address` | `ByteArray` | raw BTC output script where a fulfilling TM pays (referred to as `btc_destination_scriptPubKey` elsewhere in this document) |
-| `per_pegout_fee` | `Int` (satoshi) | the protocol fee of **this** peg-out, pinned at lock time from the Operational-params floor (Config #13) — a fulfilling TM pays `amount − this fee`, and *Complete peg-out*'s membership proof is value-bound against **this** field (never against a current Config value, which would race historical payments; see §Operational parameters) |
+| `per_pegout_fee` | `Int` (satoshi) | the protocol fee of **this** peg-out, pinned at lock time from the `params.per_pegout_fee` floor — a fulfilling TM pays `amount − this fee`, and *Complete peg-out*'s membership proof is value-bound against **this** field (never against a current Config value, which would race historical payments; see §Operational parameters) |
 | `created` | `Int` (POSIX ms) | requester-set creation time. Gates *Cancel PegOut request* (`created + peg_out_cancel_timeout_ms`, 30 days) and the SPO **fulfillment freshness filter** at TM construction (see *Deterministic skip rule*) |
 
 The peg-out **amount** is simply the fBTC quantity held in the UTxO's value — no separate datum field needed.
@@ -2287,7 +2297,7 @@ If the TM is malformed or omits a peg-out, recovery paths on Cardano unwind the 
 ```mermaid
 flowchart LR
   poster["Poster UTxO<br/>fees"] --> tx{{"Post signed TM<br/>MINT: +1 TM NFT"}}
-  cfg_ref[["Config UTxO<br/>(reference, field 3)"]] -. ref .-> tx
+  cfg_ref[["Config UTxO<br/>(reference: bridge_state_policy)"]] -. ref .-> tx
   bss_ref[["Bridge state singleton<br/>(reference: the head)"]] -. ref .-> tx
   tx --> unconf["Unconfirmed TM tx UTxO<br/>@ TreasuryMovementValidator<br/>datum: { signed_btc_tx,<br/>creator, created, fulfilled_por_outpoints }"]
   tx --> change["Change → poster"]
@@ -2298,7 +2308,7 @@ flowchart LR
 | Role | Content |
 |------|---------|
 | **Inputs** | Poster's UTxO — fees + MIN_ADA |
-| **Reference inputs** | Config UTxO — supplies `bridge_state_policy` (field 3), authenticated by the config NFT; the bridge state singleton — supplies the head (`treasury_utxo_id`), located by the redeemer's reference-input index and authenticated by the `"BSS"` NFT ([PTM-7]) |
+| **Reference inputs** | Config UTxO — supplies `bridge_state_policy`, authenticated by the config NFT; the bridge state singleton — supplies the head (`treasury_utxo_id`), located by the redeemer's reference-input index and authenticated by the `"BSS"` NFT ([PTM-7]) |
 | **Mint** | +1 TM NFT (empty asset name); minting is permissionless, gated by the head check. Redeemer: `TmMintRedeemer(bridge_state_ref_input_index)` |
 | **Outputs** | `Unconfirmed TM tx` UTxO @ `TreasuryMovementValidator`; datum = `UnconfirmedTm { signed_btc_tx, creator, created, fulfilled_por_outpoints }` – `creator` (the poster's payment key hash) may reclaim the record's min-ADA after the GC grace period if the TM never mines; `created` (POSIX ms) starts that timer; `fulfilled_por_outpoints` is the UNVERIFIED data-availability hint (see *Request and record UTxOs*). Ordering comes from the TM chain itself, so no sequence fields |
 | **Validity interval** | finite `invalid_hereafter` REQUIRED: the mint enforces `created == validRange.to` (exact equality), so `created` is a guaranteed upper bound on the real posting time and the GC timer cannot be backdated |
@@ -2371,7 +2381,7 @@ flowchart LR
   bss_in["Bridge state singleton<br/>(old roots, old head)"] --> tx
   prover["Prover UTxO (fees)"] --> tx
   binoc[["Binocular Oracle<br/>(reference)"]] -. ref .-> tx
-  cfg_ref[["Config UTxO<br/>(reference, field 3)"]] -. ref .-> tx
+  cfg_ref[["Config UTxO<br/>(reference: bridge_state_policy)"]] -. ref .-> tx
   tx --> bss_out["Bridge state singleton′<br/>(BTMR1-attested roots,<br/>head = btc_txid ‖ 00000000, new amount)"]
   tx --> change["record's min-ADA + change → prover"]
 ```
@@ -2381,7 +2391,7 @@ flowchart LR
 | Role | Content |
 |------|---------|
 | **Inputs** | `Unconfirmed TM tx` UTxO, carrying the TM NFT; the bridge state singleton, carrying `(bridge_state_policy, "BSS")`; Prover UTxO (fees) |
-| **Reference inputs** | Binocular Oracle — supplies the confirmed-chain root; Config UTxO — supplies `bridge_state_policy` (field 3) |
+| **Reference inputs** | Binocular Oracle — supplies the confirmed-chain root; Config UTxO — supplies `bridge_state_policy` |
 | **Mint** | the TM NFT, quantity −1 ([CTM-24]) |
 | **Outputs** | the bridge state singleton, recreated at its own address: both roots copied from the TM's BTMR1 commitment, `treasury_utxo_id = btc_txid ‖ 00000000`, `treasury_amount` = output 0's satoshi amount. NO output at the TM script address ([CTM-25]) |
 | **Witness data (redeemer)** | `TmSpendRedeemer::Confirm(proof)`, where `proof` carries the Merkle proof of `btc_txid` in a BTC block header and the Binocular inclusion proof of that block header (the raw BTC tx itself is read from the consumed `UnconfirmedTm` datum, not duplicated). No trie proof of any kind — the roots are copied, not folded |
@@ -2492,7 +2502,7 @@ flowchart LR
   cpi_in["Completed-peg-ins UTxO<br/>(MPF root)"] --> tx
   dep["Depositor UTxO (fees)"] --> tx
   bss_ref[["Bridge state singleton<br/>(reference: spi_root)"]] -. ref .-> tx
-  cfg_ref[["Config UTxO<br/>(reference, field 3)"]] -. ref .-> tx
+  cfg_ref[["Config UTxO<br/>(reference: bridge_state_policy)"]] -. ref .-> tx
   tx --> cpi_out["Completed-peg-ins UTxO′<br/>(root + this peg-in)"]
   tx --> fbtc["fBTC → depositor's Cardano address"]
   tx --> change["Change → depositor"]
@@ -2503,7 +2513,7 @@ flowchart LR
 | Role | Content |
 |------|---------|
 | **Inputs** | PegInRequest UTxO; Completed-peg-ins trie UTxO (MPF root update); Depositor UTxO (fees) |
-| **Reference inputs** | the bridge state singleton — supplies `spi_root`, located by the redeemer's `bridge_state_ref_input_index` and authenticated by the `"BSS"` NFT ([CPI-10]); Config UTxO — supplies `bridge_state_policy` (field 3) |
+| **Reference inputs** | the bridge state singleton — supplies `spi_root`, located by the redeemer's `bridge_state_ref_input_index` and authenticated by the `"BSS"` NFT ([CPI-10]); Config UTxO — supplies `bridge_state_policy` |
 | **Mint** | +`peg_in_amount` fBTC (asset name `"fSAT"`, [CFG-1]); −1 PegInRequest NFT |
 | **Outputs** | Updated Completed-peg-ins trie UTxO (new MPF root including this peg-in; same NFT, same address); fBTC → depositor-chosen address; change |
 | **Witness data (redeemer)** | depositor's x-only BTC pubkey + BIP-322 signature; `sweeping_tm_input_0` (36 B) + MPF membership proof against `spi_root` ([CPI-9]); non-membership proof of the peg-in against the current CPI root + updated-root proof |
@@ -2597,7 +2607,7 @@ singleton (at Confirm TM tx) so that this POR's id is present with the value thi
 flowchart LR
   pout["PegOut UTxO<br/>(locked fBTC)"] --> tx{{"Complete peg-out<br/>BURN: −fBTC"}}
   bss_ref[["Bridge state singleton<br/>(reference: cpo_root)"]] -. ref .-> tx
-  cfg_ref[["Config UTxO<br/>(reference, field 3)"]] -. ref .-> tx
+  cfg_ref[["Config UTxO<br/>(reference: bridge_state_policy)"]] -. ref .-> tx
   comp["Completer UTxO (fees)"] --> tx
   tx --> reward["MIN_ADA + any surplus → completer"]
   tx --> change["Change → completer"]
@@ -2608,7 +2618,7 @@ flowchart LR
 | Role | Content |
 |------|---------|
 | **Inputs** | PegOut UTxO (unlocks fBTC); completer UTxO (fees) |
-| **Reference inputs** | the bridge state singleton — supplies the attested `cpo_root`, authenticated by the NFT `(bridge_state_policy, "BSS")` ([CPO-11]); Config UTxO — supplies `bridge_state_policy` (field 3) |
+| **Reference inputs** | the bridge state singleton — supplies the attested `cpo_root`, authenticated by the NFT `(bridge_state_policy, "BSS")` ([CPO-11]); Config UTxO — supplies `bridge_state_policy` |
 | **Mint** | −fBTC (equal to the full fBTC held by the PegOut UTxO) |
 | **Outputs** | the PegOut UTxO's entire non-fBTC content (MIN_ADA, plus any overfunded lovelace or stray tokens) → wherever the completer directs it — no on-chain destination check; change |
 | **Witness data (redeemer)** | `por_id` (= `hash_output_ref` of the PegOut UTxO's own outpoint, computed on-chain — no datum field needed); MPF **membership** proof of `por_id ↦ dest_spk ‖ amount_le8` against the completed-peg-outs trie root, where `amount = locked fBTC − datum.per_pegout_fee` |
@@ -2667,7 +2677,7 @@ flowchart LR
   pout["PegOut UTxO<br/>(locked fBTC)"] --> tx{{"Cancel PegOut"}}
   wdraw["Withdrawer UTxO (fees)"] --> tx
   bss_ref[["Bridge state singleton<br/>(reference: cpo_root)"]] -. ref .-> tx
-  cfg_ref[["Config UTxO<br/>(reference, field 3)"]] -. ref .-> tx
+  cfg_ref[["Config UTxO<br/>(reference: bridge_state_policy)"]] -. ref .-> tx
   tx --> refund["fBTC + MIN_ADA → withdrawer"]
   tx --> change["Change → withdrawer"]
 ```
@@ -2677,7 +2687,7 @@ flowchart LR
 | Role | Content |
 |------|---------|
 | **Inputs** | PegOut UTxO; withdrawer UTxO (fees) |
-| **Reference inputs** | the bridge state singleton — supplies the attested `cpo_root` ([CXL-8], [CPO-13]); Config UTxO — supplies `bridge_state_policy` (field 3) |
+| **Reference inputs** | the bridge state singleton — supplies the attested `cpo_root` ([CXL-8], [CPO-13]); Config UTxO — supplies `bridge_state_policy` |
 | **Mint** | — (nothing is minted or burned; the fBTC returns to its owner) |
 | **Outputs** | locked fBTC + MIN_ADA → withdrawer (per `owner_auth`); change |
 | **Witness data (redeemer)** | `por_id` (computed on-chain from the PegOut UTxO's own outpoint); MPF **non-membership** (exclusion) proof of `por_id` against the completed-peg-outs trie root |
@@ -2807,11 +2817,11 @@ Branch (a), never swept, needs [CLR-5] **and** [CLR-6]. Branch (b), duplicate, n
 ### Update operational parameters (Cardano)
 
 **Purpose**: change the tunable protocol values (fee rate, per-peg-out fee floor, minimum
-peg-out, schedule). Since the 2026-07-17 merge these are Config data — nested as field #14
-`params` since rev 5.4 — so this is an authorized **Config Update** — the same transaction that
+peg-out, schedule). Since the 2026-07-17 merge these are Config data — nested as `params`
+since rev 5.4 — so this is an authorized **Config Update** — the same transaction that
 rewires the instance — not a separate contract.
 
-**Who**: whoever satisfies `update_auth` (Config #0); `None` means the Config is permanently
+**Who**: whoever satisfies `update_auth`; `None` means the Config is permanently
 frozen and no update is possible.
 **Trigger**: parameter drift — the Bitcoin fee market above all (see *Stuck-TM recovery*).
 
@@ -2837,7 +2847,7 @@ flowchart LR
 
 **Checks enforced on-chain** (`config.ak` spend, `Update` redeemer)
 
-* **[UOP-1]** `config.ak` MUST verify the spent datum's `update_auth` (#10) is present — `None` is permanently frozen, hence unspendable — and that the transaction satisfies it.
+* **[UOP-1]** `config.ak` MUST verify the spent datum's `update_auth` is present — `None` is permanently frozen, hence unspendable — and that the transaction satisfies it.
 * **[UOP-2]** `config.ak` MUST verify there is exactly one continuing output at the Config's own script credential, at the byte-identical full address (stake credential included), carrying an inline datum.
 * **[UOP-3]** `config.ak` MUST verify the Config NFT continues in that output and is the only token of the Config's own policy, and that the output's non-ADA value is otherwise unchanged — the Config is a reference input of nearly every bridge transaction, so junk assets would bloat all of them.
 
@@ -2846,7 +2856,7 @@ flowchart LR
 The new datum's shape and values are deliberately **not** validated on chain: any inline datum is
 accepted, because datum evolution is an explicit goal and readers use positional getters.
 
-* The authority MUST write a datum that current readers can still parse, and MUST keep #10
+* The authority MUST write a datum that current readers can still parse, and MUST keep `update_auth`
   parseable as `Option<AuthorizationMethod>` — anything else halts the bridge or freezes the
   Config until a later Update repairs it.
 * The authority MUST enforce parameter sanity: `min_peg_out_fbtc > per_pegout_fee + 330` (Bitcoin
@@ -2934,7 +2944,7 @@ branch breaks the deadlock:
 * **[UY-5]** *(Revised again, rev 5.5)* `treasury.ak` MUST accept an Update-Y authorized by a
   BIP340 signature under **`y_federation`**, in place of [UY-3]'s signature under
   `current_spos_frost_key`. Rev 5.5 moves the key: it is read from the Config reference input
-  (field #11), not from the spent datum, because `TreasuryDatum` no longer carries it ([CFG-6]).
+  (`y_federation`), not from the spent datum, because `TreasuryDatum` no longer carries it ([CFG-6]).
 * **[UY-6]** ~~The reset sets `current_spos_frost_key` only to `y_federation` itself.~~ —
   **Withdrawn (rev 5.4)**. The federation MAY name any key.
 * **[UY-7]**, **[UY-8]** ~~The Binocular-confirmed federation-CSV sweep proof and its freshness
@@ -3248,7 +3258,7 @@ operator performs:
    instance: it records every cross-referenced script hash and token identity per the fifteen-field
    table of §Config UTxO (`update_auth`, the fBTC policy, the completed-peg-ins trie policy, the
    bridge state policy, the TM script hash, and the peg-in/peg-out withdraw scripts). The same
-   datum carries the initial **operational parameters** nested as field #14 `params` (fee rate,
+   datum carries the initial **operational parameters** nested as `params` (fee rate,
    per-peg-out fee floor, minimum peg-out, schedule); see §Operational parameters.
    The wiring section must be final at mint time — **the Config NFT is the identity of the
    instance**: a different Config UTxO implies a different fBTC policy, i.e. a *new*,
@@ -3266,9 +3276,9 @@ home an identity gets is a security decision, not a matter of taste:
   TM NFT policy are the two cases: a different value is a different instance, by construction.
 * An identity that only names **which script performs a delegated check** MAY live in the
   **Config datum**, written at step 4 and changeable afterwards by an authorized Update.
-  `bridge_state_policy` (Config #3) is the live example: every reader takes it at run time
+  `bridge_state_policy` is the live example: every reader takes it at run time
   ([PAR-1]), which is what makes §Recovery: replacing the singleton possible. `tm_script_hash`
-  (Config #4) is how a Scalus contract's identity reaches off-chain readers without a hard-coded
+  is how a Scalus contract's identity reaches off-chain readers without a hard-coded
   constant ([CFG-2]).
 * A per-instance key or constant that **the reading validator itself owns** MAY live in **that
   validator's own datum**, written once at bootstrap and preserved by every later branch.
@@ -3276,7 +3286,7 @@ home an identity gets is a security decision, not a matter of taste:
   branch names the one field it owns and asserts the other is unchanged.
 
   > **Rev 5.5 moved `y_federation` and `federation_csv_blocks` OUT of this category**, into
-  > Config #11 and `params[7]`. The paragraph below argued they were safe in `treasury.ak`'s
+  > `y_federation` and `params.federation_csv_blocks`. The paragraph below argued they were safe in `treasury.ak`'s
   > datum and would not be safe in the Config, and the trade it describes is real — see §Trust
   > model for what widened. They moved anyway, because nothing on-chain could ever *change* them
   > there: the field-permission matrix promised a federation-key rotation that no branch
@@ -3290,12 +3300,12 @@ instance. A validator's own datum field sits between them: immutability is enfor
 validator's logic rather than by its hash, which is sound **only** because the validator that
 enforces the preservation is the same one that relies on the value. That reasoning is why `y_federation` — the key that authorizes the Update-Y federation branch
 ([UY-5]) and that can sweep the treasury once the CSV elapses — was placed in the treasury datum
-originally. Rev 5.5 accepts the trade and moves it to Config #11, so the `update_auth` authority
+originally. Rev 5.5 accepts the trade and moves it to Config `y_federation`, so the `update_auth` authority
 can now rewrite it; §Trust model records what that costs. It also keeps the value next to the group key it is
 derived with, so a depositor reads one UTxO rather than two, and it lets one compiled `treasury.ak`
 serve instances with different federation keys. None of the three may be hard-coded as a constant
 in a script body: that makes the compiled artifact instance-specific, so one build could no longer serve
-several bridged assets (Config #1), and it breaks the redeploy property recorded under *Instance
+several bridged assets (`bridged_token_policy`), and it breaks the redeploy property recorded under *Instance
 lifecycle: retirement and redeploy*.
 5. **Mint the completed-peg-ins trie NFT** ([CPT-1] to [CPT-6]) — its UTxO carries the MPF root,
    initialized to the empty root (32 zero bytes).
@@ -3354,7 +3364,7 @@ lifecycle: retirement and redeploy*.
     K1 datum key), fund it on Bitcoin with a minimal anchor amount, wait for confirmation, verify
     the outpoint and its satoshi amount against Bitcoin ([DEP-2]), then record both in the bridge
     state singleton's bootstrap datum (§Bridge state singleton). [DEP-1]: the singleton MUST
-    exist, and Config field 3 MUST point at it, before the first post — [PTM-6] reads the head at
+    exist, and Config `bridge_state_policy` MUST point at it, before the first post — [PTM-6] reads the head at
     mint time. The first TM spends the anchor as Input 0 (see *Post signed TM*).
 
 ## User peg-in flow
@@ -3782,7 +3792,7 @@ examples for a mainnet-parameter instance:
 | `tm_recovery_window` | **constrained** | **must exceed the normal Binocular confirmation latency** (~100 BTC blocks + challenge ≈ 17–20 h), or healthy TMs are spuriously "recovered"; recommended ≥ 2× expected latency | 36 h |
 | `final_tm_cutoff` | constrained | `≤ epoch_length − (sign windows + posting + tm_recovery_window + handoff margin)` | E + 4 d |
 
-The free and constrained parameters live in the **Config datum** (#16, `schedule`) with a second
+The free and constrained parameters live in the **Config datum** (`params.schedule`) with a second
 effect rule: **schedule parameters take effect from the next epoch boundary** (fee parameters:
 from the next batch) — the schedule can never change under a running epoch. The constraints
 marked MUST are the governing authority's to enforce: `config.ak` accepts any datum shape by
@@ -5087,7 +5097,7 @@ then opens `attempt + 1` for the same `(epoch, txid, mode)` with **fresh Round 1
                                  / (sign_r1_window + sign_r2_window) ⌋)
   ```
 
-  Every term is published — the windows and `leader_slot_T` in the `schedule` record of Config #1 `params`,
+  Every term is published — the windows and `leader_slot_T` in `params.schedule`,
   `roster_size` in the on-chain roster — so no SPO needs local configuration to agree on the
   bound. The `max(1, …)` floor means a schedule too tight for even one attempt still runs one:
   the movement is then merely late, never unsafe. But a schedule admitting only one attempt
@@ -5378,25 +5388,25 @@ Failures are handled deterministically so that all honest SPOs converge on the s
 
 | Parameter(s) | Home | Kind | Consumers |
 |---|---|---|---|
-| wiring #0 and #2–7 (`update_auth`, `bridged_token_policy`, `completed_peg_ins_policy`, `bridge_state_policy`, `tm_script_hash`, `peg_in_script_hash`, `peg_out_script_hash`) | Config datum | governance Update only | all validators, as reference input. **#4** (`bridge_state_policy`) is read by `peg-in.ak` ([CPI-10]), `peg-out.ak` ([CPO-11], [CXL-8]) and `TreasuryMovementValidator` ([PTM-7], [CTM-28]) — always at runtime, per [PAR-1]; **#5** (`tm_script_hash`) has NO on-chain reader ([CFG-2]). Rev 5.5 inserted `params` at #1, so every wiring index shifted up by one |
-| `spos_registry_policy_id` | Config **#9** | governance Update only | `treasury.ak`'s `RegistryUpdate` gate ([TSY-13], [PRE-4]) — its first on-chain reader. See §Trust model: this replaced an immutable compile parameter |
-| `treasury_info_policy_id` | Config **#10** | governance Update only | off-chain discovery. The pin that matters is a compile parameter of `spo_registry` ([REG-6]) |
+| `update_auth` and the wiring fields (`bridged_token_policy`, `bridged_token_policy`, `completed_peg_ins_policy`, `bridge_state_policy`, `tm_script_hash`, `peg_in_script_hash`, `peg_out_script_hash`) | Config datum | governance Update only | all validators, as reference input. `bridge_state_policy` is read by `peg-in.ak` ([CPI-10]), `peg-out.ak` ([CPO-11], [CXL-8]) and `TreasuryMovementValidator` ([PTM-7], [CTM-28]) — always at runtime, per [PAR-1]; `tm_script_hash` has NO on-chain reader ([CFG-2]) |
+| `spos_registry_policy_id` | Config datum | governance Update only | `treasury.ak`'s `RegistryUpdate` gate ([TSY-13], [PRE-4]) — its first on-chain reader. See §Trust model: this replaced an immutable compile parameter |
+| `treasury_info_policy_id` | Config datum | governance Update only | off-chain discovery. The pin that matters is a compile parameter of `spo_registry` ([REG-6]) |
 | `min_stake` | heimdall local config (`cardano.min_stake_lovelace`) — left the Config datum in rev 5.4 | operator-tunable, no on-chain reader | off-chain candidate enumeration |
-| `fee_rate_sat_per_vb` | Config #1 `params[1]` | updatable (effect: next batch) | TM builders |
-| `per_pegout_fee` (floor) | Config #1 `params[2]` | updatable (effect: next batch) | skip rule; pinned copies in PegOutDatums |
-| `min_peg_out_fbtc` | Config #1 `params[3]` | updatable (effect: next batch) | client checks + skip rule |
+| `fee_rate_sat_per_vb` | Config `params.fee_rate_sat_per_vb` | updatable (effect: next batch) | TM builders |
+| `per_pegout_fee` (floor) | Config `params.per_pegout_fee` | updatable (effect: next batch) | skip rule; pinned copies in PegOutDatums |
+| `min_peg_out_fbtc` | Config `params.min_peg_out_fbtc` | updatable (effect: next batch) | client checks + skip rule |
 | `leader_reward` | nowhere — DEFERRED (rev 5.4); left the Config and the TM datum | — | none ([CPI-7] withdrawn) |
-| schedule (`dkg_r1/r2_deadline`, `update_y_deadline`, `tm_batch_interval`, `sign_r1/r2_window`, `leader_slot_T`, `tm_recovery_window`, `final_tm_cutoff`, `stability_window`) | Config #1 `params[0]` | derived / constrained / free (see the schedule table; effect: next epoch) | every SPO's scheduler |
+| schedule (`dkg_r1/r2_deadline`, `update_y_deadline`, `tm_batch_interval`, `sign_r1/r2_window`, `leader_slot_T`, `tm_recovery_window`, `final_tm_cutoff`, `stability_window`) | Config `params.schedule` | derived / constrained / free (see the schedule table; effect: next epoch) | every SPO's scheduler |
 | `per_pegout_fee` (effective) | each `PegOutDatum` | pinned at lock time | TM builder (skip rule, output amount); *Complete peg-out*'s value-bound membership proof ([CPO-12]) |
 | `created` (POR) | each `PegOutDatum` | requester-set at lock time | TM builder's fulfillment freshness filter; *Cancel PegOut request*'s timeout check ([CXL-7]) |
-| `peg_out_cancel_timeout_ms` | `peg-out.ak` validator constant (`2_592_000_000`, 30 days) | fixed per deployed script — changeable only by a `peg-out.ak` swap via Config Update (field 5) | *Cancel PegOut request* ([CXL-7]) |
+| `peg_out_cancel_timeout_ms` | `peg-out.ak` validator constant (`2_592_000_000`, 30 days) | fixed per deployed script — changeable only by a `peg-out.ak` swap via Config Update (`peg_out_script_hash`) | *Cancel PegOut request* ([CXL-7]) |
 | `created` (PIR) | each `PegInDatum` | **mint-pinned** to the mint tx's validity upper bound ([CLR-7]) — not requester-set, unlike the POR one | *Close PegInRequest*'s never-swept timeout ([CLR-5]) |
 | `peg_in_close_timeout_ms` | `peg-in.ak` validator constant (`2_592_000_000`, 30 days) | fixed per deployed script — changeable only by a `peg-in.ak` swap via Config Update | *Close PegInRequest* ([CLR-5]) |
 | fulfillment freshness margin (7 days) | `heimdall`'s `PEG_OUT_FRESHNESS_MARGIN_MS` (off-chain, not on-chain) | protocol constant, NOT operator-tunable and no Config field — it is a TM selection rule, so a per-operator value would make co-signers freeze different sets | SPO TM builder's skip rule |
-| `y_federation` | Config **#11** | governance Update ([CFG-6]) | address derivation; CSV leaves; the Update-Y federation branch ([UY-5]), which reads it from the Config reference input |
-| `federation_csv_blocks` | Config **#1** `params[7]` | governance Update ([CFG-6]) | address derivation; CSV leaves. No on-chain reader |
+| `y_federation` | Config datum | governance Update ([CFG-6]) | address derivation; CSV leaves; the Update-Y federation branch ([UY-5]), which reads it from the Config reference input |
+| `federation_csv_blocks` | Config `params.federation_csv_blocks` | governance Update ([CFG-6]) | address derivation; CSV leaves. No on-chain reader |
 | `refund_timeout` | baked into each deposit's refund leaf | Config `params.pegin_refund_timeout_blocks` ([CFG-9]), `> federation_csv_blocks` | depositors; SPO address reconstruction |
-| ban parameters (`base_ban_duration_ms`, `max_faults_before_permanent`, `max_validity_window_ms`) | compile-time parameters of `spo-bans.ak`, mirrored in Config `params[4..6]` | per-instance constants | ban validator; the ApplyBan builder reads the mirror |
+| ban parameters (`base_ban_duration_ms`, `max_faults_before_permanent`, `max_validity_window_ms`) | compile-time parameters of `spo-bans.ak`, mirrored in Config `params` | per-instance constants | ban validator; the ApplyBan builder reads the mirror |
 | protocol constants (Bitcoin dust 330 sat; Binocular depth 100 blocks + challenge; `security_threshold` 51%; BTMR1 prefix `6a4542544d5231`, 71-byte commitment; fBTC asset name `"fSAT"` [CFG-1]; bridge state asset name `"BSS"`; Config NFT name `"BIFCFG"` [CFG-7]; Treasury state NFT name `"BFRTRY"` [CFG-4]; registration root name `"reg-root"`) | this specification / Binocular [1] | fixed | various |
 
 # Architecture Decisions
@@ -5437,17 +5447,17 @@ datum. Both were found in review and are recorded here rather than fixed, becaus
 consequence of the placement decision rather than a defect in it.
 
 * **The registry pin.** `treasury.ak`'s `RegistryUpdate` gate used to name `registry_policy_id` as
-  a compile parameter, baked into the script hash. It now reads Config #9 at run time ([PRE-4]),
+  a compile parameter, baked into the script hash. It now reads Config `spos_registry_policy_id` at run time ([PRE-4]),
   and the same revision removed every constraint `treasury.ak` placed on the new identity root —
   [TSY-15] checks only that the FROST key is unchanged. So the root's whole protection is that
-  `spos-registry.ak`'s [REG-5] MPF proof ran, which holds only while Config #9 names the real
-  registry. An `update_auth` authority that repoints #9 at a policy it controls can satisfy
+  `spos-registry.ak`'s [REG-5] MPF proof ran, which holds only while Config `spos_registry_policy_id` names the real
+  registry. An `update_auth` authority that repoints `spos_registry_policy_id` at a policy it controls can satisfy
   [TSY-13] and write any root.
-* **The federation key.** `y_federation` was `TreasuryDatum` field #2, written once at the
+* **The federation key.** `y_federation` was a `TreasuryDatum` field, written once at the
   bootstrap mint and carried forward by every spend branch, so no transaction could change it. It
-  is Config #11 now, and `config.ak`'s `Update` constrains datum content not at all. One
-  `update_auth` signature can therefore install an attacker's key at #11 and then rotate
-  `current_spos_frost_key` with an [UY-5] Update-Y signed under it.
+  now lives in the Config, and `config.ak`'s `Update` places no constraint on the datum it writes.
+  One `update_auth` signature can therefore install an attacker's key as `y_federation` and then
+  rotate `current_spos_frost_key` with an [UY-5] Update-Y signed under it.
 
 Neither widens the trust *boundary*: `update_auth` could already rewrite `bridged_token_policy`
 and every script hash a reader resolves, so it could already halt or redirect the bridge. What
@@ -5456,10 +5466,10 @@ before they were unreachable on-chain at any price. Governance remains at the ho
 floor, per §Trust model.
 
 **Two related gaps are open, not closed.** `treasury.ak` never checks that the registry named in
-Config #9 is the one compiled against its own policy id, so the pin is one-directional and a
+Config `spos_registry_policy_id` is the one compiled against its own policy id, so the pin is one-directional and a
 mis-parameterized registry redeploy reopens [REG-6]'s hole. And `y_federation` is passed to
 `verify_schnorr_signature` with no length or point-validity check, while an off-curve key makes
-the builtin ERROR rather than return `False` — which `or` propagates, so a bad key at #11 or in
+the builtin ERROR rather than return `False` — which `or` propagates, so a bad key in `y_federation` or in
 the spent datum can make the [UY-5] recovery branch unreachable. Both are tracked for the next
 revision.
 
@@ -5564,7 +5574,7 @@ Every *Implementation status* note in this document, in document order.
 |---|---|
 | §Config UTxO | The Config datum layout is implemented; the fields with a getter and no on-chain reader are listed there ([CFG-2], [CFG-3]) |
 | §Operational parameters | heimdall does not implement the TM builder's skip rules for `per_pegout_fee` and `min_peg_out_fbtc` |
-| §Operational parameters | The tunables are deployed as Config #1 `params`; completion checks the fee pinned in each `PegOutDatum` |
+| §Operational parameters | The tunables are deployed as Config `params`; completion checks the fee pinned in each `PegOutDatum` |
 | §Treasury state UTxO | Rev 5.5 is implemented on-chain |
 | §Bridge state singleton | [BSS-1], [BSS-2], [BSS-4] to [BSS-7] are implemented; [BSS-3] was never issued |
 | *Peg-in deposit (Bitcoin)* | The 35-byte beacon is implemented; two earlier forms are refused |
@@ -5615,7 +5625,7 @@ This section collects the acronyms, protocol terms, on-chain validators, mathema
 * **CSV**: `OP_CHECKSEQUENCEVERIFY` (Bitcoin relative-timelock opcode).
 * **DKG**: Distributed Key Generation.
 * **ECDH**: Elliptic Curve Diffie–Hellman.
-* **fBTC**: Bridged Bitcoin — the Cardano-native token representing locked BTC. Asset name `"fBTC"` under the bridged-token policy (Config #0–1); **1 token = 1 satoshi** (all protocol amounts are integer satoshis; display decimals are off-chain wallet metadata). Each source chain gets its own policy — i.e., its own bridge instance.
+* **fBTC**: Bridged Bitcoin — the Cardano-native token representing locked BTC. Asset name `"fSAT"` ([CFG-1]) under `bridged_token_policy`; **1 token = 1 satoshi** (all protocol amounts are integer satoshis; display decimals are off-chain wallet metadata). Each source chain gets its own policy — i.e., its own bridge instance.
 * **FROST**: Flexible Round-Optimized Schnorr Threshold Signatures (RFC 9591 [2]).
 * **HASH160**: RIPEMD160(SHA256(·)).
 * **Poseidon**: ZK-friendly algebraic hash, used for payload self-commitments and the Round-2 share KDF (cheap inside ZK circuits, never computed on-chain).
@@ -5643,14 +5653,14 @@ This section collects the acronyms, protocol terms, on-chain validators, mathema
 * **Bifrost Membership Token**: singleton NFT minted per `pool_id` under `spos-registry.ak` as the on-chain badge of Bifrost participation.
 * **Bifrost URL (`bifrost_url`)**: HTTP endpoint where an SPO publishes DKG and signing payloads.
 * **Binocular Oracle**: on-chain Cardano contract that stores validated Bitcoin block headers and serves inclusion proofs (see [1]). Implemented as a Scalus contract in the binocular sub-project (`BitcoinValidator.scala`).
-* **Bridge state singleton**: NFT-authenticated singleton UTxO at `bridge-state.ak` (NFT = Config field 3 `bridge_state_policy`, asset `"BSS"`) holding the `BridgeState` datum: `spi_root`, `cpo_root`, the TM-chain **head** and the treasury amount. Spent and recreated at every *Confirm TM tx*; nothing else may spend it (see §Bridge state singleton).
+* **Bridge state singleton**: NFT-authenticated singleton UTxO at `bridge-state.ak` (NFT = Config `bridge_state_policy`, asset `"BSS"`) holding the `BridgeState` datum: `spi_root`, `cpo_root`, the TM-chain **head** and the treasury amount. Spent and recreated at every *Confirm TM tx*; nothing else may spend it (see §Bridge state singleton).
 * **Canonical byte layout**: deterministic serialization of a payload's fields used as the message under signature for the `sign-the-hash` scheme.
 * **Cold key (`cold_vkey` / `cold_skey`)**: a pool's long-term Ed25519 keypair, used only for registration and revocation.
 * **Completed peg-ins trie**: NFT-authenticated singleton UTxO holding an MPF root recording every minted peg-in to prevent double minting (kept outside `treasury.ak` for contention isolation — permissionless mints must not serialize against SPO state updates).
 * **Completed peg-outs trie (CPO trie)**: MPF mapping every paid POR's **POR id** to `dest_scriptPubKey ‖ amount_le8`. Its on-chain root is `cpo_root` in the **bridge state singleton** (below). The root is **quorum-attested**, not folded on-chain: each Treasury Movement commits the post-TM root in its **BTMR1 commitment** (below), and *Confirm TM tx* copies that root into the singleton — O(1) regardless of batch size. *Complete peg-out* and *Cancel PegOut request* only **reference** the singleton (a membership or non-membership proof); neither spends it.
 * **BTMR1 commitment**: the `OP_RETURN` output every Treasury Movement carries exactly once — `OP_RETURN OP_PUSHBYTES_69 ("BTMR1" ‖ spi_root ‖ cpo_root)`, 71 script bytes, prefix `6a4542544d5231` — committing both attested roots that hold after this TM. `"BTMR1"` = **B**ifrost **TM** **R**oots, format version **1**. `spi_root` is script bytes [7, 39); `cpo_root` is script bytes [39, 71). A TM that sweeps no peg-in and pays no peg-out still carries one, re-committing the unchanged roots (see *Post signed TM* and *Confirm TM tx*). It replaces the rev-5.1 39-byte `CPOR1` commitment, which carried only the CPO root. The tag is deliberately not `"BFR"`-prefixed: watchtowers detect deposits by that prefix, and a TM pays the treasury address, so a `"BFR"` tag here could be misread as a deposit.
 * **Config UTxO**: NFT-authenticated, **immutable and never-spent** UTxO at `config.ak` holding the instance's wiring (cross-referenced script hashes and token identities); read as a reference input by the other validators (see §Config UTxO).
-* **Operational parameters**: the tunable protocol values (fee rate, per-peg-out fee floor, minimum peg-out, schedule), nested in the Config datum's `params` field (#1); changed by an authorized Config Update and read by **no on-chain validator** — every consumer reads them off-chain at a snapshot slot (see §Operational parameters).
+* **Operational parameters**: the tunable protocol values (fee rate, per-peg-out fee floor, minimum peg-out, schedule), nested in the Config datum's `params` field; changed by an authorized Config Update and read by **no on-chain validator** — every consumer reads them off-chain at a snapshot slot (see §Operational parameters).
 * **Confirmed (Binocular)**: a Bitcoin block that has 100+ confirmations and has cleared the 200-minute challenge window (see [1]).
 * **Current roster**: the on-chain SPO set currently controlling the treasury and authorized to sign the next TM.
 * **Depositor**: user who locks BTC on Bitcoin to mint fBTC on Cardano.
