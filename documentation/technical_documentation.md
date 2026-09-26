@@ -220,23 +220,24 @@ its clients. That is the normative direction — a component identity MUST be ei
 the config root (its contract parameterized by the config NFT pair) or Config-resident. An
 identity that requires an out-of-band value breaks the property.
 
-The deployed tree satisfies this only in part:
+The deployed tree satisfies this for every component except the oracle policy id:
 
 | Contract | Parameters | Config-rooted? |
 |---|---|---|
-| `bridged-token.ak` | config NFT pair | **yes** — the pair alone |
-| `completed-peg-ins-merkle-tree.ak` | config NFT pair + one-shot outref | partly — the one-shot is out-of-band |
-| `bridge-state.ak` | TM script hash + one-shot outref | partly — clients find it through Config `bridge_state_policy` at runtime ([PAR-1]), but the one-shot is out-of-band |
-| `peg-in.ak` | oracle policy, config NFT pair, TM NFT policy | partly — oracle and TM policy are out-of-band |
-| `peg-out.ak` | config NFT pair | **yes** — rev 5.1 dropped its oracle parameter; completion now proves against the completed-peg-outs trie |
-| `treasury.ak` | registry policy, TM NFT policy | no |
-| `spos-registry.ak` | bootstrap outref | no |
-| `spo-bans.ak` | registry hash, fault policy ids, ban tunables, bootstrap outref | no |
-| `fault-verifier-round1/round2/equivocation.ak` | registration script hash | no |
+| `bridged-token.ak` | config NFT policy | **yes**: the policy alone, and resident as `bridged_token_policy` |
+| `completed-peg-ins-merkle-tree.ak` | config NFT policy, one-shot outref | **yes**: resident as `completed_peg_ins_policy`; the one-shot is needed only to rebuild the script |
+| `bridge-state.ak` | TM NFT policy, one-shot outref | **yes**: resident as `bridge_state_policy`, read at run time ([PAR-1]); the one-shot is needed only to rebuild the script |
+| `peg-in.ak` | oracle policy id, config NFT policy | **yes**: resident as `peg_in_script_hash`; rebuilding the script needs the oracle policy id, which is out of band |
+| `peg-out.ak` | config NFT policy | **yes**: the policy alone, and resident as `peg_out_script_hash` |
+| `treasury.ak` | `federation_one_shot`, config NFT policy | **yes**: derivable, and resident as `treasury_info_policy_id` |
+| `spos-registry.ak` | `federation_one_shot`, `treasury_info_policy_id` | **yes**: derivable, and resident as `spos_registry_policy_id` |
+| `spo-bans.ak` | `spos_registry_policy_id`, the fault-verifier policies, the ban tunables in `params`, `federation_one_shot` | **yes**: every input is resident or derivable, and resident as `spo_bans_policy_id` |
+| `fault-verifier-round1/round2/equivocation.ak` | `spos_registry_policy_id` | **yes**: derivable |
 
-The SPO-side tree and `treasury.ak` are rooted in their own bootstrap outpoints and cross-script
-hashes rather than in the Config, so a client must still be told those identities out of band.
-Closing the gap by mirroring the enforced parameters into the Config datum was considered and
+Since rev 5.5 the SPO-side tree and `treasury.ak` are rooted in the Config as well: their policy
+ids are `spo_bans_policy_id`, `spos_registry_policy_id` and `treasury_info_policy_id`, and the
+one-shot outpoint they are compiled from is `federation_one_shot`.
+Mirroring the *enforced* parameters into the Config datum was considered and
 **dropped** (binocular `38f9e06`): those mirrors existed only to feed an Aiken TM validator's
 config-only oracle read, which became moot once the canonical TM contract moved to Scalus. What
 replaces them is not a bare mirror: an identity is appended to the datum so that a client can find
@@ -260,15 +261,15 @@ it, and any transaction may instead embed the script and pay the size. Whether r
 should become instance-level, which would change that answer, is owned by *Final optimizations*
 [final-optimizations.md](final-optimizations.md).
 
-<!-- contract-CR: the three discovery fields below are specified but not yet in config.ak. -->
-**Not yet reachable (contract-CR).** Three identities an SPO program needs are absent from the
-datum today and are still handed to operators out of band: the oracle policy id, the registry's
-bootstrap outpoint, and the authorized fault-verifier policies. Each MUST become a
-Config-resident discovery field.
-
-Four of the original seven are now resident: the TM NFT policy is `tm_script_hash` ([CFG-2]), and the ban
+<!-- contract-CR: the oracle policy id is the one discovery field still absent from config.ak. -->
+**Still out of band.** One identity is neither Config-resident nor derivable from the Config: the
+oracle policy id, a compile parameter of `peg-in.ak`. It MUST become a Config-resident discovery
+field. Everything else is reachable. The TM NFT policy is `tm_script_hash` ([CFG-2]); the ban
 list, the SPO registry and the Treasury state NFT are `spo_bans_policy_id`,
-`spos_registry_policy_id` and `treasury_info_policy_id` ([CFG-3]).
+`spos_registry_policy_id` and `treasury_info_policy_id` ([CFG-3]); the one-shot they are compiled
+from is `federation_one_shot`; and the fault-verifier policies take only the registry hash as
+their parameter, so a client derives them from `spos_registry_policy_id` and the blueprint.
+heimdall accordingly takes nothing but the config NFT pair from its operator.
 
 For a trust anchor — the oracle policy, and the TM NFT policy already resident as `tm_script_hash` — the
 Config field is a **copy for discovery only**. Enforcement stays on the validator parameter, per
@@ -5592,7 +5593,7 @@ Owned by *Final optimizations* [9]:
 1. Reference scripts are deployed per operator, not per instance.
 2. Two catalog transactions have no off-chain builder.
 3. No one has verified the checks against the validators.
-4. Discovery fields are specified but not implemented.
+4. One discovery field is specified but not implemented.
 5. The Phase-1 handoff moves custody on published evidence, not on a proof of possession.
 
 ## Open design risks

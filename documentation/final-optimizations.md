@@ -110,15 +110,16 @@ rather than merely *present*.
 
 ---
 
-## 4. Discovery fields are specified but not implemented
+## 4. One discovery field is specified but not implemented
 
-*The Config as the discovery root* requires seven identities to become Config-resident so that an
-operator needs only the config NFT policy id: the oracle policy, the TM NFT policy, the registry
-policy and its bootstrap outpoint, the ban-list identity, the fault-verifier policies, and the
-Treasury state NFT identity. They are recorded as a contract change request; `config.ak` does not
-carry them yet.
+*The Config as the discovery root* requires every identity an off-chain component needs to be
+Config-resident or derivable from the Config. As of rev 5.5 one is neither: the oracle policy id,
+a compile parameter of `peg-in.ak`. It is recorded as a contract change request; `config.ak` does
+not carry it yet. The registry, ban-list and Treasury state identities, the one-shot outpoint they
+are compiled from (`federation_one_shot`) and the TM NFT policy are resident, and the
+fault-verifier policies derive from `spos_registry_policy_id`.
 
-Two of the seven are trust anchors, so their Config fields are copies for discovery only —
+The oracle policy is a trust anchor, so its Config field would be a copy for discovery only:
 enforcement stays on the validator parameter, and a client detects a false copy by deriving the
 reading validator's address from it and checking the instance's UTxOs are there.
 
