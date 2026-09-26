@@ -65,9 +65,55 @@ the internal signing threshold, the custody/accountability claims for the key be
 $Y_{federation}$, and the statement [FED-3] requires — that the federation can rotate the
 treasury key unilaterally and immediately (see §Federation and *Update-Y*).
 
+## Quality goals
+
+Bifrost is built for security and availability, not for speed or low cost (§Architecture
+overview). In priority order:
+
+| # | Quality goal | What it means here | Where it is enforced |
+|---|---|---|---|
+| 1 | Fund safety | No party below a weighted majority of the registered SPOs can move the treasury, and no completion can mint more fBTC than was deposited | the $Y_{51}$ key path, [CPI-3] to [CPI-10], the attested roots ([SPI-2]) |
+| 2 | Censorship resistance | No single actor can block a peg-in or a peg-out; every role that could is permissionless or replaceable | §Guaranteeing censor-resistant peg-ins and peg-outs |
+| 3 | Verifiability | A user can check every trust claim from public data, and every on-chain check has a rule with a stable ID | the check IDs; §Scope and normativity |
+| 4 | Determinism | Every honest SPO derives the same batch, the same roots and the same signing state from chain data alone | the skip rules, the protocol schedule, the snapshot-slot rule |
+| 5 | Bounded recovery | Every failure of the roster has a bounded, Bitcoin-enforced way out | the federation leaf and `federation_csv_blocks`, the depositor refund leaf |
+
+Speed and cost are traded away on purpose: an operation takes hours to days, and the fees pay
+every actor involved.
+
+## Stakeholders
+
+| Role | What this document owes them |
+|---|---|
+| Depositors and withdrawers | The peg-in and peg-out flows, the address construction and the refund path, so that they can verify what they sign |
+| SPO operators | The registration, DKG and signing rules their program (heimdall [8]) follows, and the infrastructure they run (§Deployment View) |
+| Watchtower operators | The oracle, detection and relay duties (§Watchtowers), with the Binocular whitepaper [1] for the internals |
+| The federation | The one interface it presents on-chain and on Bitcoin, and the charter every instance publishes (§Federation) |
+| Governance, the `update_auth` holder | Which Config fields an Update may move, and what each move means (§Config UTxO governance) |
+| Independent implementers and auditors | Every on-chain check under a stable ID, the datum and redeemer layouts, the canonical byte layouts |
+| Integrators of fBTC | The token identity ([CFG-1]), the completion semantics, and the trust model they inherit |
+
 # Architecture Constraints
 
+The constraints below are fixed by the host chains, by the chosen tooling, or by a rule this
+document states elsewhere. None of them is a design choice of the bridge.
+
+| Constraint | Consequence for the design |
+|---|---|
+| Bitcoin has no smart contracts: key-path and script-path spends, CSV timelocks, and an 80-byte `OP_RETURN` payload | All bridge logic runs on Cardano. Bitcoin sees a Taproot address, a Schnorr signature and a beacon (*Taproot address construction*) |
+| Bitcoin finality is probabilistic. Binocular calls a block confirmed after 100 confirmations and a 200-minute challenge window | A Treasury Movement confirms in about 17 to 20 hours, which bounds the batches per epoch |
+| A Cardano epoch is 5 days, and the stability window is `3k/f`, 36 hours on mainnet | Stake snapshots, the roster handoff and the batch cutoffs are bound to the epoch and the window (*TM batches and the protocol schedule*) |
+| A Cardano transaction is at most 16 KB | The large validators are deployed as CIP-33 reference scripts, and a Treasury Movement post has a byte budget |
+| On-chain code is Aiken v1.1.23 on Plutus V3 (`onchain/aiken.toml`); the TM validator and the oracle are Scalus contracts in binocular | Two toolchains share one blueprint per release, and every datum layout is positional on both sides |
+| The cryptography is fixed by standards: BIP340 Schnorr, BIP341 Taproot, BIP-322 signed messages, FROST (RFC 9591), Ed25519 for cold keys | No bridge-specific primitive exists; every signature verifies with an off-the-shelf library |
+| A validator cannot read the stake distribution | Registration is stake-blind; the `min_stake` filter and the threshold are computed off-chain from a snapshot |
+| SPOs run no Bitcoin node | Every SPO decision reads Cardano data only; Bitcoin state enters through the oracle and the watchtowers |
+| This document is normative. Where an implementation disagrees, the document wins (§Scope and normativity) | Every divergence is an *Implementation status* note, indexed in §Risks and Technical Debts |
+
 # Context and Scope
+
+The actors around one bridge instance, how they interact, and every value that enters the instance
+from outside.
 
 ## Components
 
@@ -106,6 +152,8 @@ The signing cascade tries the SPO threshold first, then falls back to the federa
 
 1. **51% quorum ($Y_{51}$, main line)**: SPOs sign via the $Y_{51}$ key path — the cheapest spending path. This is the primary operating mode.
 2. **Federation ($Y_{federation}$, emergency)**: if the 51% mode does not yield a usable signature within its bounded setup and signing phases, the federation signs via the $Y_{federation}$ script leaf with timelock.
+
+The single 51% tier is a recorded decision: see *Why a single 51% threshold* under §Architecture Decisions.
 
 If the resulting transaction would be too large, SPOs MAY split it into multiple transactions.
 
@@ -332,6 +380,9 @@ evidence (see *Update-Y* in the Transaction catalog, and [FED-1] to [FED-3] ther
      per-instance federation charter; internal ceremony owned by federation ops docs. -->
 
 # Building Block View
+
+The building blocks of one instance: the programs and smart contracts, each protocol UTxO with its
+datum and its checks, and the transaction catalog as the interface every block exposes.
 
 ## Software components
 
@@ -3167,6 +3218,9 @@ its `pool_id` to the Bifrost identity key it will use for DKG and signing.
 
 # Runtime View
 
+The runtime scenarios: creating an instance, one peg-in, one peg-out, one epoch of Treasury
+Movements, and the SPO ceremonies.
+
 ## Bridge instance creation flow
 
 A **bridge instance** is the complete set of on-chain state that one bridged asset (e.g. fBTC for
@@ -5218,7 +5272,21 @@ normative on the infrastructure an SPO MUST run to participate.
   > required by the SPO runtime; broadcasting over Bitcoin RPC is a DEV-ONLY flag, default off
   > (heimdall DEC-034/DEC-035).
 
+## Mapping of building blocks to infrastructure
+
+| Building block | Runs where | Notes |
+|---|---|---|
+| The Aiken validators (`config.ak`, the registry, the ban list, the fault verifiers, `peg-in.ak`, `peg-out.ak`, `treasury.ak`, the bridge state singleton, the completed-peg-ins trie, `bridged-token.ak`) | The Cardano ledger, at script addresses derived from one blueprint | The large ones are referenced through CIP-33 reference scripts (*Bridge instance creation flow*, step 8) |
+| `TreasuryMovementValidator` and the Binocular oracle | The Cardano ledger, as Scalus contracts deployed from binocular | Only their hashes enter the Aiken dependency graph |
+| The SPO program (heimdall [8]) | Each SPO's own host, beside its Cardano node, with Dolos and optionally Kupo (§Infrastructure assumptions) | Reachable by its peers at the registered `bifrost_url`; no Bitcoin node |
+| The watchtower program (binocular [1]) | Any host with a Bitcoin node and Cardano access | Permissionless; any number of instances |
+| The federation signer | Off-protocol | Only $Y_{federation}$ appears on-chain and on Bitcoin (§Federation) |
+| Depositor and withdrawer tooling | Any wallet, any data provider | Every proof a user submits is verified on-chain, so the provider needs no trust |
+
 # Cross-cutting Concepts
+
+Concepts that cut across the building blocks: how SPOs talk to each other, and where every
+parameter lives.
 
 ## SPOs communication
 
@@ -5329,6 +5397,9 @@ Failures are handled deterministically so that all honest SPOs converge on the s
 
 # Architecture Decisions
 
+Every design decision is recorded next to the rule it explains, as a *Why* note. The three below are
+large enough to stand on their own; the index at the end of this chapter lists all of them.
+
 ## Why a single 51% threshold
 
 > **Why a single 51% threshold.** An earlier design had a 67% tier above the 51% one (two DKGs
@@ -5393,15 +5464,143 @@ revision.
 <!-- G36: drafted from the implemented deployment (binocular deploy-bridge / deploy-script-refs);
      all originally-open placeholders resolved during the 2026-07 gap review. -->
 
+## Decision index
+
+| Decision | Section |
+|---|---|
+| Why the two burns are one transaction | Instance lifecycle: retirement and redeploy |
+| Why SPO incentives align | Guaranteeing censor-resistant peg-ins and peg-outs |
+| Why separate singletons | Software components |
+| Why stability is load-bearing | Config UTxO |
+| Why the two burns must be one transaction ([CFG-8]) | Config UTxO |
+| Why the Config NFT asset name is a constant ([CFG-7]) | Config UTxO |
+| Why `params` holds the unread values ([CFG-6]) | Config UTxO |
+| Why the federation identities are published and not derived ([CFG-3]) | Config UTxO |
+| Why the asset name is a constant and not a field ([CFG-1]) | Config UTxO |
+| Why publish a hash nothing on-chain reads ([CFG-2]) | Config UTxO |
+| Why the operational parameters are nested | Config UTxO |
+| Why no on-chain validator reads a current tunable | Operational parameters |
+| Why the one-shot outpoint moved into the policy id (rev 5.5) | Treasury state UTxO |
+| Why the registry policy is read and not baked in ([PRE-4]) | Treasury state UTxO |
+| Why [TSY-13] is not enough on its own | Treasury state UTxO |
+| Why neither spend redeemer names the value it writes | Treasury state UTxO |
+| Why the Config burn alone authorizes `Retire` ([TSY-22]) | Treasury state UTxO |
+| Why it exists (the two rev-5.1 defects) | Bridge state singleton |
+| Why `BridgeState` cannot grow in place, unlike the Config datum | BridgeState, the singleton datum |
+| Why named access | BridgeState, the singleton datum |
+| Why the value is the head outpoint, and not the sweeping TM's own txid | The two deposit tries |
+| Why [SPI-1] | The two deposit tries |
+| Why [SPI-2] | The two deposit tries |
+| Why [SPI-4] names the watchtower and not the SPO program | The two deposit tries |
+| Why [SPI-6], and why serving proofs needs no trust | The two deposit tries |
+| Why [BTC-1] | Root commitment output (BTMR1) |
+| Why [BTC-2], and why it fails worse than [BTC-1] | Root commitment output (BTMR1) |
+| Why [BSS-6] and [BSS-7] | Singleton validator |
+| Why the bootstrap datum is not pinned | Bootstrap and deployment |
+| Why no `Reanchor` spend | Recovery: replacing the singleton |
+| Why a doctored replacement does not survive | Recovery: replacing the singleton |
+| Why [OB-12] belongs to the watchtower | Bifrost-Specific Watchtower Duties |
+| Why not the raw key $D$ | Peg-in deposit (Bitcoin) |
+| Why `created` is mint-pinned and `PegOutDatum.created` is not | Create PegInRequest (Cardano) |
+| Why this is safe | Create PegOut request (Cardano) |
+| Why `created` is requester-set, and why backdating is harmless | Create PegOut request (Cardano) |
+| Why keep a mint-time head check | Post signed TM as `Unconfirmed TM tx` (Cardano) |
+| Why [CTM-17] must survive, and why [CTM-25] does not replace it | Confirm TM tx (Cardano) |
+| Why [CTM-27] pins the whole datum | Confirm TM tx (Cardano) |
+| Why the roots are attested, not verified (trust model, rev 5.4) | Confirm TM tx (Cardano) |
+| Why [CPI-3] may drop `btc_txid` | Complete peg-in / mint fBTC (Cardano) |
+| Why permissionless completion is safe | Complete peg-out / burn fBTC (Cardano) |
+| Why cancel can never race a payout | Cancel PegOut request (Cardano) |
+| Why the non-membership carries the safety and the timeout does not | Close PegInRequest (Cardano) |
+| Why [CLR-5]'s clock does not match the Bitcoin refund timeout, and must not try | Close PegInRequest (Cardano) |
+| Why the duplicate branch has no timeout | Close PegInRequest (Cardano) |
+| Why submission is permissionless | Update-Y — rotate the treasury group key (Cardano) |
+| Why [UY-6] is not worth keeping | Update-Y — rotate the treasury group key (Cardano) |
+| Why there is no timeout | Update-Y — rotate the treasury group key (Cardano) |
+| Why accept it here | Update-Y — rotate the treasury group key (Cardano) |
+| Why the pin exists ([REG-6] to [REG-8]) | Register SPO (Cardano) |
+| Why the token is pinned to the output ([CPT-4]) | Bridge instance creation flow |
+| Why this is safe | Taproot address verification |
+| Why a Round-2 shortfall reruns rather than shrinks | 5. Round 0: Initialization |
+| Why this binds (and why framing is impossible) | 9.2 Direct fault proofs |
+| Why deferred rather than shipped | Cardano submission and leader reward |
+| Why burns would pay nothing either way | Cardano submission and leader reward |
+| Why a single 51% threshold | Why a single 51% threshold |
+
 # Quality Requirements
 
+## Quality requirements overview
+
+The quality goals and their priority are in §Quality goals. The comparison table in §Architecture
+overview states what Bifrost gives up against the other bridge designs: minutes of latency and low
+cost, in exchange for the security assumption and the availability guarantee.
+
+## Quality scenarios
+
+| Goal | Stimulus | Expected response | Rule |
+|---|---|---|---|
+| Fund safety | A coalition below the stake threshold tries to sign a Treasury Movement | No valid signature exists; the treasury does not move | *Threshold Calculation*, *Group signing* |
+| Fund safety | A deposit is never swept | After the refund timeout the depositor reclaims the BTC through the refund leaf; no fBTC can be minted for it | [CLR-5], [CFG-9] |
+| Censorship resistance | Every watchtower stops posting blocks and requests | Any user runs a watchtower, posts the chain from the last confirmed block, and creates its own PegInRequest | §Guaranteeing censor-resistant peg-ins and peg-outs |
+| Bounded recovery | The roster stops signing | After `federation_csv_blocks`, the federation sweeps the treasury and every stranded deposit through the timelocked leaf | §Federation, [BTC-1] to [BTC-3] |
+| Determinism | A co-signer publishes Round 1 and withholds Round 2 | The attempt ends; every SPO opens `attempt + 1` without it, inside the same batch interval | *Round-2 shortfall opens a new attempt* |
+| Determinism | An SPO's data provider serves a wrong trie | Its recomputed roots differ, so it cannot co-sign; the other co-signers are unaffected | [SPI-2], §Infrastructure assumptions |
+| Availability | A peg-in arrives after a batch's stability cutoff | It is a candidate for the next batch; nothing strands it | *TM batches and the protocol schedule* |
+
 # Risks and Technical Debts
+
+Three kinds, each owned elsewhere and indexed here: divergences between this document and the
+implementations, work this document defers, and design risks that stay open.
+
+## Recorded divergences
+
+Every *Implementation status* note in this document, in document order.
+
+| Where | Status |
+|---|---|
+| §Config UTxO | The Config datum layout is implemented; the fields with a getter and no on-chain reader are listed there ([CFG-2], [CFG-3]) |
+| §Operational parameters | heimdall does not implement the TM builder's skip rules for `per_pegout_fee` and `min_peg_out_fbtc` |
+| §Operational parameters | The tunables are deployed as Config #1 `params`; completion checks the fee pinned in each `PegOutDatum` |
+| §Treasury state UTxO | Rev 5.5 is implemented on-chain |
+| §Bridge state singleton | [BSS-1], [BSS-2], [BSS-4] to [BSS-7] are implemented; [BSS-3] was never issued |
+| *Peg-in deposit (Bitcoin)* | The 35-byte beacon is implemented; two earlier forms are refused |
+| *Create PegInRequest (Cardano)* | The deployed datum constructor order is the one in the table; `created` was appended |
+| *Create PegInRequest (Cardano)* | The deployed mint carries one request per transaction; the batch form is the normative target, tracked as a contract change request |
+| *Close PegInRequest (Cardano)* | [CLR-5] to [CLR-11] are implemented and cite their IDs |
+| *Update-Y* | The rotation branch and heimdall's `update-y` builder are implemented and live-verified under the rev 5.4 shape; the heimdall builders are not yet updated for rev 5.5 |
+| §Bridge instance creation flow | [CPT-1] to [CPT-6] are implemented, one test per rule |
+| §SPO Program, *Round 0: Initialization* | heimdall reruns a DKG on a local relative window, re-derives `t` over the reduced set, and caps a ceremony at 16 attempts; the document derives the cap from `update_y_deadline` |
+| §Infrastructure assumptions | heimdall resolves the treasury head from Cardano data only, as required |
+
+## Deferred work
+
+Owned by *Final optimizations* [9]:
+
+1. Reference scripts are deployed per operator, not per instance.
+2. Two catalog transactions have no off-chain builder.
+3. No one has verified the checks against the validators.
+4. Discovery fields are specified but not implemented.
+5. The Phase-1 handoff moves custody on published evidence, not on a proof of possession.
+
+## Open design risks
+
+| Risk | Where it is discussed |
+|---|---|
+| The federation charter is not yet published, so the fallback path's trust assumption is not verifiable | §Scope and normativity, §Federation |
+| Mainnet needs a timeout-gated key lifecycle for the federation's standing co-authority | [FED-2], §Rollout Phases |
+| No slashing: a faulty SPO is excluded and banned, never bonded; economic security rests on SPO revenue alignment | §Guaranteeing censor-resistant peg-ins and peg-outs, the review [10] |
+| The stake-weighted threshold trades safety against liveness as the real stake distribution skews | *Threshold Calculation*, the review [10] |
+| Oracle liveness rests on one honest watchtower plus rewards | §Watchtowers |
+| No attack-cost model and no maximum-TVL invariant are stated | the review [10] |
+
+The review [10] is dated 2026-07-12 and predates rev 5.4; its implementation findings are partly
+resolved, and its design items are tracked there.
 
 # Glossary
 
 ## Definitions and Abbreviations
 
-This section collects the acronyms, protocol terms, on-chain validators, mathematical symbols, and named lifecycle labels used throughout the rest of the document. Sub-sections are alphabetized for quick lookup; cross-references point to the body sections where each concept is fully specified.
+This section collects the acronyms, protocol terms, on-chain validators, mathematical symbols, and named lifecycle labels used throughout this document. Sub-sections are alphabetized for quick lookup; cross-references point to the body sections where each concept is fully specified.
 
 ### Acronyms
 
@@ -5583,3 +5782,6 @@ Source code for the Aiken validators listed here is published in the Bifrost on-
 
 [9] *Bifrost Final Optimizations* — deferred work and open questions; non-normative.
 [documentation/final-optimizations.md](final-optimizations.md)
+
+[10] *Bifrost Design & Security Review* (2026-07-12); non-normative.
+[documentation/security-design-review.md](security-design-review.md)
